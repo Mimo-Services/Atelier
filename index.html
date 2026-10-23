@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1a1a2e">
+<title>Suivi Atelier</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icone-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { font-family: sans-serif; font-size: 16px; color: #222; background: #fff; }
+  header { position: fixed; top: 0; left: 0; right: 0; height: 52px; background: #1a1a2e; color: #fff;
+           display: flex; align-items: center; gap: 8px; padding: 0 10px; z-index: 10; }
+  header h1 { font-size: 18px; margin: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  header button { background: none; border: none; color: #fff; font-size: 15px; padding: 6px 8px; }
+  .pastille { font-size: 13px; padding: 3px 8px; border-radius: 12px; white-space: nowrap; }
+  .enligne { background: #2e7d32; } .horsligne { background: #b00020; } .envoi { background: #b26a00; }
+  main { padding: 64px 14px 24px; max-width: 520px; margin: 0 auto; }
+  .gros { display: block; width: 100%; padding: 22px 12px; font-size: 20px; background: #1a1a2e; color: #fff;
+          border: none; border-radius: 10px; margin-top: 8px; }
+  .bouton { display: block; width: 100%; padding: 12px; font-size: 16px; background: #1a1a2e; color: #fff;
+            border: none; border-radius: 6px; margin-top: 10px; }
+  .bouton.second { background: #eee; color: #222; }
+  .bouton.alerte { background: #b26a00; }
+  .bouton:disabled { background: #999; }
+  .carte { border: 1px solid #ddd; border-radius: 8px; padding: 10px 12px; margin-top: 12px; line-height: 1.45; }
+  .carte h3 { margin: 0 0 6px; font-size: 16px; }
+  .info { font-size: 14px; color: #555; }
+  .ko { background: #fdecea; border-color: #b00020; color: #8a0018; }
+  .att { background: #fff4e5; border-color: #b26a00; }
+  label { display: block; margin-top: 12px; font-weight: bold; }
+  select, input { width: 100%; padding: 9px; font-size: 16px; margin-top: 4px; }
+  .lien { color: #0d47a1; text-decoration: underline; background: none; border: none; padding: 0; font-size: 15px; }
+  #vueLot { position: fixed; top: 52px; left: 0; right: 0; bottom: 0; display: none; }
+  #cadre { width: 100%; height: 100%; border: 0; display: block; }
+  #vueScan { position: fixed; inset: 52px 0 0 0; background: #000; display: none; }
+  #video { width: 100%; height: 100%; object-fit: cover; }
+  #viseur { position: absolute; left: 50%; top: 45%; width: 64vw; height: 64vw; max-width: 320px; max-height: 320px;
+            transform: translate(-50%, -50%); border: 4px solid #fff; border-radius: 16px; box-shadow: 0 0 0 9999px rgba(0,0,0,.35); }
+  #msgScan { position: absolute; left: 0; right: 0; bottom: 90px; text-align: center; color: #fff; font-size: 16px; padding: 0 16px; }
+  #annulerScan { position: absolute; left: 16px; right: 16px; bottom: 20px; width: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 8px; }
+  td { padding: 5px 0; border-bottom: 1px solid #eee; } td.v { text-align: right; font-weight: bold; }
+  .ligne { display: flex; gap: 8px; } .ligne > * { flex: 1; }
+</style>
+</head>
+<body>
+<header>
+  <button id="btnRetour" style="display:none" aria-label="Retour">◀</button>
+  <h1 id="titre">Suivi Atelier</h1>
+  <span id="etatReseau" class="pastille horsligne">Hors ligne</span>
+  <button id="btnSync" aria-label="Synchroniser">🔄</button>
+</header>
+
+<main id="vueAccueil">
+  <div id="blocAlertes"></div>
+  <button class="gros" id="btnScanner">📷 Scanner la fiche</button>
+
+  <div class="carte">
+    <h3>Sans QR code</h3>
+    <label for="choixBdc">BDC</label>
+    <select id="choixBdc"></select>
+    <label for="choixCle">Lot</label>
+    <select id="choixCle"></select>
+    <button class="bouton second" id="btnOuvrirManuel">Ouvrir le lot</button>
+  </div>
+
+  <div class="carte" id="carteRecents" style="display:none">
+    <h3>Derniers lots ouverts</h3>
+    <div id="recents"></div>
+  </div>
+
+  <div class="carte info" id="etatDonnees">Aucune donnée sur ce téléphone : connectez-le une première fois au réseau.</div>
+
+  <div class="carte" id="carteReglages" style="display:none">
+    <h3>Réglages</h3>
+    <label for="urlServeur">Adresse du serveur (…/exec)</label>
+    <input id="urlServeur" type="url" autocomplete="off">
+    <button class="bouton second" id="btnEnregistrerUrl">Enregistrer</button>
+    <p class="info" id="infoVersion"></p>
+  </div>
+  <p style="text-align:center"><button class="lien" id="btnReglages">Réglages</button></p>
+</main>
+
+<main id="vueListe" style="display:none"></main>
+
+<div id="vueScan">
+  <video id="video" playsinline muted></video>
+  <div id="viseur"></div>
+  <div id="msgScan">Placez le QR code de la fiche dans le cadre.</div>
+  <button class="bouton second" id="annulerScan">Annuler</button>
+</div>
+
+<div id="vueLot"><iframe id="cadre" title="Déclaration"></iframe></div>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
