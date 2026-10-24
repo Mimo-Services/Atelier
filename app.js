@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-10-24 EA";
+  var VERSION_APP = "2026-10-24 ED";
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
   /* ---------- Stockage (IndexedDB, clé → valeur) ---------- */
@@ -548,7 +548,8 @@
   }
 
   function pageConnexion() {
-    var noms = ((S.donnees && S.donnees.operateurs) || []);
+    // Seuls les agents autorisés dans « Accès App » (code + rubrique cochée) sont proposés.
+    var noms = ((S.donnees && (S.donnees.agentsApp || S.donnees.operateurs)) || []);
     $("titre").textContent = "Connexion";
     $("vueListe").innerHTML = "<div class='carte'><h3>Saisies (Stock…)</h3><p class='info'>Choisissez votre nom et tapez votre code personnel " +
       "(donné par la direction). Une seule fois sur ce téléphone, avec réseau.</p>" +
