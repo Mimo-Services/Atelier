@@ -1,11 +1,11 @@
-/* Suivi Atelier — application hors ligne.
+/* DuoCore — application hors ligne.
  * Le téléphone garde les lots en cours et la page de déclaration. Une déclaration faite
  * sans réseau est mise en file d'attente et envoyée dès que la connexion revient.
  * Le serveur (Apps Script) refait tous les contrôles : un refus arrive dans « À corriger ». */
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-10-23 DY";
+  var VERSION_APP = "2026-10-24 EA";
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
   /* ---------- Stockage (IndexedDB, clé → valeur) ---------- */
@@ -42,7 +42,9 @@
     file: [],       // déclarations en attente d'envoi (dans l'ordre)
     envoyes: [],    // envoyées et acceptées, pas encore dans les données téléchargées
     aCorriger: [],  // refusées par le serveur
-    recents: [], derniereSync: 0, lotOuvert: null
+    recents: [], derniereSync: 0, lotOuvert: null,
+    agent: null,        // { nom, code } : agent connecté pour les saisies (Stock…)
+    formulaires: null   // { genere, droits, formulaires: { stock: {...} } }
   };
   function sauver() {
     return Promise.all([ecrire("file", S.file), ecrire("envoyes", S.envoyes), ecrire("aCorriger", S.aCorriger), ecrire("recents", S.recents)]);
@@ -158,7 +160,7 @@
     var etats = JSON.parse(JSON.stringify(lot.etats || {}));
     S.envoyes.concat(S.file).forEach(function (it) {
       var o = it.o;
-      if (o.bdc === lot.bdc && o.cle === lot.cle) appliquerLocal(lot, etats, o, profondeur || 0);
+      if (o && o.bdc === lot.bdc && o.cle === lot.cle) appliquerLocal(lot, etats, o, profondeur || 0);
     });
     return etats;
   }
@@ -239,7 +241,7 @@
     $("btnRetour").style.display = vue === "vueAccueil" ? "none" : "";
     if (vue !== "vueScan") arreterScan();
     if (vue !== "vueLot") { $("cadre").srcdoc = ""; S.lotOuvert = null; }
-    if (vue === "vueAccueil") { $("titre").textContent = "Suivi Atelier"; majAccueil(); }
+    if (vue === "vueAccueil") { $("titre").textContent = "DuoCore"; majAccueil(); }
     window.scrollTo(0, 0);
   }
 
@@ -255,10 +257,29 @@
     var h = "";
     if (S.aCorriger.length) h += "<div class='carte ko'><h3>⛔ " + S.aCorriger.length + " déclaration(s) refusée(s) — à corriger</h3>" +
       "<button class='bouton alerte' data-liste='corriger'>Voir</button></div>";
-    if (S.file.length) h += "<div class='carte att'><h3>⏳ " + S.file.length + " déclaration(s) en attente d'envoi</h3>" +
-      "<div class='info'>Elles partiront seules dès que le réseau revient. Ne les refaites pas.</div>" +
+    if (S.file.length) h += "<div class='carte att'><h3>⏳ " + S.file.length + " envoi(s) en attente</h3>" +
+      "<div class='info'>Ils partiront seuls dès que le réseau revient. Ne les refaites pas.</div>" +
       "<button class='bouton second' data-liste='attente'>Voir</button></div>";
+    // Saisies : formulaires autorisés pour l'agent connecté, ou bouton de connexion.
+    var fs = S.formulaires && S.formulaires.formulaires;
+    if (S.agent && fs && Object.keys(fs).length) {
+      h += "<div class='carte'><h3>Saisies · " + esc(S.agent.nom) + "</h3>" + Object.keys(fs).map(function (k) {
+        return "<button class='bouton' data-form='" + k + "'>" + (k === "stock" ? "📦 " : "🧾 ") + esc(fs[k].nom || fs[k].titre) + "</button>";
+      }).join("") + "<p style='text-align:right;margin:6px 0 0'><button class='lien' id='btnDeconnexion'>Changer d'agent</button></p></div>";
+    } else if (S.agent) {
+      h += "<div class='carte info'>Saisies : aucune rubrique autorisée pour " + esc(S.agent.nom) + ". <button class='lien' id='btnDeconnexion'>Changer d'agent</button></div>";
+    } else if (S.url) {
+      h += "<button class='bouton second' id='btnConnexion'>🧾 Saisies (Stock…) : se connecter</button>";
+    }
     $("blocAlertes").innerHTML = h;
+    Array.prototype.forEach.call($("blocAlertes").querySelectorAll("[data-form]"), function (b) {
+      b.onclick = function () { ouvrirFormulaire(b.getAttribute("data-form")); };
+    });
+    if ($("btnConnexion")) $("btnConnexion").onclick = pageConnexion;
+    if ($("btnDeconnexion")) $("btnDeconnexion").onclick = function () {
+      if (S.file.some(function (x) { return x.type === "form"; }) && !confirm("Des saisies sont en attente d'envoi : elles partiront quand même. Changer d'agent ?")) return;
+      S.agent = null; S.formulaires = null; ecrire("agent", null); ecrire("formulaires", null); majAccueil();
+    };
     Array.prototype.forEach.call($("blocAlertes").querySelectorAll("[data-liste]"), function (b) {
       b.onclick = function () { afficherListe(b.getAttribute("data-liste")); };
     });
@@ -303,31 +324,35 @@
   function libEvt(o) {
     return dans(C().qteSeule, o.poste) || dans(C().validation, o.poste) ? "" : " · " + esc(o.typeEvenement || "") + (o.passage && o.passage !== "1" ? " (P" + esc(o.passage) + ")" : "");
   }
+  /* Résumé lisible d'un élément de la file (déclaration atelier ou saisie de formulaire). */
+  function descriptionItem(x) {
+    if (x.type === "form") return "<b>" + esc(x.titre || "Saisie") + "</b><br>" + esc(x.resume || "") + "<br><small>" + esc(x.agent) + " · " + dateCourte(x.horodatage) + "</small>";
+    var o = x.o;
+    return esc(o.cle) + " · " + esc(o.bdc) + "<br>" + esc(o.poste) + libEvt(o) + (o.quantite ? " · " + esc(o.quantite) : "") +
+      "<br><small>" + esc(o.operateur) + " · " + dateCourte(x.horodatage) + "</small>";
+  }
   function afficherListe(type) {
     var v = $("vueListe"), h;
     $("titre").textContent = type === "corriger" ? "À corriger" : "En attente";
     if (type === "corriger") {
-      h = "<p class='info'>Le serveur a refusé ces déclarations (faites hors ligne) : rien n'a été enregistré. " +
-          "Vérifiez avec le chef d'atelier, refaites la bonne déclaration si besoin, puis effacez-la de la liste.</p>";
+      h = "<p class='info'>Le serveur a refusé ces envois (faits hors ligne) : rien n'a été enregistré. " +
+          "Vérifiez, refaites la bonne saisie si besoin, puis effacez-la de la liste.</p>";
       h += S.aCorriger.map(function (x, i) {
-        var o = x.o, r = x.r || {};
+        var r = x.r || {};
         return "<div class='carte ko'><h3>⛔ " + esc(r.titre || "Refusé") + "</h3>" +
-          "<div>" + esc(o.cle) + " · " + esc(o.bdc) + "<br>" + esc(o.poste) + libEvt(o) +
-          (o.quantite ? " · " + esc(o.quantite) : "") + "<br>" + esc(o.operateur) + " · saisi le " + dateCourte(x.horodatage) + "</div>" +
+          "<div>" + descriptionItem(x) + "</div>" +
           "<p style='white-space:pre-line'>" + esc(r.message || "") + "</p>" +
           (r.details && r.details.length ? "<table>" + r.details.map(function (d) {
             return "<tr><td>" + esc(d[0]) + "</td><td class='v'>" + esc(d[1]) + "</td></tr>"; }).join("") + "</table>" : "") +
-          "<div class='ligne'><button class='bouton second' data-ouvrir='" + i + "'>Ouvrir le lot</button>" +
+          "<div class='ligne'>" + (x.o ? "<button class='bouton second' data-ouvrir='" + i + "'>Ouvrir le lot</button>" : "") +
           "<button class='bouton' data-effacer='" + i + "'>Vu, effacer</button></div></div>";
       }).join("") || "<p>Rien à corriger.</p>";
     } else {
-      h = "<p class='info'>Ces déclarations sont gardées sur le téléphone et partiront dès que le réseau revient, " +
-          "avec l'heure à laquelle elles ont été faites. Ne les refaites pas.</p>";
+      h = "<p class='info'>Ces envois sont gardés sur le téléphone et partiront dès que le réseau revient, " +
+          "avec l'heure de la saisie. Ne les refaites pas.</p>";
       h += S.file.map(function (x) {
-        var o = x.o;
-        return "<div class='carte att'>" + esc(o.cle) + " · " + esc(o.bdc) + "<br>" + esc(o.poste) + libEvt(o) +
-          (o.quantite ? " · " + esc(o.quantite) : "") + "<br><small>" + esc(o.operateur) + " · " + dateCourte(x.horodatage) +
-          (x.essais ? " · " + x.essais + " essai(s)" + (x.erreur ? " — " + esc(x.erreur) : "") : "") + "</small></div>";
+        return "<div class='carte att'>" + descriptionItem(x) +
+          (x.essais ? "<br><small>" + x.essais + " essai(s)" + (x.erreur ? " — " + esc(x.erreur) : "") + "</small>" : "") + "</div>";
       }).join("") || "<p>Rien en attente.</p>";
       h += "<button class='bouton' id='btnEnvoyerMaintenant'>Envoyer maintenant</button>";
     }
@@ -384,7 +409,7 @@
     if (!force) { var a = alerteLot(lot); if (a) return pageAlerte(a, function () { ouvrirLot(bdc, cle, true); }); }
     S.recents = [{ bdc: lot.bdc, cle: lot.cle }].concat(S.recents.filter(function (r) { return !(r.bdc === lot.bdc && r.cle === lot.cle); })).slice(0, 10);
     sauver();
-    var ctx = contexteLot(lot), nAtt = S.file.filter(function (x) { return x.o.bdc === lot.bdc && x.o.cle === lot.cle; }).length;
+    var ctx = contexteLot(lot), nAtt = S.file.filter(function (x) { return x.o && x.o.bdc === lot.bdc && x.o.cle === lot.cle; }).length;
     var bandeau = "<div style='margin-top:8px;padding:8px 10px;border-radius:6px;font-size:13px;background:" + (nAtt ? "#fff4e5" : "#f3f3f3") + "'>" +
       (nAtt ? "⏳ <b>" + nAtt + " déclaration(s) de ce lot en attente d'envoi</b> : déjà prises en compte ci-dessous, pas encore dans l'avancement.<br>" : "") +
       "Avancement : données du " + dateCourte(S.donnees.genere) + "</div>";
@@ -408,32 +433,37 @@
   var attenteJetons = {};  // jeton → page qui attend sa réponse
   window.ATELIER = {
     declarer: function (o) {
-      var it = { jeton: o.jeton || (Date.now().toString(36) + Math.random().toString(36).slice(2)), horodatage: parseFloat(o.horodatage) || Date.now(), o: o, essais: 0 };
+      var it = { jeton: o.jeton || nouveauJeton(), horodatage: parseFloat(o.horodatage) || Date.now(), o: o, essais: 0 };
       it.o.jeton = it.jeton; it.o.horodatage = String(it.horodatage);
-      if (S.file.some(function (x) { return x.jeton === it.jeton; })) return Promise.resolve(enAttente());
-      S.file.push(it);
-      var reponse = new Promise(function (ok) { attenteJetons[it.jeton] = ok; });
-      return sauver().then(function () {
-        majEtat();
-        var envoi = envoiP ? envoiP.then(lancerEnvoi) : lancerEnvoi();
-        envoi.then(function () { if (attenteJetons[it.jeton]) attenteJetons[it.jeton](resultats[it.jeton] || null); });
-        return attendre(reponse, DELAI_ENVOI + 5000).catch(function () { return null; }).then(function (r) {
-          delete attenteJetons[it.jeton];
-          synchroniser(false);
-          if (!r) return enAttente();
-          // Réponse reçue tout de suite : l'opérateur la voit, rien à reprendre plus tard.
-          S.aCorriger = S.aCorriger.filter(function (x) { return x.jeton !== it.jeton; });
-          sauver();
-          return r;
-        });
-      });
+      return soumettre(it);
     },
     // OK après une déclaration : la page du lot est rouverte, à jour (comme la page web).
     fermerLot: function () { var l = S.lotOuvert; if (l) ouvrirLot(l.bdc, l.cle, true); else montrer("vueAccueil"); }
   };
+  function nouveauJeton() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
+  /* Met l'élément en file, tente l'envoi tout de suite ; réponse du serveur, ou « gardée sur le téléphone ». */
+  function soumettre(it) {
+    if (S.file.some(function (x) { return x.jeton === it.jeton; })) return Promise.resolve(enAttente());
+    S.file.push(it);
+    var reponse = new Promise(function (ok) { attenteJetons[it.jeton] = ok; });
+    return sauver().then(function () {
+      majEtat();
+      var envoi = envoiP ? envoiP.then(lancerEnvoi) : lancerEnvoi();
+      envoi.then(function () { if (attenteJetons[it.jeton]) attenteJetons[it.jeton](resultats[it.jeton] || null); });
+      return attendre(reponse, DELAI_ENVOI + 5000).catch(function () { return null; }).then(function (r) {
+        delete attenteJetons[it.jeton];
+        synchroniser(false);
+        if (!r) return enAttente();
+        // Réponse reçue tout de suite : l'agent la voit, rien à reprendre plus tard.
+        S.aCorriger = S.aCorriger.filter(function (x) { return x.jeton !== it.jeton; });
+        sauver();
+        return r;
+      });
+    });
+  }
   function enAttente() {
     return { ok: true, enAttente: true, titre: "Gardée sur le téléphone",
-      message: "Pas de réseau (ou réseau trop lent) : la déclaration est enregistrée sur ce téléphone et partira automatiquement dès que la connexion revient.\n\nNE LA REFAITES PAS." };
+      message: "Pas de réseau (ou réseau trop lent) : c'est enregistré sur ce téléphone et partira automatiquement dès que la connexion revient.\n\nNE REFAITES PAS LA SAISIE." };
   }
 
   // Envoi de la file et téléchargement des données : chacun une seule fois à la fois.
@@ -445,7 +475,10 @@
   function synchroniser(forcerDonnees) {
     return lancerEnvoi().then(function (n) {
       var age = S.donnees ? Date.now() - S.donnees.recu : Infinity;
-      if (S.url && (forcerDonnees || age > RAFRAICHIR_APRES || (n > 0 && age > 5 * 60000))) return rafraichir().catch(function () {});
+      var p1 = (S.url && (forcerDonnees || age > RAFRAICHIR_APRES || (n > 0 && age > 5 * 60000))) ? rafraichir().catch(function () {}) : null;
+      var ageF = S.formulaires ? Date.now() - S.formulaires.recu : Infinity;
+      var p2 = (S.url && S.agent && (forcerDonnees || ageF > RAFRAICHIR_APRES)) ? rafraichirFormulaires().catch(function () {}) : null;
+      return Promise.all([p1, p2]);
     }).catch(function () {}).then(function () { majEtat(); if ($("vueAccueil").style.display !== "none") majAccueil(); });
   }
   function erreurPassagere(r) {
@@ -458,7 +491,9 @@
       if (!S.file.length) return Promise.resolve(n);
       var it = S.file[0];
       it.essais = (it.essais || 0) + 1;
-      var corps = { api: "declarer" }; for (var k in it.o) corps[k] = it.o[k];
+      var corps;
+      if (it.type === "form") corps = { api: "repondre", agent: it.agent, code: it.code, formulaire: it.form, jeton: it.jeton, horodatage: String(it.horodatage), reponses: it.reponses };
+      else { corps = { api: "declarer" }; for (var k in it.o) corps[k] = it.o[k]; }
       return requete(S.url, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(corps), redirect: "follow" }, DELAI_ENVOI)
         .then(function (r) {
           S.derniereSync = Date.now(); ecrire("derniereSync", S.derniereSync);
@@ -466,8 +501,8 @@
           S.file.shift();
           resultats[it.jeton] = r;
           if (attenteJetons[it.jeton]) attenteJetons[it.jeton](r);
-          if (r.ok) { S.envoyes.push({ jeton: it.jeton, o: it.o, recuA: Date.now() }); n++; }
-          else S.aCorriger.push({ jeton: it.jeton, o: it.o, horodatage: it.horodatage, r: r });
+          if (r.ok) { if (it.o) { S.envoyes.push({ jeton: it.jeton, o: it.o, recuA: Date.now() }); n++; } }
+          else { var c = JSON.parse(JSON.stringify(it)); c.r = r; delete c.code; S.aCorriger.push(c); }
           return sauver().then(function () { majEtat(); return suivant(); });
         }, function (e) {
           it.erreur = e.message;
@@ -491,6 +526,193 @@
       return Promise.all([ecrire("donnees", d), ecrire("derniereSync", S.derniereSync), sauver()]);
     }).then(function () { rafP = null; }, function (e) { rafP = null; throw e; });
     return rafP;
+  }
+
+  /* ---------- Saisies (formulaires Google : Stock, puis BASE) ---------- */
+  var rafF = null;
+  function rafraichirFormulaires(agent) {
+    agent = agent || S.agent;
+    if (!S.url || !agent) return Promise.reject(new Error("non connecté"));
+    if (rafF) return rafF;
+    rafF = requete(S.url, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, redirect: "follow",
+      body: JSON.stringify({ api: "formulaires", agent: agent.nom, code: agent.code }) }, DELAI_DONNEES).then(function (r) {
+      if (!r.ok) {
+        if (r.titre === "Accès refusé" && agent === S.agent) { S.agent = null; S.formulaires = null; ecrire("agent", null); ecrire("formulaires", null); }
+        throw new Error(r.message || "accès refusé");
+      }
+      r.recu = Date.now();
+      S.agent = { nom: r.agent, code: agent.code }; S.formulaires = r;
+      return Promise.all([ecrire("agent", S.agent), ecrire("formulaires", r)]);
+    }).then(function () { rafF = null; }, function (e) { rafF = null; throw e; });
+    return rafF;
+  }
+
+  function pageConnexion() {
+    var noms = ((S.donnees && S.donnees.operateurs) || []);
+    $("titre").textContent = "Connexion";
+    $("vueListe").innerHTML = "<div class='carte'><h3>Saisies (Stock…)</h3><p class='info'>Choisissez votre nom et tapez votre code personnel " +
+      "(donné par la direction). Une seule fois sur ce téléphone, avec réseau.</p>" +
+      "<label for='cxNom'>Nom</label><select id='cxNom'><option value=''>— Choisir —</option>" +
+      noms.map(function (n) { return "<option>" + esc(n) + "</option>"; }).join("") + "</select>" +
+      "<label for='cxCode'>Code personnel</label><input id='cxCode' type='password' inputmode='numeric' autocomplete='off'>" +
+      "<div id='cxMsg' class='info' style='margin-top:8px'></div>" +
+      "<button class='bouton' id='cxOk'>Se connecter</button></div>";
+    montrer("vueListe");
+    $("cxOk").onclick = function () {
+      var a = { nom: $("cxNom").value, code: $("cxCode").value.trim() };
+      if (!a.nom || !a.code) { $("cxMsg").textContent = "Nom et code obligatoires."; return; }
+      $("cxOk").disabled = true; $("cxMsg").textContent = "Vérification…";
+      rafraichirFormulaires(a).then(function () { montrer("vueAccueil"); }, function (e) {
+        $("cxOk").disabled = false; $("cxMsg").textContent = "⛔ " + e.message;
+      });
+    };
+  }
+
+  /* Formulaire : une page à la fois, mêmes sections et mêmes branchements que Google Forms. */
+  var F = null;   // { cle, st, idx, chemin: [index des pages], rep: { id: valeur } }
+  function ouvrirFormulaire(cle) {
+    var st = S.formulaires && S.formulaires.formulaires[cle];
+    if (!st || st.erreur) { alert("Formulaire indisponible" + (st && st.erreur ? " : " + st.erreur : "") + ". Appuyez sur 🔄 avec réseau."); return; }
+    F = { cle: cle, st: st, idx: 0, chemin: [0], rep: {} };
+    // Identifiants d'affichage ; réponses par défaut (agent connecté, date du jour, valeur fixe).
+    var auj = new Date(), z = function (n) { return (n < 10 ? "0" : "") + n; };
+    var jour = auj.getFullYear() + "-" + z(auj.getMonth() + 1) + "-" + z(auj.getDate());
+    st.pages.forEach(function (pg, i) {
+      pg.questions.forEach(function (q, j) {
+        q.id = i + "_" + j;
+        var d = String(q.defaut || "").toUpperCase(), estAgent = q.choix && q.choix.some(function (c) { return String(c.v).toUpperCase() === S.agent.nom.toUpperCase(); });
+        if ((d === "AGENT" || (!d && /EDITEUR|ÉDITEUR|AGENT|SAISI|OP[ÉE]RATEUR/i.test(q.titre))) && (estAgent || !q.choix))
+          F.rep[q.id] = q.choix ? q.choix.filter(function (c) { return String(c.v).toUpperCase() === S.agent.nom.toUpperCase(); })[0].v : S.agent.nom;
+        else if (d === "AUJOURDHUI" || d === "AUJOURD'HUI" || (!d && q.type === "date")) F.rep[q.id] = q.type === "dateheure" ? jour + "T" + z(auj.getHours()) + ":" + z(auj.getMinutes()) : jour;
+        else if (q.defaut && d !== "AGENT") F.rep[q.id] = q.type === "cases" ? String(q.defaut).split(/\s*;\s*/) : q.defaut;
+      });
+    });
+    afficherPageFormulaire();
+  }
+  function champQuestion(q) {
+    var v = F.rep[q.id], id = "q" + q.id, h = "<div class='carte' id='bloc" + q.id + "'><label for='" + id + "' style='margin-top:0'>" + esc(q.titre) + (q.requis ? " <span style='color:#b00020'>*</span>" : "") + "</label>" +
+      (q.aide ? "<div class='info'>" + esc(q.aide) + "</div>" : "");
+    if (q.type === "titre") return "<div class='carte'><h3>" + esc(q.titre) + "</h3>" + (q.aide ? "<div class='info'>" + esc(q.aide) + "</div>" : "") + "</div>";
+    if (q.type === "non_gere") return h + "<div class='info'>⚠️ Question non gérée par l'application (laissée vide).</div></div>";
+    if (q.type === "liste") {
+      h += "<select id='" + id + "' data-q='" + q.id + "'><option value=''>— Choisir —</option>" + q.choix.map(function (c) {
+        return "<option" + (String(c.v) === String(v) ? " selected" : "") + ">" + esc(c.v) + "</option>"; }).join("") + "</select>";
+      if (q.choix.length > 15) h += "<input type='search' placeholder='🔎 Filtrer la liste…' data-filtre='" + id + "' style='margin-top:6px'>";
+    } else if (q.type === "choix" || q.type === "cases") {
+      var multi = q.type === "cases", vals = multi ? [].concat(v || []) : [v];
+      h += q.choix.map(function (c, i) {
+        return "<label style='font-weight:normal;display:flex;gap:10px;align-items:center;margin-top:8px'><input type='" + (multi ? "checkbox" : "radio") +
+          "' name='" + id + "' data-q='" + q.id + "' value=\"" + esc(c.v) + "\" style='width:22px;height:22px;margin:0'" + (vals.indexOf(c.v) !== -1 ? " checked" : "") + "> " + esc(c.v) + "</label>";
+      }).join("");
+    } else if (q.type === "paragraphe") h += "<textarea id='" + id + "' data-q='" + q.id + "' rows='3' style='width:100%;font-size:16px;padding:8px'>" + esc(v || "") + "</textarea>";
+    else {
+      var typ = { texte: "text", nombre: "text", date: "date", dateheure: "datetime-local", heure: "time", echelle: "number" }[q.type] || "text";
+      h += "<input id='" + id + "' data-q='" + q.id + "' type='" + typ + "' value=\"" + esc(v || "") + "\"" + (estNombre(q) ? " inputmode='decimal'" : "") +
+        (q.type === "echelle" ? " min='" + q.min + "' max='" + q.max + "' inputmode='numeric'" : "") + ">";
+    }
+    return h + "<div class='info' id='err" + q.id + "' style='color:#b00020'></div></div>";
+  }
+  function lireReponsesPage() {
+    var pg = F.st.pages[F.idx];
+    pg.questions.forEach(function (q) {
+      if (q.type === "choix") { var r = document.querySelector("input[name='q" + q.id + "']:checked"); F.rep[q.id] = r ? r.value : ""; }
+      else if (q.type === "cases") F.rep[q.id] = Array.prototype.map.call(document.querySelectorAll("input[name='q" + q.id + "']:checked"), function (x) { return x.value; });
+      else { var el = $("q" + q.id); if (el) F.rep[q.id] = el.value.trim(); }
+    });
+  }
+  // Les règles de validation du formulaire ne sont pas lisibles : une question de quantité / montant attend un nombre.
+  function estNombre(q) { return q.type === "nombre" || q.type === "texte" && /QUANTIT|MONTANT|PRIX|NOMBRE|POIDS|\bQTE\b|\bQTÉ\b/i.test(q.titre); }
+  function vide(v) { return v === undefined || v === null || v === "" || (v instanceof Array && !v.length); }
+  /* Page suivante : branchement de la réponse choisie, sinon suite de la section, sinon page suivante. */
+  function pageSuivante() {
+    var pg = F.st.pages[F.idx], aller = null;
+    pg.questions.forEach(function (q) {
+      if ((q.type === "liste" || q.type === "choix") && !vide(F.rep[q.id]))
+        q.choix.forEach(function (c) { if (String(c.v) === String(F.rep[q.id]) && c.aller) aller = c.aller; });
+    });
+    aller = aller || pg.suite;
+    if (aller && aller.fin) return -1;
+    if (aller && aller.debut) return 0;
+    if (aller && aller.page !== undefined) {
+      for (var i = 0; i < F.st.pages.length; i++) if (F.st.pages[i].id === aller.page) return i;
+    }
+    return F.idx + 1 < F.st.pages.length ? F.idx + 1 : -1;
+  }
+  function afficherPageFormulaire() {
+    var pg = F.st.pages[F.idx], derniere = pageSuivante() === -1;
+    $("titre").textContent = F.st.nom || F.st.titre;
+    $("vueListe").innerHTML = "<div class='carte info'>Page " + F.chemin.length + " · " + esc(S.agent.nom) + "</div>" +
+      (pg.titre && F.idx > 0 ? "<h3 style='margin:14px 0 0'>" + esc(pg.titre) + "</h3>" : "") +
+      (pg.aide ? "<p class='info' style='white-space:pre-line'>" + esc(pg.aide) + "</p>" : "") +
+      pg.questions.map(champQuestion).join("") +
+      "<div class='ligne'>" + (F.chemin.length > 1 ? "<button class='bouton second' id='fPrec'>◀ Précédent</button>" : "") +
+      "<button class='bouton' id='fSuiv'>" + (derniere ? "Vérifier et envoyer" : "Suivant ▶") + "</button></div>";
+    montrer("vueListe");
+    Array.prototype.forEach.call(document.querySelectorAll("[data-filtre]"), function (f) {
+      var sel = $(f.getAttribute("data-filtre")), tous = Array.prototype.map.call(sel.options, function (o) { return o.value; });
+      f.oninput = function () {
+        var t = f.value.toUpperCase(), garde = sel.value;
+        sel.innerHTML = "<option value=''>— Choisir —</option>" + tous.filter(function (x) { return x && x.toUpperCase().indexOf(t) !== -1; })
+          .map(function (x) { return "<option" + (x === garde ? " selected" : "") + ">" + esc(x) + "</option>"; }).join("");
+      };
+    });
+    // Un choix qui change le branchement change aussi le libellé du bouton.
+    Array.prototype.forEach.call(document.querySelectorAll("[data-q]"), function (el) {
+      el.addEventListener("change", function () { lireReponsesPage(); $("fSuiv").textContent = pageSuivante() === -1 ? "Vérifier et envoyer" : "Suivant ▶"; });
+    });
+    if ($("fPrec")) $("fPrec").onclick = function () { lireReponsesPage(); F.chemin.pop(); F.idx = F.chemin[F.chemin.length - 1]; afficherPageFormulaire(); };
+    $("fSuiv").onclick = function () {
+      lireReponsesPage();
+      pg.questions.forEach(function (q) { var e = $("err" + q.id); if (e) e.textContent = ""; });
+      var manque = pg.questions.filter(function (q) {
+        if (q.requis && vide(F.rep[q.id])) { $("err" + q.id).textContent = "Réponse obligatoire."; return true; }
+        if (estNombre(q) && !vide(F.rep[q.id])) {
+          F.rep[q.id] = String(F.rep[q.id]).replace(/\s/g, "").replace(",", ".");
+          if (isNaN(parseFloat(F.rep[q.id])) || !/^-?[\d.]+$/.test(F.rep[q.id])) { $("err" + q.id).textContent = "Un nombre est attendu."; return true; }
+        }
+        return false;
+      });
+      if (manque.length) { $("bloc" + manque[0].id).scrollIntoView(); return; }
+      var n = pageSuivante();
+      if (n === -1) return recapFormulaire();
+      F.idx = n; F.chemin.push(n); afficherPageFormulaire();
+    };
+  }
+  /* Réponses retenues : seulement celles des pages réellement parcourues (comme Google Forms). */
+  function reponsesRetenues() {
+    var r = [], lignes = [];
+    F.chemin.forEach(function (i) {
+      F.st.pages[i].questions.forEach(function (q) {
+        if (q.type === "titre" || q.type === "non_gere" || vide(F.rep[q.id])) return;
+        r.push([q.titre, F.rep[q.id], q.type]);
+        lignes.push([q.titre, [].concat(F.rep[q.id]).join(", ")]);
+      });
+    });
+    return { reponses: r, lignes: lignes };
+  }
+  function recapFormulaire() {
+    var rr = reponsesRetenues();
+    $("vueListe").innerHTML = "<div class='carte'><h3>Vérifiez avant d'envoyer</h3><table>" + rr.lignes.map(function (l) {
+      return "<tr><td>" + esc(l[0]) + "</td><td class='v'>" + esc(l[1]) + "</td></tr>"; }).join("") + "</table></div>" +
+      "<div class='ligne'><button class='bouton second' id='fModif'>◀ Modifier</button><button class='bouton' id='fEnvoyer'>Envoyer</button></div>";
+    window.scrollTo(0, 0);
+    $("fModif").onclick = afficherPageFormulaire;
+    $("fEnvoyer").onclick = function () {
+      var b = $("fEnvoyer"); b.disabled = true; b.textContent = "Envoi…";
+      var it = { type: "form", form: F.cle, titre: F.st.nom || F.st.titre, jeton: nouveauJeton(), horodatage: Date.now(), essais: 0,
+                 agent: S.agent.nom, code: S.agent.code, reponses: rr.reponses,
+                 resume: rr.lignes.slice(0, 4).map(function (l) { return l[1]; }).join(" · ") };
+      soumettre(it).then(function (r) {
+        var couleur = r.enAttente ? "att" : (r.ok ? "" : "ko");
+        $("vueListe").innerHTML = "<div class='carte " + couleur + "'><h3>" + (r.enAttente ? "📥 " : r.ok ? "✅ " : "⛔ ") + esc(r.titre) + "</h3>" +
+          "<p style='white-space:pre-line'>" + esc(r.message || "") + "</p></div>" +
+          (r.ok ? "<button class='bouton' id='fNouveau'>Nouvelle saisie</button>" : "<button class='bouton' id='fCorriger'>◀ Corriger la saisie</button>") +
+          "<button class='bouton second' id='fAccueil'>Accueil</button>";
+        if ($("fNouveau")) $("fNouveau").onclick = function () { ouvrirFormulaire(F.cle); };
+        if ($("fCorriger")) $("fCorriger").onclick = afficherPageFormulaire;
+        $("fAccueil").onclick = function () { montrer("vueAccueil"); };
+      });
+    };
   }
 
   /* ---------- Scanner ---------- */
@@ -583,7 +805,8 @@
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(function () {});
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function () {});
 
-  Promise.all(["url", "donnees", "gabarit", "gv", "file", "envoyes", "aCorriger", "recents", "derniereSync"].map(lire)).then(function (v) {
+  Promise.all(["url", "donnees", "gabarit", "gv", "file", "envoyes", "aCorriger", "recents", "derniereSync", "agent", "formulaires"].map(lire)).then(function (v) {
+    S.agent = v[9] || null; S.formulaires = v[10] || null;
     S.url = v[0] || (typeof URL_SERVEUR === "string" ? URL_SERVEUR : "") || "";
     S.donnees = v[1] || null; S.gabarit = v[2] || ""; S.gv = v[3] || "";
     S.file = v[4] || []; S.envoyes = v[5] || []; S.aCorriger = v[6] || []; S.recents = v[7] || []; S.derniereSync = v[8] || 0;

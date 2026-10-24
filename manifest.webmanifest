@@ -1,7 +1,7 @@
 {
-  "name": "Suivi Atelier",
-  "short_name": "Atelier",
-  "description": "Déclarations de production de l'atelier, même sans réseau.",
+  "name": "DuoCore",
+  "short_name": "DuoCore",
+  "description": "DuoCore — atelier, stock et saisies, même sans réseau.",
   "lang": "fr",
   "start_url": "./",
   "scope": "./",
