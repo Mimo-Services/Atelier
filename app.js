@@ -5,7 +5,8 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-10-26 FH";
+  var VERSION_APP = "2026-10-26 FI";
+  var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
   /* ---------- Stockage (IndexedDB, clé → valeur) ---------- */
@@ -496,7 +497,7 @@
       majEtat();
       var envoi = envoiP ? envoiP.then(lancerEnvoi) : lancerEnvoi();
       envoi.then(function () { if (attenteJetons[it.jeton]) attenteJetons[it.jeton](resultats[it.jeton] || null); });
-      return attendre(reponse, DELAI_ENVOI + 5000).catch(function () { return null; }).then(function (r) {
+      return attendre(reponse, (it.type === "planif" ? DELAI_PLANIF : DELAI_ENVOI) + 5000).catch(function () { return null; }).then(function (r) {
         delete attenteJetons[it.jeton];
         synchroniser(false);
         if (!r) return enAttente();
@@ -543,7 +544,7 @@
       if (it.type === "planif") corps = { api: "planifEnvoyer", agent: it.agent, code: it.code, op: it.op, jeton: it.jeton, horodatage: String(it.horodatage), donnees: it.donnees };
       else if (it.type === "form") corps = { api: "repondre", agent: it.agent, code: it.code, formulaire: it.form, jeton: it.jeton, horodatage: String(it.horodatage), reponses: it.reponses };
       else { corps = { api: "declarer" }; for (var k in it.o) corps[k] = it.o[k]; }
-      return requete(S.url, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(corps), redirect: "follow" }, DELAI_ENVOI)
+      return requete(S.url, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(corps), redirect: "follow" }, it.type === "planif" ? DELAI_PLANIF : DELAI_ENVOI)
         .then(function (r) {
           S.derniereSync = Date.now(); ecrire("derniereSync", S.derniereSync);
           if (erreurPassagere(r) && it.essais < 6) { it.erreur = r.message; return sauver().then(function () { return n; }); }
@@ -702,7 +703,7 @@
       ecrire("planifLocal", S.planifLocal);
       var it = { type: "planif", op: "saisieBDC", jeton: nouveauJeton(), horodatage: Date.now(), agent: S.agent.nom, code: S.agent.code, donnees: donnees,
                  titre: "Saisie BDC" + (env ? " + envoi Statut Prod" : ""), resume: b.libelle + " · " + L.length + " ligne(s)", essais: 0 };
-      $("sbEnr").disabled = $("sbEnv").disabled = true; msg.textContent = "⏳ Envoi…";
+      $("sbEnr").disabled = $("sbEnv").disabled = true; msg.textContent = "⏳ Envoi… (jusqu'à 2 minutes : Lignes BDC, Paramètres montage, Statut Prod)";
       soumettre(it).then(function (r) {
         $("sbEnr").disabled = $("sbEnv").disabled = false;
         msg.textContent = (r.enAttente ? "📥 " : r.ok ? "✅ " : "⛔ ") + (r.titre || "") + "\n" + (r.message || "");
