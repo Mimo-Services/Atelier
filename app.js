@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-10-26 FG";
+  var VERSION_APP = "2026-10-26 FH";
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
   /* ---------- Stockage (IndexedDB, clé → valeur) ---------- */
@@ -55,7 +55,7 @@
   /* ---------- Outils ---------- */
   function $(id) { return document.getElementById(id); }
   function esc(v) {
-    return (v === null || v === undefined ? "" : String(v)).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    return (v === null || v === undefined ? "" : String(v)).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
   function dateCourte(t) {
     var d = new Date(t), z = function (n) { return (n < 10 ? "0" : "") + n; };
@@ -980,7 +980,9 @@
   $("btnEnregistrerUrl").onclick = function () {
     var v = $("urlServeur").value.trim();
     if (v && !/^https:\/\/script\.google\.com\/.+\/exec$/.test(v)) { alert("L'adresse doit commencer par https://script.google.com/ et finir par /exec"); return; }
-    S.url = v; ecrire("url", v).then(function () { synchroniser(true); });
+    S.url = v; var be = $("btnEnregistrerUrl"); be.textContent = "✅ Adresse enregistrée";
+    setTimeout(function () { be.textContent = "Enregistrer"; }, 3000);
+    ecrire("url", v).then(function () { synchroniser(true); });
   };
   window.addEventListener("online", function () { majEtat(); synchroniser(false); });
   window.addEventListener("offline", majEtat);
