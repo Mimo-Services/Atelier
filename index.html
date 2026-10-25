@@ -3,86 +3,120 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#1a1a2e">
+<meta name="theme-color" content="#1f2f45">
 <title>DuoCore</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icone-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <style>
-  * { box-sizing: border-box; }
+  :root {
+    --fond: #1c1b19; --tuile: #2a2826; --tuile2: #34312e; --bord: #3a3835;
+    --texte: #f1eee9; --doux: #a9a39b; --cuivre: #c8643c; --acier: #4f7593; --or: #e2c48d;
+    --vert: #2e7d32; --rouge: #c62828; --orange: #b26a00;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; height: 100%; }
-  body { font-family: sans-serif; font-size: 16px; color: #222; background: #fff; }
-  header { position: fixed; top: 0; left: 0; right: 0; height: 52px; background: #1a1a2e; color: #fff;
-           display: flex; align-items: center; gap: 8px; padding: 0 10px; z-index: 10; }
-  header h1 { font-size: 18px; margin: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  header button { background: none; border: none; color: #fff; font-size: 15px; padding: 6px 8px; }
-  .pastille { font-size: 13px; padding: 3px 8px; border-radius: 12px; white-space: nowrap; }
-  .enligne { background: #2e7d32; } .horsligne { background: #b00020; } .envoi { background: #b26a00; }
-  main { padding: 64px 14px 24px; max-width: 520px; margin: 0 auto; }
-  .gros { display: block; width: 100%; padding: 22px 12px; font-size: 20px; background: #1a1a2e; color: #fff;
-          border: none; border-radius: 10px; margin-top: 8px; }
-  .bouton { display: block; width: 100%; padding: 12px; font-size: 16px; background: #1a1a2e; color: #fff;
-            border: none; border-radius: 6px; margin-top: 10px; }
-  .bouton.second { background: #eee; color: #222; }
-  .bouton.alerte { background: #b26a00; }
-  .bouton:disabled { background: #999; }
-  .carte { border: 1px solid #ddd; border-radius: 8px; padding: 10px 12px; margin-top: 12px; line-height: 1.45; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 16px; color: var(--texte); background: var(--fond); }
+
+  /* En-tête */
+  header { position: fixed; top: 0; left: 0; right: 0; height: 64px; z-index: 10; display: flex; align-items: center; gap: 8px;
+           padding: 0 10px 0 12px; background: linear-gradient(135deg, #1f2f45, #172233); }
+  header::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: linear-gradient(90deg, var(--cuivre), var(--or), var(--acier)); }
+  header .logo { width: 34px; height: 34px; border-radius: 8px; flex: none; }
+  header .titres { flex: 1; min-width: 0; line-height: 1.15; }
+  header h1 { font-size: 20px; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: .3px; }
+  header .sous { font-size: 13px; color: #c9d3de; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  header button { background: none; border: none; color: #fff; font-size: 22px; padding: 6px 8px; line-height: 1; }
+  .pastille { font-size: 12px; padding: 4px 10px; border-radius: 14px; white-space: nowrap; background: rgba(255,255,255,.10); }
+  .enligne { color: #b9f6ca; } .horsligne { color: #ffcdd2; background: rgba(198,40,40,.35); } .envoi { color: #ffe0b2; background: rgba(178,106,0,.45); }
+
+  main { padding: 78px 14px 28px; max-width: 560px; margin: 0 auto; }
+
+  /* Tuiles de l'accueil */
+  .grille { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .tuile { position: relative; background: var(--tuile); border: 1px solid var(--bord); border-radius: 16px; min-height: 128px;
+           display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 14px 8px;
+           color: var(--texte); font-size: 16px; font-weight: 700; text-align: center; cursor: pointer; }
+  .tuile:active { background: var(--tuile2); transform: scale(.98); }
+  .tuile .ico { font-size: 40px; line-height: 1; }
+  .tuile .det { font-size: 12px; font-weight: 400; color: var(--doux); margin-top: -4px; }
+  .tuile.large { grid-column: 1 / -1; min-height: 96px; flex-direction: row; gap: 16px; }
+  .tuile.principale { background: linear-gradient(135deg, #3a2a22, #2a2826 60%); border-color: #5a3b2c; }
+  .badge { position: absolute; top: 10px; right: 10px; font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 12px; background: var(--cuivre); color: #fff; }
+  .badge.rouge { background: var(--rouge); } .badge.orange { background: var(--orange); }
+  .pied { margin-top: 16px; font-size: 12px; color: var(--doux); text-align: center; line-height: 1.5; }
+
+  /* Écrans secondaires */
+  .carte { background: var(--tuile); border: 1px solid var(--bord); border-radius: 14px; padding: 12px 14px; margin-top: 12px; line-height: 1.45; }
   .carte h3 { margin: 0 0 6px; font-size: 16px; }
-  .info { font-size: 14px; color: #555; }
-  .ko { background: #fdecea; border-color: #b00020; color: #8a0018; }
-  .att { background: #fff4e5; border-color: #b26a00; }
-  label { display: block; margin-top: 12px; font-weight: bold; }
-  select, input { width: 100%; padding: 9px; font-size: 16px; margin-top: 4px; }
-  .lien { color: #0d47a1; text-decoration: underline; background: none; border: none; padding: 0; font-size: 15px; }
-  #vueLot { position: fixed; top: 52px; left: 0; right: 0; bottom: 0; display: none; }
-  #cadre { width: 100%; height: 100%; border: 0; display: block; }
-  #vueScan { position: fixed; inset: 52px 0 0 0; background: #000; display: none; }
+  .info { font-size: 14px; color: var(--doux); }
+  .ko { background: #3a1f1f; border-color: #8e2a2a; color: #ffd0d0; }
+  .att { background: #3a2f1a; border-color: #7a5410; }
+  label { display: block; margin-top: 12px; font-weight: 700; }
+  select, input, textarea { width: 100%; padding: 11px 10px; font-size: 16px; margin-top: 6px; color: var(--texte); background: var(--fond);
+                            border: 1px solid #55514c; border-radius: 10px; }
+  select:focus, input:focus, textarea:focus { outline: 2px solid var(--cuivre); border-color: transparent; }
+  input[type=radio], input[type=checkbox] { accent-color: var(--cuivre); }
+  .bouton { display: block; width: 100%; padding: 13px; font-size: 16px; font-weight: 700; background: var(--cuivre); color: #fff;
+            border: none; border-radius: 12px; margin-top: 12px; }
+  .bouton.second { background: var(--tuile2); color: var(--texte); border: 1px solid var(--bord); font-weight: 600; }
+  .bouton.alerte { background: var(--orange); }
+  .bouton:disabled { background: #555; }
+  .lien { color: var(--or); text-decoration: underline; background: none; border: none; padding: 0; font-size: 15px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 8px; }
+  td { padding: 6px 0; border-bottom: 1px solid var(--bord); } td.v { text-align: right; font-weight: 700; }
+  .ligne { display: flex; gap: 8px; } .ligne > * { flex: 1; }
+  h3 { color: var(--texte); }
+
+  #vueLot { position: fixed; top: 64px; left: 0; right: 0; bottom: 0; display: none; background: var(--fond); }
+  #cadre { width: 100%; height: 100%; border: 0; display: block; background: var(--fond); }
+  #vueScan { position: fixed; inset: 64px 0 0 0; background: #000; display: none; }
   #video { width: 100%; height: 100%; object-fit: cover; }
   #viseur { position: absolute; left: 50%; top: 45%; width: 64vw; height: 64vw; max-width: 320px; max-height: 320px;
-            transform: translate(-50%, -50%); border: 4px solid #fff; border-radius: 16px; box-shadow: 0 0 0 9999px rgba(0,0,0,.35); }
-  #msgScan { position: absolute; left: 0; right: 0; bottom: 90px; text-align: center; color: #fff; font-size: 16px; padding: 0 16px; }
-  #annulerScan { position: absolute; left: 16px; right: 16px; bottom: 20px; width: auto; }
-  table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 8px; }
-  td { padding: 5px 0; border-bottom: 1px solid #eee; } td.v { text-align: right; font-weight: bold; }
-  .ligne { display: flex; gap: 8px; } .ligne > * { flex: 1; }
+            transform: translate(-50%, -50%); border: 4px solid var(--or); border-radius: 18px; box-shadow: 0 0 0 9999px rgba(0,0,0,.45); }
+  #msgScan { position: absolute; left: 0; right: 0; bottom: 96px; text-align: center; color: #fff; font-size: 16px; padding: 0 16px; }
+  #annulerScan { position: absolute; left: 16px; right: 16px; bottom: 22px; width: auto; }
 </style>
 </head>
 <body>
 <header>
-  <button id="btnRetour" style="display:none" aria-label="Retour">◀</button>
-  <h1 id="titre">DuoCore</h1>
+  <button id="btnRetour" style="display:none" aria-label="Retour">‹</button>
+  <img class="logo" src="icone-192.png" alt="">
+  <div class="titres"><h1 id="titre">DuoCore</h1><div class="sous" id="sousTitre">Atelier</div></div>
   <span id="etatReseau" class="pastille horsligne">Hors ligne</span>
-  <button id="btnSync" aria-label="Synchroniser">🔄</button>
+  <button id="btnSync" aria-label="Synchroniser">⟳</button>
+  <button id="btnMenu" aria-label="Menu">☰</button>
 </header>
 
 <main id="vueAccueil">
-  <div id="blocAlertes"></div>
-  <button class="gros" id="btnScanner">📷 Scanner la fiche</button>
+  <div class="grille" id="tuiles"></div>
+  <div class="pied" id="etatDonnees">Aucune donnée sur ce téléphone : connectez-le une première fois au réseau.</div>
+</main>
 
+<main id="vueManuel" style="display:none">
   <div class="carte">
-    <h3>Sans QR code</h3>
+    <h3>Ouvrir un lot sans QR code</h3>
     <label for="choixBdc">BDC</label>
     <select id="choixBdc"></select>
     <label for="choixCle">Lot</label>
     <select id="choixCle"></select>
-    <button class="bouton second" id="btnOuvrirManuel">Ouvrir le lot</button>
+    <button class="bouton" id="btnOuvrirManuel">Ouvrir le lot</button>
   </div>
-
   <div class="carte" id="carteRecents" style="display:none">
     <h3>Derniers lots ouverts</h3>
     <div id="recents"></div>
   </div>
+</main>
 
-  <div class="carte info" id="etatDonnees">Aucune donnée sur ce téléphone : connectez-le une première fois au réseau.</div>
-
-  <div class="carte" id="carteReglages" style="display:none">
-    <h3>Réglages</h3>
+<main id="vueReglages" style="display:none">
+  <div class="carte" id="carteAgent"></div>
+  <div class="carte">
+    <h3>Serveur</h3>
     <label for="urlServeur">Adresse du serveur (…/exec)</label>
     <input id="urlServeur" type="url" autocomplete="off">
     <button class="bouton second" id="btnEnregistrerUrl">Enregistrer</button>
     <p class="info" id="infoVersion"></p>
   </div>
-  <p style="text-align:center"><button class="lien" id="btnReglages">Réglages</button></p>
 </main>
 
 <main id="vueListe" style="display:none"></main>

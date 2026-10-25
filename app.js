@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-10-24 ED";
+  var VERSION_APP = "2026-10-26 FG";
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
   /* ---------- Stockage (IndexedDB, clé → valeur) ---------- */
@@ -44,7 +44,9 @@
     aCorriger: [],  // refusées par le serveur
     recents: [], derniereSync: 0, lotOuvert: null,
     agent: null,        // { nom, code } : agent connecté pour les saisies (Stock…)
-    formulaires: null   // { genere, droits, formulaires: { stock: {...} } }
+    formulaires: null,  // { genere, droits, formulaires: { stock: {...} } }
+    planif: null,       // { genere, bdcs: [...], papiers } : planification (droit « Planification »)
+    planifLocal: {}     // saisies faites sur le téléphone, par BDC (affichées tant que le serveur ne les a pas reprises)
   };
   function sauver() {
     return Promise.all([ecrire("file", S.file), ecrire("envoyes", S.envoyes), ecrire("aCorriger", S.aCorriger), ecrire("recents", S.recents)]);
@@ -235,13 +237,15 @@
 
   /* ---------- Écrans ---------- */
   function montrer(vue) {
-    ["vueAccueil", "vueListe"].forEach(function (v) { $(v).style.display = v === vue ? "block" : "none"; });
+    ["vueAccueil", "vueListe", "vueManuel", "vueReglages"].forEach(function (v) { $(v).style.display = v === vue ? "block" : "none"; });
     $("vueScan").style.display = vue === "vueScan" ? "block" : "none";
     $("vueLot").style.display = vue === "vueLot" ? "block" : "none";
     $("btnRetour").style.display = vue === "vueAccueil" ? "none" : "";
     if (vue !== "vueScan") arreterScan();
     if (vue !== "vueLot") { $("cadre").srcdoc = ""; S.lotOuvert = null; }
     if (vue === "vueAccueil") { $("titre").textContent = "DuoCore"; majAccueil(); }
+    if (vue === "vueManuel") { $("titre").textContent = "Lot sans QR"; majAccueil(); }
+    if (vue === "vueReglages") { $("titre").textContent = "Réglages"; majAccueil(); }
     window.scrollTo(0, 0);
   }
 
@@ -254,40 +258,56 @@
 
   function majAccueil() {
     majEtat();
-    var h = "";
-    if (S.aCorriger.length) h += "<div class='carte ko'><h3>⛔ " + S.aCorriger.length + " déclaration(s) refusée(s) — à corriger</h3>" +
-      "<button class='bouton alerte' data-liste='corriger'>Voir</button></div>";
-    if (S.file.length) h += "<div class='carte att'><h3>⏳ " + S.file.length + " envoi(s) en attente</h3>" +
-      "<div class='info'>Ils partiront seuls dès que le réseau revient. Ne les refaites pas.</div>" +
-      "<button class='bouton second' data-liste='attente'>Voir</button></div>";
-    // Saisies : formulaires autorisés pour l'agent connecté, ou bouton de connexion.
-    var fs = S.formulaires && S.formulaires.formulaires;
-    if (S.agent && fs && Object.keys(fs).length) {
-      h += "<div class='carte'><h3>Saisies · " + esc(S.agent.nom) + "</h3>" + Object.keys(fs).map(function (k) {
-        return "<button class='bouton' data-form='" + k + "'>" + (k === "stock" ? "📦 " : "🧾 ") + esc(fs[k].nom || fs[k].titre) + "</button>";
-      }).join("") + "<p style='text-align:right;margin:6px 0 0'><button class='lien' id='btnDeconnexion'>Changer d'agent</button></p></div>";
-    } else if (S.agent) {
-      h += "<div class='carte info'>Saisies : aucune rubrique autorisée pour " + esc(S.agent.nom) + ". <button class='lien' id='btnDeconnexion'>Changer d'agent</button></div>";
-    } else if (S.url) {
-      h += "<button class='bouton second' id='btnConnexion'>🧾 Saisies (Stock…) : se connecter</button>";
+    // Tuiles de l'accueil : atelier, saisies autorisées, files d'envoi, synchronisation.
+    var fs = (S.agent && S.formulaires && S.formulaires.formulaires) || {}, t = [];
+    function tuile(id, ico, lib, det, opt) {
+      opt = opt || {};
+      t.push("<div class='tuile" + (opt.cls ? " " + opt.cls : "") + "' data-t='" + id + "' role='button' tabindex='0'>" +
+        (opt.badge ? "<span class='badge" + (opt.bcls ? " " + opt.bcls : "") + "'>" + esc(opt.badge) + "</span>" : "") +
+        "<span class='ico'>" + ico + "</span><span>" + esc(lib) + "</span>" + (det ? "<span class='det'>" + esc(det) + "</span>" : "") + "</div>");
     }
-    $("blocAlertes").innerHTML = h;
-    Array.prototype.forEach.call($("blocAlertes").querySelectorAll("[data-form]"), function (b) {
-      b.onclick = function () { ouvrirFormulaire(b.getAttribute("data-form")); };
+    tuile("scan", "📷", "Scanner une fiche", "Atelier", { cls: "principale" });
+    tuile("manuel", "🔢", "Lot sans QR", S.recents.length ? "Derniers lots" : "");
+    Object.keys(fs).forEach(function (k) {
+      tuile("form:" + k, k === "stock" ? "📦" : "🧾", fs[k].nom || fs[k].titre || k, fs[k].erreur ? "indisponible" : "");
     });
+    if (droitPlanif()) {
+      var nPl = S.file.filter(function (x) { return x.type === "planif"; }).length;
+      tuile("planif", "🗂️", "Planification", "BDC, saisie", nPl ? { badge: nPl, bcls: "orange", cls: "large" } : { cls: "large" });
+    }
+    if (!S.agent && S.url) tuile("connexion", "🔐", "Saisies", "Se connecter");
+    tuile("attente", "⏳", "En attente", S.file.length ? "à envoyer" : "rien", S.file.length ? { badge: S.file.length, bcls: "orange" } : {});
+    tuile("corriger", "⛔", "À corriger", S.aCorriger.length ? "refusés" : "rien", S.aCorriger.length ? { badge: S.aCorriger.length, bcls: "rouge" } : {});
+    tuile("sync", "⇅", "Synchronisation", S.derniereSync ? dateCourte(S.derniereSync) : "jamais");
+    tuile("reglages", "⚙️", "Réglages", S.agent ? S.agent.nom : "");
+    $("tuiles").innerHTML = t.join("");
+    Array.prototype.forEach.call($("tuiles").querySelectorAll("[data-t]"), function (el) {
+      el.onclick = function () {
+        var id = el.getAttribute("data-t");
+        if (id === "scan") demarrerScan();
+        else if (id === "manuel") montrer("vueManuel");
+        else if (id.indexOf("form:") === 0) ouvrirFormulaire(id.substring(5));
+        else if (id === "connexion") pageConnexion();
+        else if (id === "planif") afficherPlanif();
+        else if (id === "attente") afficherListe("attente");
+        else if (id === "corriger") afficherListe("corriger");
+        else if (id === "sync") $("btnSync").onclick();
+        else if (id === "reglages") montrer("vueReglages");
+      };
+    });
+    $("sousTitre").textContent = S.agent ? S.agent.nom + " · Atelier & saisies" : "Atelier";
+    $("carteAgent").innerHTML = S.agent
+      ? "<h3>Agent connecté</h3><div>" + esc(S.agent.nom) + "</div><button class='bouton second' id='btnDeconnexion'>Changer d'agent</button>"
+      : "<h3>Saisies</h3><div class='info'>Aucun agent connecté sur ce téléphone.</div>" + (S.url ? "<button class='bouton' id='btnConnexion'>Se connecter</button>" : "");
     if ($("btnConnexion")) $("btnConnexion").onclick = pageConnexion;
     if ($("btnDeconnexion")) $("btnDeconnexion").onclick = function () {
       if (S.file.some(function (x) { return x.type === "form"; }) && !confirm("Des saisies sont en attente d'envoi : elles partiront quand même. Changer d'agent ?")) return;
-      S.agent = null; S.formulaires = null; ecrire("agent", null); ecrire("formulaires", null); majAccueil();
+      S.agent = null; S.formulaires = null; S.planif = null; ecrire("agent", null); ecrire("formulaires", null); ecrire("planif", null); montrer("vueAccueil");
     };
-    Array.prototype.forEach.call($("blocAlertes").querySelectorAll("[data-liste]"), function (b) {
-      b.onclick = function () { afficherListe(b.getAttribute("data-liste")); };
-    });
 
     var d = S.donnees;
     $("etatDonnees").innerHTML = d
-      ? "Données du <b>" + dateCourte(d.genere) + "</b> · " + d.lots.length + " lots · serveur " + esc(d.version) +
-        (S.derniereSync ? "<br>Dernière connexion réussie : " + dateCourte(S.derniereSync) : "")
+      ? "Données du " + dateCourte(d.genere) + " · " + d.lots.length + " lots en cours"
       : (S.url ? "Aucune donnée sur ce téléphone : connectez-le au réseau puis appuyez sur 🔄."
                : "Adresse du serveur inconnue : scannez une fiche (avec réseau) ou renseignez-la dans Réglages.");
 
@@ -326,6 +346,7 @@
   }
   /* Résumé lisible d'un élément de la file (déclaration atelier ou saisie de formulaire). */
   function descriptionItem(x) {
+    if (x.type === "planif") return "<b>🗂️ " + esc(x.titre || "Planification") + "</b><br>" + esc(x.resume || "") + "<br><small>" + esc(x.agent) + " · " + dateCourte(x.horodatage) + "</small>";
     if (x.type === "form") return "<b>" + esc(x.titre || "Saisie") + "</b><br>" + esc(x.resume || "") + "<br><small>" + esc(x.agent) + " · " + dateCourte(x.horodatage) + "</small>";
     var o = x.o;
     return esc(o.cle) + " · " + esc(o.bdc) + "<br>" + esc(o.poste) + libEvt(o) + (o.quantite ? " · " + esc(o.quantite) : "") +
@@ -345,6 +366,7 @@
           (r.details && r.details.length ? "<table>" + r.details.map(function (d) {
             return "<tr><td>" + esc(d[0]) + "</td><td class='v'>" + esc(d[1]) + "</td></tr>"; }).join("") + "</table>" : "") +
           "<div class='ligne'>" + (x.o ? "<button class='bouton second' data-ouvrir='" + i + "'>Ouvrir le lot</button>" : "") +
+          (x.type === "planif" && x.donnees ? "<button class='bouton second' data-planif='" + i + "'>Reprendre la saisie</button>" : "") +
           "<button class='bouton' data-effacer='" + i + "'>Vu, effacer</button></div></div>";
       }).join("") || "<p>Rien à corriger.</p>";
     } else {
@@ -360,6 +382,9 @@
     montrer("vueListe");
     Array.prototype.forEach.call(v.querySelectorAll("[data-effacer]"), function (b) {
       b.onclick = function () { S.aCorriger.splice(+b.getAttribute("data-effacer"), 1); sauver(); afficherListe("corriger"); };
+    });
+    Array.prototype.forEach.call(v.querySelectorAll("[data-planif]"), function (b) {
+      b.onclick = function () { ouvrirSaisieBDC(S.aCorriger[+b.getAttribute("data-planif")].donnees.id); };
     });
     Array.prototype.forEach.call(v.querySelectorAll("[data-ouvrir]"), function (b) {
       b.onclick = function () { var o = S.aCorriger[+b.getAttribute("data-ouvrir")].o; ouvrirLot(o.bdc, o.cle); };
@@ -410,7 +435,7 @@
     S.recents = [{ bdc: lot.bdc, cle: lot.cle }].concat(S.recents.filter(function (r) { return !(r.bdc === lot.bdc && r.cle === lot.cle); })).slice(0, 10);
     sauver();
     var ctx = contexteLot(lot), nAtt = S.file.filter(function (x) { return x.o && x.o.bdc === lot.bdc && x.o.cle === lot.cle; }).length;
-    var bandeau = "<div style='margin-top:8px;padding:8px 10px;border-radius:6px;font-size:13px;background:" + (nAtt ? "#fff4e5" : "#f3f3f3") + "'>" +
+    var bandeau = "<div style='margin-top:8px;padding:8px 10px;border-radius:10px;font-size:13px;background:" + (nAtt ? "#3a2f1a" : "#2a2826") + "'>" +
       (nAtt ? "⏳ <b>" + nAtt + " déclaration(s) de ce lot en attente d'envoi</b> : déjà prises en compte ci-dessous, pas encore dans l'avancement.<br>" : "") +
       "Avancement : données du " + dateCourte(S.donnees.genere) + "</div>";
     var options = lot.etapes.map(function (n) { return "<option value=\"" + esc(n) + "\">" + esc(n) + "</option>"; }).join("") || "<option value=''>—</option>";
@@ -421,12 +446,33 @@
     };
     var html = S.gabarit;
     Object.keys(vals).forEach(function (k) { html = html.split(k).join(vals[k]); });
+    html = html.replace("</head>", STYLE_SOMBRE_LOT + "</head>");
     S.lotOuvert = lot;
     $("titre").textContent = lot.cle + " · " + lot.bdc;
     montrer("vueLot");
     S.lotOuvert = lot;
     $("cadre").srcdoc = html;
   }
+
+  /* Thème sombre DuoCore appliqué à la page de déclaration (gabarit du serveur, conçu en clair). */
+  var STYLE_SOMBRE_LOT = "<style>" +
+    "body{background:#1c1b19!important;color:#f1eee9!important;font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif!important}" +
+    "body>h2:first-child{display:none}" +
+    ".entete{background:#2a2826!important;border-radius:14px!important;border:1px solid #3a3835}" +
+    "input,select,textarea{background:#2a2826!important;color:#f1eee9!important;border:1px solid #55514c!important;border-radius:10px!important;padding:10px!important}" +
+    "input[type=checkbox],input[type=radio]{accent-color:#c8643c}" +
+    "button{background:#c8643c!important;border-radius:12px!important;font-weight:700}button:disabled{background:#555!important}" +
+    "#mRetry{background:#b26a00!important}" +
+    "#info{border-radius:10px!important}.ok{background:#1f3324!important;color:#b9f6ca!important;border-color:#2e7d32!important}" +
+    ".ko{background:#3a1f1f!important;color:#ffd0d0!important;border-color:#8e2a2a!important}" +
+    ".av{background:#2a2826!important;border-color:#3a3835!important;border-radius:14px!important}.av h4{color:#e2c48d!important;border-color:#3a3835!important}" +
+    ".br{background:#3a3835!important}.ici{background:#1f2f45!important}.arb div{border-color:#3a3835!important}" +
+    ".pp.todo{background:#3a3835!important;color:#ccc!important}.pp.ok{background:#1f3324!important;color:#b9f6ca!important}.pp.cours{background:#3a2f1a!important;color:#ffcc80!important}" +
+    ".puce.cur{border-color:#e2c48d!important}" +
+    "#mBoite{background:#2a2826!important;color:#f1eee9!important;border-radius:16px!important}#mDet td{border-color:#3a3835}" +
+    "#blocStock{border-color:#3a3835!important;border-radius:12px!important}" +
+    "[style*='color:#666'],[style*='color:#555']{color:#a9a39b!important}#infoOp{color:#ff8a80!important}" +
+    "</style>";
 
   /* ---------- Déclarations : file d'attente et envoi ---------- */
   var resultats = {};      // jeton → réponse du serveur
@@ -478,7 +524,9 @@
       var p1 = (S.url && (forcerDonnees || age > RAFRAICHIR_APRES || (n > 0 && age > 5 * 60000))) ? rafraichir().catch(function () {}) : null;
       var ageF = S.formulaires ? Date.now() - S.formulaires.recu : Infinity;
       var p2 = (S.url && S.agent && (forcerDonnees || ageF > RAFRAICHIR_APRES)) ? rafraichirFormulaires().catch(function () {}) : null;
-      return Promise.all([p1, p2]);
+      var ageP = S.planif ? Date.now() - S.planif.recu : Infinity;
+      var p3 = (S.url && droitPlanif() && (forcerDonnees || n > 0 || ageP > RAFRAICHIR_APRES)) ? rafraichirPlanif().catch(function () {}) : null;
+      return Promise.all([p1, p2, p3]);
     }).catch(function () {}).then(function () { majEtat(); if ($("vueAccueil").style.display !== "none") majAccueil(); });
   }
   function erreurPassagere(r) {
@@ -492,7 +540,8 @@
       var it = S.file[0];
       it.essais = (it.essais || 0) + 1;
       var corps;
-      if (it.type === "form") corps = { api: "repondre", agent: it.agent, code: it.code, formulaire: it.form, jeton: it.jeton, horodatage: String(it.horodatage), reponses: it.reponses };
+      if (it.type === "planif") corps = { api: "planifEnvoyer", agent: it.agent, code: it.code, op: it.op, jeton: it.jeton, horodatage: String(it.horodatage), donnees: it.donnees };
+      else if (it.type === "form") corps = { api: "repondre", agent: it.agent, code: it.code, formulaire: it.form, jeton: it.jeton, horodatage: String(it.horodatage), reponses: it.reponses };
       else { corps = { api: "declarer" }; for (var k in it.o) corps[k] = it.o[k]; }
       return requete(S.url, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(corps), redirect: "follow" }, DELAI_ENVOI)
         .then(function (r) {
@@ -501,7 +550,7 @@
           S.file.shift();
           resultats[it.jeton] = r;
           if (attenteJetons[it.jeton]) attenteJetons[it.jeton](r);
-          if (r.ok) { if (it.o) { S.envoyes.push({ jeton: it.jeton, o: it.o, recuA: Date.now() }); n++; } }
+          if (r.ok) { if (it.o) { S.envoyes.push({ jeton: it.jeton, o: it.o, recuA: Date.now() }); n++; } else if (it.type === "planif") n++; }
           else { var c = JSON.parse(JSON.stringify(it)); c.r = r; delete c.code; S.aCorriger.push(c); }
           return sauver().then(function () { majEtat(); return suivant(); });
         }, function (e) {
@@ -526,6 +575,142 @@
       return Promise.all([ecrire("donnees", d), ecrire("derniereSync", S.derniereSync), sauver()]);
     }).then(function () { rafP = null; }, function (e) { rafP = null; throw e; });
     return rafP;
+  }
+
+  /* ---------- Planification (BDC) : hors ligne, envoyée à la synchronisation ---------- */
+  var rafPl = null;
+  function droitPlanif() { return !!(S.agent && S.formulaires && S.formulaires.droits && S.formulaires.droits.planif); }
+  function rafraichirPlanif() {
+    if (!S.url || !droitPlanif()) return Promise.resolve();
+    if (rafPl) return rafPl;
+    rafPl = requete(S.url, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, redirect: "follow",
+      body: JSON.stringify({ api: "planif", agent: S.agent.nom, code: S.agent.code }) }, DELAI_DONNEES).then(function (r) {
+      if (!r.ok) throw new Error(r.message || "accès refusé");
+      r.recu = Date.now(); S.planif = r;
+      // Saisies locales déjà appliquées par le serveur : retirées.
+      Object.keys(S.planifLocal).forEach(function (id) {
+        if (!S.file.some(function (x) { return x.type === "planif" && x.donnees.id === id; })) delete S.planifLocal[id];
+      });
+      return Promise.all([ecrire("planif", r), ecrire("planifLocal", S.planifLocal)]);
+    }).then(function () { rafPl = null; }, function (e) { rafPl = null; throw e; });
+    return rafPl;
+  }
+  function bdcPlanif(id) { return ((S.planif && S.planif.bdcs) || []).filter(function (b) { return b.id === id; })[0] || null; }
+  function enAttentePlanif(id) { return S.file.some(function (x) { return x.type === "planif" && x.donnees.id === id; }); }
+
+  function afficherPlanif() {
+    $("titre").textContent = "Planification";
+    var P = S.planif;
+    if (!P) {
+      $("vueListe").innerHTML = "<div class='carte'><h3>Planification</h3><p class='info'>Aucune donnée sur ce téléphone : connectez-vous au réseau puis appuyez sur ⟳.</p></div>";
+      montrer("vueListe"); return;
+    }
+    var h = "<div class='carte'><h3>🗂️ BDC ouverts</h3><div class='info'>Données du " + dateCourte(P.genere) + " · " + P.bdcs.length + " BDC. " +
+      "Les saisies faites ici partent à la synchronisation.</div><input id='plCherche' placeholder='Rechercher un BDC, un client…'></div><div id='plListe'></div>";
+    $("vueListe").innerHTML = h;
+    montrer("vueListe");
+    function liste() {
+      var q = $("plCherche").value.trim().toLowerCase();
+      $("plListe").innerHTML = P.bdcs.filter(function (b) { return !q || (b.libelle + " " + b.client + " " + b.statut).toLowerCase().indexOf(q) !== -1; })
+        .map(function (b) {
+          var att = enAttentePlanif(b.id);
+          return "<div class='carte" + (att ? " att" : "") + "' data-bdc='" + esc(b.id) + "' style='cursor:pointer'><b>" + esc(b.libelle) + "</b>" +
+            "<div class='info'>" + esc(b.client || "—") + " · " + esc(b.statut || "—") + " · " + b.lignes.length + " ligne(s)" + (att ? " · ⏳ saisie en attente d'envoi" : "") + "</div></div>";
+        }).join("") || "<p class='info'>Aucun BDC.</p>";
+      Array.prototype.forEach.call($("plListe").querySelectorAll("[data-bdc]"), function (el) { el.onclick = function () { ouvrirSaisieBDC(el.getAttribute("data-bdc")); }; });
+    }
+    $("plCherche").oninput = liste; liste();
+  }
+
+  function ouvrirSaisieBDC(id) {
+    var b = bdcPlanif(id); if (!b) return;
+    var loc = S.planifLocal[id], src = loc || { lignes: b.lignes, commun: b.commun, papCommun: b.papCommun };
+    var PAP = (S.planif.papiers || []);
+    function opt(v) { var o = "<option value=''>—</option>", ok = false; PAP.forEach(function (x) { o += "<option" + (x === v ? " selected" : "") + ">" + esc(x) + "</option>"; if (x === v) ok = true; }); if (v && !ok) o += "<option selected>" + esc(v) + "</option>"; return o; }
+    $("titre").textContent = "Saisie BDC";
+    var h = "<div class='carte'><h3>" + esc(b.libelle) + "</h3><div class='info'>" + esc(b.client || "") + " · " + esc(b.statut || "") +
+      (b.qteGlobale !== "" && b.qteGlobale != null ? " · Qté globale " + Number(b.qteGlobale).toLocaleString("fr-FR") : "") + "</div>" +
+      (loc ? "<div class='carte att' style='margin-top:8px'>⏳ Votre saisie du " + dateCourte(loc.quand) + " " + (enAttentePlanif(id) ? "attend l'envoi." : "est envoyée ; ⟳ pour voir l'état du serveur.") + "</div>" : "") +
+      "<label>Format fini commun (mm, L×H)</label><input id='sbFmt' placeholder='100x150' value='" + esc(src.commun) + "'>" +
+      "<label>Papier commun</label><select id='sbPap'>" + opt(src.papCommun) + "</select>" +
+      "<label>Feuillets / carnet pour tous (sauf composants)</label><div class='ligne'><input id='sbFc' inputmode='numeric' placeholder='25'><button class='bouton second' id='sbFcOk' style='margin-top:6px'>Appliquer</button></div></div>" +
+      "<div id='sbLignes'></div><button class='bouton second' id='sbAjout'>➕ Ligne</button>" +
+      "<div class='carte' id='sbTotal'></div><div class='carte' id='sbConf' style='display:none'></div>" +
+      "<button class='bouton second' id='sbEnr'>💾 Enregistrer</button><button class='bouton' id='sbEnv'>✅ Enregistrer et envoyer dans Statut Prod</button>" +
+      "<div id='sbMsg' class='info' style='margin-top:8px;white-space:pre-line'></div>";
+    $("vueListe").innerHTML = h;
+    montrer("vueListe");
+    function carte(l) {
+      l = l || {}; var comp = /\(composant\)\s*$/i.test(l.nom || ""), nom = String(l.nom || "").replace(/\s*\(composant\)\s*$/i, "");
+      var d = document.createElement("div"); d.className = "carte sbL";
+      d.innerHTML = "<div class='ligne'><div style='flex:3'><label style='margin-top:0'>Article (nom sur BDC)</label><input class='nm' value='" + esc(nom) + "'></div>" +
+        "<button class='lien' style='flex:0;align-self:flex-start;color:#ff8a80;font-size:22px' title='Supprimer'>✖</button></div>" +
+        "<div class='ligne'><div><label>Qté BDC</label><input class='q' inputmode='decimal' value='" + esc(l.qte) + "'></div><div><label>N° départ</label><input class='dp' inputmode='numeric' value='" + esc(l.depart) + "'></div><div><label>Abrév.</label><input class='ab' value='" + esc(l.abr) + "'></div></div>" +
+        "<div class='ligne'><div><label>Format (si diff.)</label><input class='fm' placeholder='LxH' value='" + esc(l.fmt) + "'></div><div><label>Feuillets / carnet</label><input class='fc' inputmode='numeric' placeholder='1' value='" + esc(l.fc) + "'></div><div><label>Stock fini</label><input class='sf' inputmode='numeric' placeholder='0' value='" + esc(l.sf) + "'></div></div>" +
+        "<label>Papier (si différent)</label><select class='pp'>" + opt(l.pap) + "</select>" +
+        "<label style='font-weight:400'><input type='checkbox' class='cp' style='width:auto'" + (comp ? " checked" : "") + "> Composant (couverture, dossier… non facturé)</label>" +
+        (l.etat ? "<div class='info'>" + esc(l.etat) + "</div>" : "");
+      d.querySelector(".lien").onclick = function () { d.remove(); total(); };
+      d.querySelector(".q").oninput = total; d.querySelector(".cp").onchange = total;
+      $("sbLignes").appendChild(d);
+    }
+    function num(v) { v = String(v || "").replace(/[\s  ]/g, ""); if (/^-?\d{1,3}([.,]\d{3})+$/.test(v)) return parseFloat(v.replace(/[.,]/g, "")); var x = parseFloat(v.replace(",", ".")); return isNaN(x) ? 0 : x; }
+    function lignes() {
+      var L = [];
+      Array.prototype.forEach.call(document.querySelectorAll(".sbL"), function (c) {
+        var n = c.querySelector(".nm").value.trim(); if (!n) return;
+        L.push({ nom: n + (c.querySelector(".cp").checked ? " (composant)" : ""), qte: c.querySelector(".q").value, depart: c.querySelector(".dp").value,
+                 abr: c.querySelector(".ab").value, fmt: c.querySelector(".fm").value, fc: c.querySelector(".fc").value, pap: c.querySelector(".pp").value, sf: c.querySelector(".sf").value });
+      });
+      return L;
+    }
+    // Hausse de quantité par rapport aux lignes du serveur : confirmation du montant (comme dans Sheets).
+    function hausses(L) {
+      var av = {}; b.lignes.forEach(function (l) { av[String(l.nom).toLowerCase()] = num(l.qte); });
+      return L.filter(function (l) { var a = av[String(l.nom).toLowerCase()]; return b.lignes.length && (a === undefined ? num(l.qte) > 0 : num(l.qte) > a); });
+    }
+    function total() {
+      var t = 0; lignes().forEach(function (l) { if (!/\(composant\)\s*$/i.test(l.nom)) t += num(l.qte); });
+      var g = b.qteGlobale !== "" && b.qteGlobale != null ? Number(b.qteGlobale) : null;
+      $("sbTotal").innerHTML = "Total saisi : <b>" + t.toLocaleString("fr-FR") + "</b>" + (g !== null ? " / Qté globale : <b>" + g.toLocaleString("fr-FR") + "</b> " + (Math.abs(t - g) < 0.001 ? "✔" : "✖") : "");
+      var hs = hausses(lignes());
+      $("sbConf").style.display = hs.length ? "" : "none";
+      if (hs.length && !$("sbMotif")) $("sbConf").innerHTML = "<h3>⚠️ Hausse de quantité</h3><div class='info' id='sbHs'></div>" +
+        "<label style='font-weight:400'><input type='radio' name='sbM' value='garder' checked style='width:auto'> Garder le montant actuel du BDC</label>" +
+        "<label style='font-weight:400'><input type='radio' name='sbM' value='nouveau' style='width:auto'> Nouveau montant :</label><input id='sbMontant' inputmode='decimal'>" +
+        "<label>Motif (obligatoire)</label><input id='sbMotif' placeholder='ex. avenant client du …'>";
+      if (hs.length) $("sbHs").textContent = hs.map(function (l) { return l.nom + " → " + l.qte; }).join(" ; ");
+    }
+    (src.lignes.length ? src.lignes : [{}]).forEach(carte); total();
+    $("sbAjout").onclick = function () { carte({}); };
+    $("sbFcOk").onclick = function () { var v = $("sbFc").value.trim(); Array.prototype.forEach.call(document.querySelectorAll(".sbL"), function (c) { if (!c.querySelector(".cp").checked) c.querySelector(".fc").value = v; }); };
+    function envoyer(env) {
+      var L = lignes(), msg = $("sbMsg");
+      if (!L.length) { msg.textContent = "⛔ Saisissez au moins une ligne."; return; }
+      var mal = L.filter(function (l) { return String(l.fmt || "").trim() && !/^\d+(?:[.,]\d+)?\s*[x×*]\s*\d+(?:[.,]\d+)?$/i.test(String(l.fmt).trim()); });
+      if (mal.length) { msg.textContent = "⛔ Format illisible pour « " + mal[0].nom + " » : écrivez par ex. 148x210."; return; }
+      if (env && !$("sbFmt").value.trim() && L.some(function (l) { return !String(l.fmt || "").trim(); })) { msg.textContent = "⛔ Format fini obligatoire pour envoyer dans Statut Prod (commun ou par ligne)."; return; }
+      var conf = null;
+      if (hausses(L).length) {
+        var mo = ($("sbMotif") || {}).value || "", m = document.querySelector("input[name=sbM]:checked");
+        if (!mo.trim()) { msg.textContent = "⛔ Hausse de quantité : motif obligatoire."; return; }
+        if (m && m.value === "nouveau") { if (!(num($("sbMontant").value) > 0)) { msg.textContent = "⛔ Nouveau montant invalide."; return; } conf = { montant: num($("sbMontant").value), motif: mo.trim() }; }
+        else conf = { garder: true, motif: mo.trim() };
+      }
+      var donnees = { id: b.id, lignes: L, envoyer: !!env, commun: $("sbFmt").value.trim(), papCommun: $("sbPap").value, semi: b.semi || [], confirmation: conf, version: b.version };
+      S.planifLocal[b.id] = { lignes: L, commun: donnees.commun, papCommun: donnees.papCommun, quand: Date.now() };
+      ecrire("planifLocal", S.planifLocal);
+      var it = { type: "planif", op: "saisieBDC", jeton: nouveauJeton(), horodatage: Date.now(), agent: S.agent.nom, code: S.agent.code, donnees: donnees,
+                 titre: "Saisie BDC" + (env ? " + envoi Statut Prod" : ""), resume: b.libelle + " · " + L.length + " ligne(s)", essais: 0 };
+      $("sbEnr").disabled = $("sbEnv").disabled = true; msg.textContent = "⏳ Envoi…";
+      soumettre(it).then(function (r) {
+        $("sbEnr").disabled = $("sbEnv").disabled = false;
+        msg.textContent = (r.enAttente ? "📥 " : r.ok ? "✅ " : "⛔ ") + (r.titre || "") + "\n" + (r.message || "");
+        if (r.ok && !r.enAttente) rafraichirPlanif().catch(function () {});
+      });
+    }
+    $("sbEnr").onclick = function () { envoyer(false); };
+    $("sbEnv").onclick = function () { envoyer(true); };
   }
 
   /* ---------- Saisies (formulaires Google : Stock, puis BASE) ---------- */
@@ -563,7 +748,7 @@
       var a = { nom: $("cxNom").value, code: $("cxCode").value.trim() };
       if (!a.nom || !a.code) { $("cxMsg").textContent = "Nom et code obligatoires."; return; }
       $("cxOk").disabled = true; $("cxMsg").textContent = "Vérification…";
-      rafraichirFormulaires(a).then(function () { montrer("vueAccueil"); }, function (e) {
+      rafraichirFormulaires(a).then(function () { if (droitPlanif()) rafraichirPlanif().catch(function () {}).then(majAccueil); montrer("vueAccueil"); }, function (e) {
         $("cxOk").disabled = false; $("cxMsg").textContent = "⛔ " + e.message;
       });
     };
@@ -780,19 +965,18 @@
   }
 
   /* ---------- Démarrage ---------- */
-  $("btnScanner").onclick = demarrerScan;
+  $("btnMenu").onclick = function () { montrer("vueReglages"); };
   $("annulerScan").onclick = function () { montrer("vueAccueil"); };
   $("btnRetour").onclick = function () { montrer("vueAccueil"); };
   $("btnSync").onclick = function () {
     var b = $("btnSync"); b.disabled = true; b.textContent = "⏳";
     synchroniser(true).then(function () {
-      b.disabled = false; b.textContent = "🔄";
+      b.disabled = false; b.textContent = "⟳";
       if (S.lotOuvert) ouvrirLot(S.lotOuvert.bdc, S.lotOuvert.cle, true);
     });
   };
   $("choixBdc").onchange = majChoixCle;
   $("btnOuvrirManuel").onclick = function () { if ($("choixCle").value) ouvrirLot($("choixBdc").value, $("choixCle").value); };
-  $("btnReglages").onclick = function () { var c = $("carteReglages"); c.style.display = c.style.display === "none" ? "" : "none"; };
   $("btnEnregistrerUrl").onclick = function () {
     var v = $("urlServeur").value.trim();
     if (v && !/^https:\/\/script\.google\.com\/.+\/exec$/.test(v)) { alert("L'adresse doit commencer par https://script.google.com/ et finir par /exec"); return; }
@@ -806,8 +990,8 @@
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(function () {});
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function () {});
 
-  Promise.all(["url", "donnees", "gabarit", "gv", "file", "envoyes", "aCorriger", "recents", "derniereSync", "agent", "formulaires"].map(lire)).then(function (v) {
-    S.agent = v[9] || null; S.formulaires = v[10] || null;
+  Promise.all(["url", "donnees", "gabarit", "gv", "file", "envoyes", "aCorriger", "recents", "derniereSync", "agent", "formulaires", "planif", "planifLocal"].map(lire)).then(function (v) {
+    S.agent = v[9] || null; S.formulaires = v[10] || null; S.planif = v[11] || null; S.planifLocal = v[12] || {};
     S.url = v[0] || (typeof URL_SERVEUR === "string" ? URL_SERVEUR : "") || "";
     S.donnees = v[1] || null; S.gabarit = v[2] || ""; S.gv = v[3] || "";
     S.file = v[4] || []; S.envoyes = v[5] || []; S.aCorriger = v[6] || []; S.recents = v[7] || []; S.derniereSync = v[8] || 0;
