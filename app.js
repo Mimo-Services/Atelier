@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-10-26 FI";
+  var VERSION_APP = "2026-10-26 FX";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -485,6 +485,9 @@
       return soumettre(it);
     },
     // OK après une déclaration : la page du lot est rouverte, à jour (comme la page web).
+    planifFM: planifFM,
+    planifRetenir: function (b, sc, r) { return planifRetenir(b, sc, r); },
+    fermerFM: function () { if (FM_OUVERT) ouvrirSaisieBDC(FM_OUVERT); else montrer("vueAccueil"); },
     fermerLot: function () { var l = S.lotOuvert; if (l) ouvrirLot(l.bdc, l.cle, true); else montrer("vueAccueil"); }
   };
   function nouveauJeton() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
@@ -588,6 +591,14 @@
       body: JSON.stringify({ api: "planif", agent: S.agent.nom, code: S.agent.code }) }, DELAI_DONNEES).then(function (r) {
       if (!r.ok) throw new Error(r.message || "accès refusé");
       r.recu = Date.now(); S.planif = r;
+      // Feuilles mères encore en file d'attente : gardées telles que saisies sur cet appareil.
+      S.file.forEach(function (it) {
+        if (it.type !== "planif" || (it.op !== "feuilleMere" && it.op !== "supprimerFM")) return;
+        var b = r.bdcs.filter(function (y) { return y.libelle === it.donnees.bdc; })[0]; if (!b) return;
+        var k = String(it.op === "feuilleMere" ? it.donnees.x.nom : it.donnees.nom).toLowerCase();
+        b.feuillesMeres = (b.feuillesMeres || []).filter(function (f) { return f.nom.toLowerCase() !== k; });
+        if (it.op === "feuilleMere") { var x = it.donnees.x; b.feuillesMeres.push({ nom: x.nom, papier: x.papier, machine: x.machine, format: x.format, total: x.total, types: x.types, donnees: x.donnees, quand: "⏳ sur cet appareil" }); }
+      });
       // Saisies locales déjà appliquées par le serveur : retirées.
       Object.keys(S.planifLocal).forEach(function (id) {
         if (!S.file.some(function (x) { return x.type === "planif" && x.donnees.id === id; })) delete S.planifLocal[id];
@@ -632,6 +643,9 @@
     var h = "<div class='carte'><h3>" + esc(b.libelle) + "</h3><div class='info'>" + esc(b.client || "") + " · " + esc(b.statut || "") +
       (b.qteGlobale !== "" && b.qteGlobale != null ? " · Qté globale " + Number(b.qteGlobale).toLocaleString("fr-FR") : "") + "</div>" +
       (loc ? "<div class='carte att' style='margin-top:8px'>⏳ Votre saisie du " + dateCourte(loc.quand) + " " + (enAttentePlanif(id) ? "attend l'envoi." : "est envoyée ; ⟳ pour voir l'état du serveur.") + "</div>" : "") +
+      "<button class='bouton second' id='sbFM'>🧱 Feuille mère" + ((b.feuillesMeres || []).length ? " (" + b.feuillesMeres.length + ")" : "") + "</button>" +
+      "<button class='bouton second' id='sbScen'>🧩 Scénarios de montage</button>" +
+      (scenEnAttente(b.libelle) ? "<div class='carte att' style='margin-top:8px'>⏳ Scénario retenu sur cet appareil : " + esc(scenEnAttente(b.libelle).titre) + " — attend l'envoi.</div>" : "") +
       "<label>Format fini commun (mm, L×H)</label><input id='sbFmt' placeholder='100x150' value='" + esc(src.commun) + "'>" +
       "<label>Papier commun</label><select id='sbPap'>" + opt(src.papCommun) + "</select>" +
       "<label>Feuillets / carnet pour tous (sauf composants)</label><div class='ligne'><input id='sbFc' inputmode='numeric' placeholder='25'><button class='bouton second' id='sbFcOk' style='margin-top:6px'>Appliquer</button></div></div>" +
@@ -684,6 +698,8 @@
     }
     (src.lignes.length ? src.lignes : [{}]).forEach(carte); total();
     $("sbAjout").onclick = function () { carte({}); };
+    $("sbFM").onclick = function () { ouvrirFeuilleMere(b.id); };
+    $("sbScen").onclick = function () { ouvrirScenarios(b.id); };
     $("sbFcOk").onclick = function () { var v = $("sbFc").value.trim(); Array.prototype.forEach.call(document.querySelectorAll(".sbL"), function (c) { if (!c.querySelector(".cp").checked) c.querySelector(".fc").value = v; }); };
     function envoyer(env) {
       var L = lignes(), msg = $("sbMsg");
@@ -712,6 +728,111 @@
     }
     $("sbEnr").onclick = function () { envoyer(false); };
     $("sbEnv").onclick = function () { envoyer(true); };
+  }
+
+  /* ---------- Feuille mère (éditeur du script, exécuté dans l'app, hors ligne) ---------- */
+  var SHIM_FM = "<script>(function(){function mk(s,f){return{withSuccessHandler:function(x){return mk(x,f);},withFailureHandler:function(y){return mk(s,y);}," +
+    "enregistrerFeuilleMere:function(b,x){parent.ATELIER.planifFM('enregistrer',b,x).then(s,function(e){if(f)f(e);});}," +
+    "supprimerFeuilleMere:function(b,n){parent.ATELIER.planifFM('supprimer',b,n).then(s,function(e){if(f)f(e);});}};}" +
+    "window.google={script:{run:mk(null,null),host:{close:function(){parent.ATELIER.fermerFM();}}}};})();<\/script>";
+  var FM_OUVERT = null;
+  function ouvrirFeuilleMere(id) {
+    var b = bdcPlanif(id), P = S.planif;
+    if (!b) return;
+    if (!P.editeurFM) { alert("Éditeur indisponible : synchronisez (⟳) avec réseau."); return; }
+    if (!(b.groupes || []).length) { alert("Aucun format fini pour ce BDC dans Statut Prod : enregistrez et envoyez d'abord la saisie BDC dans Statut Prod (format fini commun ou par ligne)."); return; }
+    var ctx = { bdc: b.libelle, formats: b.groupes, machines: P.machines || [], papiers: P.papiersMontage || [], enreg: b.feuillesMeres || [],
+                machinesEtapes: P.machinesEtapes || [], etapes: P.etapesPlanche || [], couleurs: P.couleurs || [], papierB5: "" };
+    var html = P.editeurFM.replace("<?!= donnees ?>", JSON.stringify(ctx).replace(/</g, "\\u003c"));
+    FM_OUVERT = b.id;
+    montrer("vueLot");
+    $("titre").textContent = "Feuille mère";
+    $("cadre").srcdoc = "<!DOCTYPE html><html lang='fr'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>" +
+      "<style>html,body{background:#fff;color:#222}body{overflow-x:auto}</style>" + SHIM_FM + "</head><body>" +
+      "<div style='margin:6px 0 10px;padding:6px 8px;background:#e8f0fe;border-radius:6px;font:13px Arial'>🗂️ <b>" + esc(b.libelle) + "</b> — les enregistrements partent à la synchronisation (hors ligne possible).</div>" +
+      html + "</body></html>";
+  }
+  // Appelé par l'éditeur (google.script.run simulé) : mise à jour locale + file d'attente.
+  function planifFM(action, bdcLib, x) {
+    var b = ((S.planif && S.planif.bdcs) || []).filter(function (y) { return y.libelle === bdcLib; })[0];
+    if (!b) return Promise.reject(new Error("BDC introuvable sur cet appareil : synchronisez (⟳)."));
+    b.feuillesMeres = b.feuillesMeres || [];
+    var nom = action === "enregistrer" ? x.nom : x, k = String(nom).toLowerCase();
+    var ex = b.feuillesMeres.filter(function (f) { return f.nom.toLowerCase() === k; })[0];
+    var ancien = ex ? (ex.quand === "⏳ sur cet appareil" ? "local" : ex.quand) : "";
+    b.feuillesMeres = b.feuillesMeres.filter(function (f) { return f.nom.toLowerCase() !== k; });
+    if (action === "enregistrer") b.feuillesMeres.push({ nom: x.nom, papier: x.papier, machine: x.machine, format: x.format, total: x.total, types: x.types, donnees: x.donnees, quand: "⏳ sur cet appareil" });
+    ecrire("planif", S.planif);
+    var it = { type: "planif", op: action === "enregistrer" ? "feuilleMere" : "supprimerFM", jeton: nouveauJeton(), horodatage: Date.now(), agent: S.agent.nom, code: S.agent.code,
+               donnees: action === "enregistrer" ? { id: b.id, bdc: b.libelle, x: x, ancienQuand: ancien } : { id: b.id, bdc: b.libelle, nom: nom, ancienQuand: ancien },
+               titre: action === "enregistrer" ? "Feuille mère « " + nom + " »" : "Suppression feuille mère « " + nom + " »", resume: b.libelle, essais: 0 };
+    soumettre(it).then(function (r) { if (r && !r.enAttente && !r.ok) alert("⛔ " + r.titre + "\n" + r.message); });
+    return Promise.resolve({ enreg: b.feuillesMeres, message: "« " + nom + " » " + (action === "enregistrer" ? "enregistrée" : "supprimée") +
+      " sur cet appareil. Envoi au serveur en cours (ou à la prochaine connexion) — suivez « En attente » / « À corriger »." });
+  }
+
+  /* ---------- Scénarios de montage (calcul du script, exécuté dans l'app, hors ligne) ---------- */
+  var SHIM_SCEN = "<script>(function(){function mk(s,f){return{withSuccessHandler:function(x){return mk(x,f);},withFailureHandler:function(y){return mk(s,y);}," +
+    "retenirScenarioMontage:function(b,sc,r){parent.ATELIER.planifRetenir(b,sc,r).then(s,function(e){if(f)f(e);});}};}" +
+    "window.google={script:{run:mk(null,null),host:{close:function(){parent.ATELIER.fermerFM();}}}};})();<\/script>";
+  function scenEnAttente(lib) { return S.file.filter(function (x) { return x.type === "planif" && x.op === "retenirScenario" && x.donnees.bdc === lib; })[0] || null; }
+  // Même signature que le serveur (signatureTypesFM) : planches, poses, nombre, article réservé.
+  function signatureTypesFM(types) {
+    return JSON.stringify((types || []).map(function (t) { return [t.lettre, +t.N || 0, +t.nb || 0, +t.nx || 0, +t.ny || 0, !!t.t, String(t.ar || "")]; }));
+  }
+  var SCEN_OUVERT = null;
+  function ouvrirScenarios(id) {
+    var b = bdcPlanif(id), P = S.planif;
+    if (!b) return;
+    if (!P.editeurScen) { alert("Scénarios indisponibles : synchronisez (⟳) avec réseau (script FX ou plus récent)."); return; }
+    var fms = b.feuillesMeres || [];
+    var sans = (b.groupes || []).filter(function (g) { return !fms.some(function (f) { return f.donnees && f.donnees.cle === g.cle; }); });
+    if (!fms.length || sans.length) { alert("Feuille mère manquante pour :\n" + sans.map(function (g) { return "• " + g.fL + "×" + g.fH + " · " + (g.papier || "papier non déclaré") + (g.comp ? " · composants" : "") + " (" + (g.abrs || []).join(", ") + ")"; }).join("\n") +
+      "\n\nÉditez d'abord la feuille mère de chaque groupe (🧱)."); return; }
+    function lancer(sc) {
+      if (!sc) { alert("Articles à imposer inconnus sur cet appareil pour ce BDC : synchronisez (⟳) avec réseau (les feuilles mères doivent être envoyées)."); return; }
+      if (sc.erreur) { alert("Scénarios : " + sc.erreur); return; }
+      if (!sc.articles.length && !sc.sansFormat.length) { alert("Aucun article à imposer pour « " + b.libelle + " ».\n\n" + (sc.exclus.length ? "Exclus : " + sc.exclus.map(function (x) { return x.abr + " (" + x.motif + ")"; }).join(", ") : "")); return; }
+      if (!sc.articles.length) { alert("Format fini manquant pour ce BDC : complétez la saisie BDC (format commun ou par ligne) et envoyez-la dans Statut Prod."); return; }
+      var PAPM = P.papiersMontage || [];
+      var ctx = {}; Object.keys(P.scenReglages || {}).forEach(function (k) { ctx[k] = P.scenReglages[k]; });
+      ctx.bdc = b.libelle; ctx.articles = sc.articles; ctx.exclus = sc.exclus; ctx.sansFormat = sc.sansFormat; ctx.machines = P.machines || []; ctx.papiers = PAPM;
+      ctx.papierB5 = ""; ctx.lettresPrises = sc.lettresPrises || [];
+      ctx.feuillesMeres = fms.map(function (x) { var d = x.donnees || {}, pp = PAPM.filter(function (p) { return p.nom === x.papier; })[0] || {};
+        return { nom: x.nom, papier: x.papier, machine: x.machine, fL: d.fL, fH: d.fH, comp: !!d.comp, types: x.types, W: pp.y || 0, H: pp.x || 0 }; });
+      SCEN_OUVERT = { id: b.id, ctx: ctx, sc: sc };
+      FM_OUVERT = b.id;
+      var att = scenEnAttente(b.libelle), local = fms.some(function (f) { return f.quand === "⏳ sur cet appareil"; });
+      var html = P.editeurScen.replace("<?!= donnees ?>", JSON.stringify(ctx).replace(/</g, "\\u003c"));
+      montrer("vueLot");
+      $("titre").textContent = "Scénarios de montage";
+      $("cadre").srcdoc = "<!DOCTYPE html><html lang='fr'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>" +
+        "<style>html,body{background:#fff;color:#222}body{overflow-x:auto}</style>" + SHIM_SCEN + "</head><body>" +
+        "<div style='margin:6px 0 10px;padding:6px 8px;background:#e8f0fe;border-radius:6px;font:13px Arial'>🧩 <b>" + esc(b.libelle) + "</b> — calcul sur cet appareil (hors ligne possible). « Retenir » part à la synchronisation ; le serveur refuse si les données ont changé entre-temps." +
+        (local ? "<br>⚠️ Feuille(s) mère(s) modifiée(s) sur cet appareil : elles partiront avant le scénario." : "") +
+        (att ? "<br>⏳ Un scénario retenu attend déjà l'envoi : retenir de nouveau le remplacera." : "") + "</div>" + html + "</body></html>";
+    }
+    if (b.scen) { lancer(b.scen); return; }
+    if (!S.url || !navigator.onLine) { lancer(null); return; }
+    requete(S.url, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, redirect: "follow",
+      body: JSON.stringify({ api: "planifScen", agent: S.agent.nom, code: S.agent.code, bdc: b.libelle }) }, DELAI_DONNEES).then(function (r) {
+      if (!r.ok) throw new Error(r.message || "refusé");
+      b.scen = r.scen; ecrire("planif", S.planif); lancer(r.scen);
+    }).catch(function () { lancer(null); });
+  }
+  // Appelé par la page des scénarios (« Retenir ») : file d'attente, appliqué par le serveur à la synchronisation.
+  function planifRetenir(bdcLib, sc, reglages) {
+    var o = SCEN_OUVERT, b = o ? bdcPlanif(o.id) : null;
+    if (!b || b.libelle !== bdcLib) return Promise.reject(new Error("BDC introuvable sur cet appareil : rouvrez les scénarios."));
+    // Plusieurs « Retenir » : envoyés dans l'ordre, le dernier remplace les précédents (impositions non publiées).
+    var attendu = { articles: o.sc.articles.map(function (a) { return [a.abr, a.qte]; }), lettres: o.sc.lettresPrises || [],
+                    fms: o.ctx.feuillesMeres.map(function (f) { return { nom: f.nom, sig: signatureTypesFM(f.types) }; }) };
+    var n = (sc.montages || []).length;
+    var it = { type: "planif", op: "retenirScenario", jeton: nouveauJeton(), horodatage: Date.now(), agent: S.agent.nom, code: S.agent.code,
+               donnees: { id: b.id, bdc: bdcLib, sc: sc, reglages: reglages, attendu: attendu },
+               titre: "Scénario de montage (" + n + " imposition" + (n > 1 ? "s" : "") + ")", resume: bdcLib, essais: 0 };
+    soumettre(it).then(function (r) { if (r && !r.enAttente && !r.ok) alert("⛔ " + r.titre + "\n" + r.message); else if (r && r.ok && !r.enAttente) rafraichirPlanif().catch(function () {}); });
+    return Promise.resolve(n + " imposition(s) retenue(s) sur cet appareil. Envoi au serveur en cours (ou à la prochaine connexion) : les lettres sont données par le serveur — suivez « En attente » / « À corriger ».");
   }
 
   /* ---------- Saisies (formulaires Google : Stock, puis BASE) ---------- */
@@ -968,7 +1089,10 @@
   /* ---------- Démarrage ---------- */
   $("btnMenu").onclick = function () { montrer("vueReglages"); };
   $("annulerScan").onclick = function () { montrer("vueAccueil"); };
-  $("btnRetour").onclick = function () { montrer("vueAccueil"); };
+  $("btnRetour").onclick = function () {
+    if (FM_OUVERT && $("vueLot").style.display !== "none" && !S.lotOuvert) { var id = FM_OUVERT; FM_OUVERT = null; ouvrirSaisieBDC(id); return; }
+    FM_OUVERT = null; montrer("vueAccueil");
+  };
   $("btnSync").onclick = function () {
     var b = $("btnSync"); b.disabled = true; b.textContent = "⏳";
     synchroniser(true).then(function () {
@@ -990,7 +1114,20 @@
   document.addEventListener("visibilitychange", function () { if (!document.hidden) synchroniser(false); });
   setInterval(function () { if (S.file.length || !S.donnees || Date.now() - S.donnees.recu > RAFRAICHIR_APRES) synchroniser(false); }, 60000);
 
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(function () {});
+  if ("serviceWorker" in navigator) {
+    // Nouvelle version installée : rechargement automatique (une seule fois), sauf saisie ou lot en cours.
+    var avaitControleur = !!navigator.serviceWorker.controller, recharge = false;
+    navigator.serviceWorker.addEventListener("controllerchange", function () {
+      if (!avaitControleur || recharge) return;
+      recharge = true;
+      if ($("vueAccueil").style.display !== "none") { $("etatDonnees").textContent = "✨ Mise à jour installée : redémarrage…"; setTimeout(function () { location.reload(); }, 800); }
+      else $("sousTitre").textContent = "✨ Mise à jour prête : revenez à l'accueil";
+    });
+    navigator.serviceWorker.register("sw.js").then(function (reg) {
+      document.addEventListener("visibilitychange", function () { if (!document.hidden) reg.update().catch(function () {}); });
+      setInterval(function () { reg.update().catch(function () {}); }, 30 * 60000);
+    }).catch(function () {});
+  }
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function () {});
 
   Promise.all(["url", "donnees", "gabarit", "gv", "file", "envoyes", "aCorriger", "recents", "derniereSync", "agent", "formulaires", "planif", "planifLocal"].map(lire)).then(function (v) {
