@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-10-26 FX";
+  var VERSION_APP = "2026-10-26 FY";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -646,6 +646,7 @@
       "<button class='bouton second' id='sbFM'>🧱 Feuille mère" + ((b.feuillesMeres || []).length ? " (" + b.feuillesMeres.length + ")" : "") + "</button>" +
       "<button class='bouton second' id='sbScen'>🧩 Scénarios de montage</button>" +
       (scenEnAttente(b.libelle) ? "<div class='carte att' style='margin-top:8px'>⏳ Scénario retenu sur cet appareil : " + esc(scenEnAttente(b.libelle).titre) + " — attend l'envoi.</div>" : "") +
+      htmlPublication(b) +
       "<label>Format fini commun (mm, L×H)</label><input id='sbFmt' placeholder='100x150' value='" + esc(src.commun) + "'>" +
       "<label>Papier commun</label><select id='sbPap'>" + opt(src.papCommun) + "</select>" +
       "<label>Feuillets / carnet pour tous (sauf composants)</label><div class='ligne'><input id='sbFc' inputmode='numeric' placeholder='25'><button class='bouton second' id='sbFcOk' style='margin-top:6px'>Appliquer</button></div></div>" +
@@ -700,6 +701,7 @@
     $("sbAjout").onclick = function () { carte({}); };
     $("sbFM").onclick = function () { ouvrirFeuilleMere(b.id); };
     $("sbScen").onclick = function () { ouvrirScenarios(b.id); };
+    if ($("pubGo")) $("pubGo").onclick = function () { publierCoches(b); };
     $("sbFcOk").onclick = function () { var v = $("sbFc").value.trim(); Array.prototype.forEach.call(document.querySelectorAll(".sbL"), function (c) { if (!c.querySelector(".cp").checked) c.querySelector(".fc").value = v; }); };
     function envoyer(env) {
       var L = lignes(), msg = $("sbMsg");
@@ -833,6 +835,48 @@
                titre: "Scénario de montage (" + n + " imposition" + (n > 1 ? "s" : "") + ")", resume: bdcLib, essais: 0 };
     soumettre(it).then(function (r) { if (r && !r.enAttente && !r.ok) alert("⛔ " + r.titre + "\n" + r.message); else if (r && r.ok && !r.enAttente) rafraichirPlanif().catch(function () {}); });
     return Promise.resolve(n + " imposition(s) retenue(s) sur cet appareil. Envoi au serveur en cours (ou à la prochaine connexion) : les lettres sont données par le serveur — suivez « En attente » / « À corriger ».");
+  }
+
+  /* ---------- Publication des tirages (étape 4) : file d'attente, publiés par PRODUCTION ---------- */
+  function pubEnAttente(lib, lettre) { return S.file.filter(function (x) { return x.type === "planif" && x.op === "publierTirage" && x.donnees.bdc === lib && x.donnees.lettre === lettre; })[0] || null; }
+  function htmlPublication(b) {
+    var T = b.tirages || [];
+    if (!T.length) return "";
+    var h = "<div class='carte' style='margin-top:8px'><h3>📤 Publication des impositions</h3>";
+    var aPub = 0;
+    T.forEach(function (t) {
+      var publie = t.statut === "Publiée" || /publi/i.test(t.statut || ""), loc = pubEnAttente(b.libelle, t.lettre), f = t.file, etat = "", coul = "";
+      if (publie) { etat = "✅ Publiée"; coul = "#2e7d32"; }
+      else if (loc) { etat = "⏳ Demande sur cet appareil, attend l'envoi"; coul = "#e65100"; }
+      else if (f && (f.etat === "En attente" || f.etat === "En cours")) { etat = (f.etat === "En cours" ? "⚙️ " : "⏳ ") + f.etat + (f.message ? " — " + f.message : ""); coul = "#e65100"; }
+      else if (f && f.etat === "Refusé") { etat = "⛔ Refusé — " + f.message; coul = "#c62828"; }
+      var coche = !publie && !loc && !(f && (f.etat === "En attente" || f.etat === "En cours")) && !!t.fmp;
+      if (coche) aPub++;
+      h += "<label style='font-weight:400;display:block;margin:6px 0'>" + (coche ? "<input type='checkbox' class='pubC' value='" + esc(t.lettre) + "' checked style='width:auto'> " : "<span style='display:inline-block;width:18px'></span>") +
+        "<b>" + esc(t.lettre) + "</b> " + (t.comp ? "<small>(composant)</small> " : "") + esc(t.articles).substring(0, 90) + (String(t.articles).length > 90 ? "…" : "") +
+        " <small>· " + Number(t.mere || 0).toLocaleString("fr-FR") + " f. mères</small>" +
+        (!t.fmp && !publie ? "<br><small style='color:#c62828'>Sans feuille mère partagée : publication dans Sheets.</small>" : "") +
+        (etat ? "<br><small style='color:" + coul + "'>" + esc(etat) + "</small>" : "") + "</label>";
+    });
+    h += aPub ? "<button class='bouton' id='pubGo'>📤 Publier les impositions cochées</button><div class='info'>Contenu d'abord, composants en dernier. Chaque imposition part séparément ; PRODUCTION la publie (Etude, lots, fiches) dans la minute qui suit l'envoi. ⟳ pour suivre l'état.</div>"
+              : "<div class='info'>Rien à publier.</div>";
+    return h + "<div id='pubMsg' class='info' style='white-space:pre-line'></div></div>";
+  }
+  function publierCoches(b) {
+    var choix = Array.prototype.map.call(document.querySelectorAll(".pubC:checked"), function (c) { return c.value; });
+    if (!choix.length) { $("pubMsg").textContent = "Cochez au moins une imposition."; return; }
+    var T = (b.tirages || []).filter(function (t) { return choix.indexOf(t.lettre) >= 0; })
+      .sort(function (x, y) { return (x.comp ? 1 : 0) - (y.comp ? 1 : 0) || (x.lettre < y.lettre ? -1 : 1); });
+    var comps = T.filter(function (t) { return t.comp; }), restants = (b.tirages || []).filter(function (t) { return !t.comp && t.fmp && !/publi/i.test(t.statut || "") && choix.indexOf(t.lettre) < 0; });
+    if (comps.length && restants.length && !confirm("Contenu non coché : " + restants.map(function (t) { return t.lettre; }).join(", ") + ".\nLes composants (" + comps.map(function (t) { return t.lettre; }).join(", ") + ") seront refusés tant que le contenu n'est pas publié. Continuer ?")) return;
+    if (!confirm("Publier " + T.map(function (t) { return t.lettre; }).join(", ") + " pour « " + b.libelle + " » ?")) return;
+    T.forEach(function (t) {
+      var it = { type: "planif", op: "publierTirage", jeton: nouveauJeton(), horodatage: Date.now(), agent: S.agent.nom, code: S.agent.code,
+                 donnees: { id: b.id, bdc: b.libelle, lettre: t.lettre, controle: t.controle }, titre: "Publication imposition " + t.lettre, resume: b.libelle, essais: 0 };
+      soumettre(it).then(function (r) { if (r && !r.enAttente && !r.ok) alert("⛔ " + t.lettre + " : " + r.titre + "\n" + r.message); });
+    });
+    $("pubMsg").textContent = "📥 " + T.length + " demande(s) de publication envoyée(s) (ou gardées jusqu'à la connexion).";
+    setTimeout(function () { ouvrirSaisieBDC(b.id); }, 400);
   }
 
   /* ---------- Saisies (formulaires Google : Stock, puis BASE) ---------- */
