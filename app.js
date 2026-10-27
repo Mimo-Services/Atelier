@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-10-27 GA";
+  var VERSION_APP = "2026-10-27 GB";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -243,7 +243,8 @@
     $("vueLot").style.display = vue === "vueLot" ? "block" : "none";
     $("vuePlanif").style.display = vue === "vuePlanif" ? "flex" : "none";
     PL.actif = vue === "vuePlanif";
-    if (vue !== "vuePlanif") { $("plCadre").srcdoc = ""; PL.id = null; }
+    if (PL.actif) $("vueListe").innerHTML = "";
+    if (vue !== "vuePlanif") { $("plCadre").srcdoc = ""; $("plC").innerHTML = ""; PL.id = null; }
     $("btnRetour").style.display = vue === "vueAccueil" ? "none" : "";
     if (vue !== "vueScan") arreterScan();
     if (vue !== "vueLot") { $("cadre").srcdoc = ""; S.lotOuvert = null; }
@@ -826,8 +827,10 @@
       "<div class='carte'><h3>🧱 Feuilles mères</h3><div class='info'>" + ((b.feuillesMeres || []).map(function (f) { return esc(f.nom) + " (" + esc(f.quand || "") + ")"; }).join("<br>") || "Aucune") + "</div></div>" +
       (scenEnAttente(b.libelle) ? "<div class='carte att'>⏳ " + esc(scenEnAttente(b.libelle).titre) + " — attend l'envoi.</div>" : "") +
       htmlPublication(b) +
+      "<div id='telFiches'></div>" +
       "<div class='carte info'>Saisie des lignes, feuilles mères et scénarios : sur PC / tablette (ou Réglages › Affichage › PC / tablette).</div>";
     $("vueListe").innerHTML = h; montrer("vueListe");
+    afficherFiches(b, $("telFiches"), false);
     if ($("pubGo")) $("pubGo").onclick = function () { publierCoches(b); };
   }
 
@@ -874,9 +877,87 @@
       C.innerHTML = (scenEnAttente(b.libelle) ? "<div class='carte att'>⏳ " + esc(scenEnAttente(b.libelle).titre) + " — attend l'envoi.</div>" : "") +
         (htmlPublication(b) || "<div class='carte info'>Aucune imposition retenue : lancez les scénarios (onglet 🧩) puis « Retenir ».</div>");
       if ($("pubGo")) $("pubGo").onclick = function () { publierCoches(b); };
-    } else C.innerHTML = "<div class='carte'><h3>🧾 Fiches</h3><p class='info'>Fiches d'atelier et Fiche Montage dans l'app : prochaine étape (5).</p></div>";
+    } else afficherFiches(b, C, true);
     // Feuille mère / scénarios indisponibles : on revient sur les lignes.
     if (cadre && !F.srcdoc) { C.style.display = "block"; F.style.display = "none"; C.innerHTML = "<div class='carte info'>Onglet indisponible pour l'instant (voir le message). Complétez les étapes précédentes ou synchronisez (⟳).</div>"; }
+  }
+
+  /* ---------- Fiches (étape 5) : PDF gardés sur l'appareil (lecture, impression, partage hors ligne) ---------- */
+  function base64Blob(b64) { var bin = atob(b64), n = bin.length, u = new Uint8Array(n); for (var i = 0; i < n; i++) u[i] = bin.charCodeAt(i); return new Blob([u], { type: "application/pdf" }); }
+  function nomFichierPdf(f) { return String(f.nom).replace(/\.pdf$/i, "").replace(/[\\/:*?"<>|]+/g, "-").substring(0, 120) + ".pdf"; }
+  function api(corps, delai) {
+    var c = { agent: S.agent.nom, code: S.agent.code }; Object.keys(corps).forEach(function (k) { c[k] = corps[k]; });
+    return requete(S.url, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, redirect: "follow", body: JSON.stringify(c) }, delai || DELAI_DONNEES)
+      .then(function (r) { if (!r.ok) throw new Error(r.message || r.titre || "refusé"); return r; });
+  }
+  // PDF gardé si à jour, sinon téléchargé (réseau) ; hors ligne : la dernière copie.
+  function pdfFiche(b, f) {
+    return lire("pdf:" + f.id).then(function (c) {
+      if (c && c.modifie >= f.modifie) return c;
+      if (!S.url || !navigator.onLine) { if (c) return c; throw new Error("pas encore enregistrée sur cet appareil (réseau nécessaire une fois)"); }
+      return api({ api: "fichePdf", bdc: b.libelle, id: f.id }, 120000).then(function (r) {
+        var o = { modifie: r.modifie, nom: r.nom, blob: base64Blob(r.pdf) };
+        return ecrire("pdf:" + f.id, o).then(function () { return o; });
+      }, function (e) { if (c) return c; throw e; });
+    });
+  }
+  function afficherFiches(b, C, pc) {
+    var etat = { msg: "" };
+    function dessiner() {
+      var L = b.fiches || [], att = S.file.filter(function (x) { return x.type === "planif" && x.op === "refaireFicheMontage" && x.donnees.bdc === b.libelle; })[0];
+      C.innerHTML = "<div class='carte'><h3>🧾 Fiches" + (b.fichesRecu ? " <small class='info'>(liste du " + dateCourte(b.fichesRecu) + ")</small>" : "") + "</h3>" +
+        (L.length ? L.map(function (f, i) {
+          return "<div class='ficheL'><div><b>" + (f.type === "montage" ? "🖨️ Fiche Montage" : "📄 Fiche d'atelier — IMP " + esc(f.lettre)) + "</b>" +
+            "<div class='info' style='font-size:12px'>" + esc(f.nom) + " · " + dateCourte(f.modifie) + " · <span id='fcE" + i + "'>…</span></div></div>" +
+            "<div class='ficheB'>" + (pc ? "<button class='bouton second' data-a='voir' data-i='" + i + "'>👁 Voir</button>" : "") +
+            "<button class='bouton second' data-a='ouvrir' data-i='" + i + "'>" + (pc ? "🖨️ Imprimer" : "👁 Ouvrir") + "</button>" +
+            "<button class='bouton second' data-a='partager' data-i='" + i + "'>📤 Partager</button>" +
+            "<a class='bouton second' href='" + esc(f.url) + "' target='_blank' rel='noopener'>🔗 Drive</a></div></div>";
+        }).join("") : "<p class='info'>Aucune fiche pour ce BDC" + (b.fichesRecu ? "" : " sur cet appareil : ⟳ avec réseau") + ". Les fiches sont créées à la publication.</p>") +
+        "<button class='bouton second' id='fcRefaire'>🔄 Refaire la Fiche Montage</button>" +
+        (att ? "<div class='carte att'>⏳ Fiche Montage demandée — " + (att.essais ? "envoi en cours" : "attend l'envoi") + ".</div>" : "") +
+        "<div id='fcMsg' class='info' style='white-space:pre-line;margin-top:6px'>" + esc(etat.msg) + "</div></div>" +
+        (pc ? "<iframe id='fcApercu' title='Aperçu' style='display:none;width:100%;height:75vh;border:0;border-radius:10px;margin-top:10px;background:#fff'></iframe>" : "");
+      L.forEach(function (f, i) {
+        lire("pdf:" + f.id).then(function (c) { var e = C.querySelector("#fcE" + i); if (e) e.textContent = c ? (c.modifie >= f.modifie ? "✅ sur l'appareil" : "↻ version plus récente au serveur") : "☁️ pas encore sur l'appareil"; });
+      });
+      Array.prototype.forEach.call(C.querySelectorAll("[data-a]"), function (bt) {
+        bt.onclick = function () {
+          var f = L[+bt.getAttribute("data-i")], a = bt.getAttribute("data-a"), w = null;
+          if (a === "ouvrir") w = window.open("", "_blank");          // ouverte tout de suite (sinon bloquée après l'attente)
+          C.querySelector("#fcMsg").textContent = "⏳ Préparation du PDF…";
+          pdfFiche(b, f).then(function (o) {
+            var url = URL.createObjectURL(o.blob);
+            C.querySelector("#fcMsg").textContent = "";
+            if (a === "voir") { var fr = C.querySelector("#fcApercu"); fr.style.display = "block"; fr.src = url; fr.scrollIntoView({ behavior: "smooth" }); }
+            else if (a === "ouvrir") { if (w) w.location.href = url; else window.open(url, "_blank"); }
+            else {
+              var fichier = new File([o.blob], nomFichierPdf(o), { type: "application/pdf" });
+              if (navigator.canShare && navigator.canShare({ files: [fichier] })) navigator.share({ files: [fichier], title: o.nom }).catch(function () {});
+              else { var l = document.createElement("a"); l.href = url; l.download = fichier.name; document.body.appendChild(l); l.click(); l.remove(); C.querySelector("#fcMsg").textContent = "Partage direct indisponible ici : PDF téléchargé (" + fichier.name + ")."; }
+            }
+            L.forEach(function (g, j) { if (g.id === f.id) { var e = C.querySelector("#fcE" + j); if (e) e.textContent = "✅ sur l'appareil"; } });
+          }, function (e) { if (w) w.close(); C.querySelector("#fcMsg").textContent = "⛔ " + e.message; });
+        };
+      });
+      C.querySelector("#fcRefaire").onclick = function () {
+        if (!confirm("Refaire la Fiche Montage de « " + b.libelle + " » ? (30 s à 1 min sur le serveur)")) return;
+        var it = { type: "planif", op: "refaireFicheMontage", jeton: nouveauJeton(), horodatage: Date.now(), agent: S.agent.nom, code: S.agent.code,
+                   donnees: { id: b.id, bdc: b.libelle }, titre: "Fiche Montage", resume: b.libelle, essais: 0 };
+        etat.msg = "⏳ Demande envoyée…"; dessiner();
+        soumettre(it).then(function (r) { etat.msg = (r.enAttente ? "📥 " : r.ok ? "✅ " : "⛔ ") + (r.titre || "") + "\n" + (r.message || ""); if (r.ok && !r.enAttente) charger(); else dessiner(); });
+      };
+    }
+    function charger() {
+      if (!S.url || !navigator.onLine) { dessiner(); return; }
+      api({ api: "fiches", bdc: b.libelle }).then(function (r) {
+        b.fiches = r.fiches; b.fichesRecu = Date.now(); ecrire("planif", S.planif);
+        dessiner();
+        // Copie sur l'appareil des fiches nouvelles ou modifiées (lecture hors ligne).
+        r.fiches.reduce(function (pr, f) { return pr.then(function () { return pdfFiche(b, f).catch(function () {}); }); }, Promise.resolve()).then(function () { if (C.isConnected) dessiner(); });
+      }, function (e) { etat.msg = "Liste non actualisée (" + e.message + ") : fiches gardées sur l'appareil."; dessiner(); });
+    }
+    dessiner(); charger();
   }
 
   /* ---------- Scénarios de montage (calcul du script, exécuté dans l'app, hors ligne) ---------- */

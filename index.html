@@ -95,6 +95,10 @@
   #plC .pcCommun > div { flex: 1; }
   #plC #sbEnr, #plC #sbEnv { display: inline-block; width: auto; padding: 11px 22px; margin-right: 8px; }
   @media (max-width: 900px) { #plGauche { width: 230px; } }
+  .ficheL { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--bord); }
+  .ficheL > div:first-child { flex: 1 1 260px; min-width: 0; overflow-wrap: anywhere; }
+  .ficheB { display: flex; gap: 6px; flex-wrap: wrap; }
+  .ficheB .bouton { width: auto; display: inline-block; margin-top: 0; padding: 8px 12px; font-size: 14px; text-decoration: none; text-align: center; }
 
   #vueScan { position: fixed; inset: 64px 0 0 0; background: #000; display: none; }
   #video { width: 100%; height: 100%; object-fit: cover; }
