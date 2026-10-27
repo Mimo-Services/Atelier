@@ -70,6 +70,32 @@
 
   #vueLot { position: fixed; top: 64px; left: 0; right: 0; bottom: 0; display: none; background: var(--fond); }
   #cadre { width: 100%; height: 100%; border: 0; display: block; background: var(--fond); }
+  /* PC / tablette : espace de travail de la planification */
+  #vuePlanif { position: fixed; top: 64px; left: 0; right: 0; bottom: 0; display: none; background: var(--fond); }
+  #plGauche { width: 310px; flex: none; overflow-y: auto; padding: 10px; border-right: 1px solid var(--bord); }
+  #plDroite { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  #plEntete { padding: 8px 14px 0; border-bottom: 1px solid var(--bord); }
+  .plTitre { font-size: 17px; margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .onglets { display: flex; gap: 4px; flex-wrap: wrap; }
+  .onglets button { background: var(--tuile); color: var(--doux); border: 1px solid var(--bord); border-bottom: none; border-radius: 10px 10px 0 0; padding: 9px 14px; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .onglets button.actif { background: var(--cuivre); color: #fff; border-color: var(--cuivre); }
+  #plC { flex: 1; overflow: auto; padding: 0 14px 20px; }
+  #plCadre { flex: 1; width: 100%; border: 0; background: #fff; }
+  .plItem { background: var(--tuile); border: 1px solid var(--bord); border-radius: 10px; padding: 8px 10px; margin-top: 8px; cursor: pointer; font-size: 14px; line-height: 1.35; }
+  .plItem .info { font-size: 12px; }
+  .plItem.sel { border-color: var(--cuivre); background: #3a2a22; }
+  .tabPC { overflow-x: auto; }
+  table.grilleBDC { font-size: 13px; min-width: 820px; }
+  table.grilleBDC th { text-align: left; font-size: 12px; color: var(--doux); padding: 4px 3px; border-bottom: 1px solid var(--bord); position: sticky; top: 0; background: var(--tuile); }
+  table.grilleBDC td { padding: 2px 3px; }
+  table.grilleBDC input, table.grilleBDC select { padding: 6px 6px; font-size: 13px; margin-top: 0; border-radius: 6px; }
+  table.grilleBDC td:nth-child(1) { width: 28%; } table.grilleBDC td:nth-child(2), table.grilleBDC td:nth-child(3) { width: 9%; }
+  table.grilleBDC td:nth-child(4), table.grilleBDC td:nth-child(5), table.grilleBDC td:nth-child(6), table.grilleBDC td:nth-child(7) { width: 7%; }
+  table.grilleBDC input[type=checkbox] { width: auto; }
+  #plC .pcCommun > div { flex: 1; }
+  #plC #sbEnr, #plC #sbEnv { display: inline-block; width: auto; padding: 11px 22px; margin-right: 8px; }
+  @media (max-width: 900px) { #plGauche { width: 230px; } }
+
   #vueScan { position: fixed; inset: 64px 0 0 0; background: #000; display: none; }
   #video { width: 100%; height: 100%; object-fit: cover; }
   #viseur { position: absolute; left: 50%; top: 45%; width: 64vw; height: 64vw; max-width: 320px; max-height: 320px;
@@ -111,6 +137,12 @@
 <main id="vueReglages" style="display:none">
   <div class="carte" id="carteAgent"></div>
   <div class="carte">
+    <h3>Affichage</h3>
+    <label for="choixAffichage">Mode</label>
+    <select id="choixAffichage"><option value="auto">Automatique (selon la taille de l'écran)</option><option value="tel">Téléphone</option><option value="pc">PC / tablette</option></select>
+    <p class="info" id="infoAffichage"></p>
+  </div>
+  <div class="carte">
     <h3>Serveur</h3>
     <label for="urlServeur">Adresse du serveur (…/exec)</label>
     <input id="urlServeur" type="url" autocomplete="off">
@@ -127,6 +159,8 @@
   <div id="msgScan">Placez le QR code de la fiche dans le cadre.</div>
   <button class="bouton second" id="annulerScan">Annuler</button>
 </div>
+
+<div id="vuePlanif"><div id="plGauche"></div><div id="plDroite"><div id="plEntete"></div><div id="plC"></div><iframe id="plCadre" title="Planification" style="display:none"></iframe></div></div>
 
 <div id="vueLot"><iframe id="cadre" title="Déclaration"></iframe></div>
 

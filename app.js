@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-10-26 FY";
+  var VERSION_APP = "2026-10-27 GA";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -241,6 +241,9 @@
     ["vueAccueil", "vueListe", "vueManuel", "vueReglages"].forEach(function (v) { $(v).style.display = v === vue ? "block" : "none"; });
     $("vueScan").style.display = vue === "vueScan" ? "block" : "none";
     $("vueLot").style.display = vue === "vueLot" ? "block" : "none";
+    $("vuePlanif").style.display = vue === "vuePlanif" ? "flex" : "none";
+    PL.actif = vue === "vuePlanif";
+    if (vue !== "vuePlanif") { $("plCadre").srcdoc = ""; PL.id = null; }
     $("btnRetour").style.display = vue === "vueAccueil" ? "none" : "";
     if (vue !== "vueScan") arreterScan();
     if (vue !== "vueLot") { $("cadre").srcdoc = ""; S.lotOuvert = null; }
@@ -289,7 +292,7 @@
         else if (id === "manuel") montrer("vueManuel");
         else if (id.indexOf("form:") === 0) ouvrirFormulaire(id.substring(5));
         else if (id === "connexion") pageConnexion();
-        else if (id === "planif") afficherPlanif();
+        else if (id === "planif") { if (modePC()) afficherPlanifPC(); else afficherPlanif(); }
         else if (id === "attente") afficherListe("attente");
         else if (id === "corriger") afficherListe("corriger");
         else if (id === "sync") $("btnSync").onclick();
@@ -331,6 +334,7 @@
       b.onclick = function () { var r = rc[+b.getAttribute("data-i")]; ouvrirLot(r.bdc, r.cle); };
     });
     $("urlServeur").value = S.url || "";
+    if ($("infoAffichage")) $("infoAffichage").textContent = "Affichage actuel : " + (modePC() ? "PC / tablette" : "Téléphone");
     $("infoVersion").textContent = "Application " + VERSION_APP + (d ? " · serveur " + d.version : "");
   }
   function majChoixCle() {
@@ -385,7 +389,7 @@
       b.onclick = function () { S.aCorriger.splice(+b.getAttribute("data-effacer"), 1); sauver(); afficherListe("corriger"); };
     });
     Array.prototype.forEach.call(v.querySelectorAll("[data-planif]"), function (b) {
-      b.onclick = function () { ouvrirSaisieBDC(S.aCorriger[+b.getAttribute("data-planif")].donnees.id); };
+      b.onclick = function () { ouvrirBDC(S.aCorriger[+b.getAttribute("data-planif")].donnees.id); };
     });
     Array.prototype.forEach.call(v.querySelectorAll("[data-ouvrir]"), function (b) {
       b.onclick = function () { var o = S.aCorriger[+b.getAttribute("data-ouvrir")].o; ouvrirLot(o.bdc, o.cle); };
@@ -487,7 +491,7 @@
     // OK après une déclaration : la page du lot est rouverte, à jour (comme la page web).
     planifFM: planifFM,
     planifRetenir: function (b, sc, r) { return planifRetenir(b, sc, r); },
-    fermerFM: function () { if (FM_OUVERT) ouvrirSaisieBDC(FM_OUVERT); else montrer("vueAccueil"); },
+    fermerFM: function () { if (PL.id) ouvrirBDCPC(PL.id, "lignes"); else if (FM_OUVERT) ouvrirSaisieBDC(FM_OUVERT); else montrer("vueAccueil"); },
     fermerLot: function () { var l = S.lotOuvert; if (l) ouvrirLot(l.bdc, l.cle, true); else montrer("vueAccueil"); }
   };
   function nouveauJeton() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
@@ -629,35 +633,67 @@
           return "<div class='carte" + (att ? " att" : "") + "' data-bdc='" + esc(b.id) + "' style='cursor:pointer'><b>" + esc(b.libelle) + "</b>" +
             "<div class='info'>" + esc(b.client || "—") + " · " + esc(b.statut || "—") + " · " + b.lignes.length + " ligne(s)" + (att ? " · ⏳ saisie en attente d'envoi" : "") + "</div></div>";
         }).join("") || "<p class='info'>Aucun BDC.</p>";
-      Array.prototype.forEach.call($("plListe").querySelectorAll("[data-bdc]"), function (el) { el.onclick = function () { ouvrirSaisieBDC(el.getAttribute("data-bdc")); }; });
+      Array.prototype.forEach.call($("plListe").querySelectorAll("[data-bdc]"), function (el) { el.onclick = function () { ouvrirBDC(el.getAttribute("data-bdc")); }; });
     }
     $("plCherche").oninput = liste; liste();
   }
 
-  function ouvrirSaisieBDC(id) {
+  function ouvrirSaisieBDC(id, o) {
+    o = o || {};
     var b = bdcPlanif(id); if (!b) return;
+    if (!o.cible && modePC()) { ouvrirBDCPC(id, "lignes"); return; }
     var loc = S.planifLocal[id], src = loc || { lignes: b.lignes, commun: b.commun, papCommun: b.papCommun };
     var PAP = (S.planif.papiers || []);
     function opt(v) { var o = "<option value=''>—</option>", ok = false; PAP.forEach(function (x) { o += "<option" + (x === v ? " selected" : "") + ">" + esc(x) + "</option>"; if (x === v) ok = true; }); if (v && !ok) o += "<option selected>" + esc(v) + "</option>"; return o; }
-    $("titre").textContent = "Saisie BDC";
-    var h = "<div class='carte'><h3>" + esc(b.libelle) + "</h3><div class='info'>" + esc(b.client || "") + " · " + esc(b.statut || "") +
-      (b.qteGlobale !== "" && b.qteGlobale != null ? " · Qté globale " + Number(b.qteGlobale).toLocaleString("fr-FR") : "") + "</div>" +
+    if (!o.cible) $("titre").textContent = "Saisie BDC";
+    var h = "<div class='carte'>" + (o.cible ? "" : "<h3>" + esc(b.libelle) + "</h3><div class='info'>" + esc(b.client || "") + " · " + esc(b.statut || "") +
+      (b.qteGlobale !== "" && b.qteGlobale != null ? " · Qté globale " + Number(b.qteGlobale).toLocaleString("fr-FR") : "") + "</div>") +
       (loc ? "<div class='carte att' style='margin-top:8px'>⏳ Votre saisie du " + dateCourte(loc.quand) + " " + (enAttentePlanif(id) ? "attend l'envoi." : "est envoyée ; ⟳ pour voir l'état du serveur.") + "</div>" : "") +
-      "<button class='bouton second' id='sbFM'>🧱 Feuille mère" + ((b.feuillesMeres || []).length ? " (" + b.feuillesMeres.length + ")" : "") + "</button>" +
+      (o.cible ? "" : "<button class='bouton second' id='sbFM'>🧱 Feuille mère" + ((b.feuillesMeres || []).length ? " (" + b.feuillesMeres.length + ")" : "") + "</button>" +
       "<button class='bouton second' id='sbScen'>🧩 Scénarios de montage</button>" +
       (scenEnAttente(b.libelle) ? "<div class='carte att' style='margin-top:8px'>⏳ Scénario retenu sur cet appareil : " + esc(scenEnAttente(b.libelle).titre) + " — attend l'envoi.</div>" : "") +
-      htmlPublication(b) +
-      "<label>Format fini commun (mm, L×H)</label><input id='sbFmt' placeholder='100x150' value='" + esc(src.commun) + "'>" +
-      "<label>Papier commun</label><select id='sbPap'>" + opt(src.papCommun) + "</select>" +
-      "<label>Feuillets / carnet pour tous (sauf composants)</label><div class='ligne'><input id='sbFc' inputmode='numeric' placeholder='25'><button class='bouton second' id='sbFcOk' style='margin-top:6px'>Appliquer</button></div></div>" +
-      "<div id='sbLignes'></div><button class='bouton second' id='sbAjout'>➕ Ligne</button>" +
+      htmlPublication(b)) +
+      (o.table ? "<div class='ligne pcCommun'><div><label>Format fini commun (mm, L×H)</label><input id='sbFmt' placeholder='100x150' value='" + esc(src.commun) + "'></div>" +
+                 "<div><label>Papier commun</label><select id='sbPap'>" + opt(src.papCommun) + "</select></div>" +
+                 "<div><label>Feuillets / carnet pour tous</label><div class='ligne'><input id='sbFc' inputmode='numeric' placeholder='25'><button class='bouton second' id='sbFcOk' style='margin-top:6px'>Appliquer</button></div></div></div></div>" +
+                 "<div class='carte'><div class='info'>Astuce : copiez des lignes depuis Excel (Nom, Qté, N° départ, Abrév., Format, Feuillets/carnet, Stock fini) et collez-les dans une case « Article ».</div>" +
+                 "<div class='tabPC'><table class='grilleBDC'><thead><tr><th>Article (nom sur BDC)</th><th>Qté BDC</th><th>N° départ</th><th>Abrév.</th><th>Format</th><th>F./carnet</th><th>Stock fini</th><th>Papier (si diff.)</th><th>Comp.</th><th></th></tr></thead><tbody id='sbLignes'></tbody></table></div>" +
+                 "<button class='bouton second' id='sbAjout' style='width:auto;display:inline-block;padding:8px 16px'>➕ Ligne</button></div>"
+              : "<label>Format fini commun (mm, L×H)</label><input id='sbFmt' placeholder='100x150' value='" + esc(src.commun) + "'>" +
+                "<label>Papier commun</label><select id='sbPap'>" + opt(src.papCommun) + "</select>" +
+                "<label>Feuillets / carnet pour tous (sauf composants)</label><div class='ligne'><input id='sbFc' inputmode='numeric' placeholder='25'><button class='bouton second' id='sbFcOk' style='margin-top:6px'>Appliquer</button></div></div>" +
+                "<div id='sbLignes'></div><button class='bouton second' id='sbAjout'>➕ Ligne</button>") +
       "<div class='carte' id='sbTotal'></div><div class='carte' id='sbConf' style='display:none'></div>" +
       "<button class='bouton second' id='sbEnr'>💾 Enregistrer</button><button class='bouton' id='sbEnv'>✅ Enregistrer et envoyer dans Statut Prod</button>" +
       "<div id='sbMsg' class='info' style='margin-top:8px;white-space:pre-line'></div>";
-    $("vueListe").innerHTML = h;
-    montrer("vueListe");
+    if (o.cible) o.cible.innerHTML = h; else { $("vueListe").innerHTML = h; montrer("vueListe"); }
     function carte(l) {
       l = l || {}; var comp = /\(composant\)\s*$/i.test(l.nom || ""), nom = String(l.nom || "").replace(/\s*\(composant\)\s*$/i, "");
+      if (o.table) {
+        // PC / tablette : une ligne de tableau (mêmes classes que les cartes → même lecture).
+        var tr = document.createElement("tr"); tr.className = "sbL";
+        tr.innerHTML = "<td><input class='nm' value='" + esc(nom) + "'></td><td><input class='q' inputmode='decimal' value='" + esc(l.qte) + "'></td>" +
+          "<td><input class='dp' inputmode='numeric' value='" + esc(l.depart) + "'></td><td><input class='ab' value='" + esc(l.abr) + "'></td>" +
+          "<td><input class='fm' placeholder='LxH' value='" + esc(l.fmt) + "'></td><td><input class='fc' inputmode='numeric' placeholder='1' value='" + esc(l.fc) + "'></td>" +
+          "<td><input class='sf' inputmode='numeric' placeholder='0' value='" + esc(l.sf) + "'></td><td><select class='pp'>" + opt(l.pap) + "</select></td>" +
+          "<td style='text-align:center'><input type='checkbox' class='cp' title='Composant (non facturé)'" + (comp ? " checked" : "") + "></td>" +
+          "<td><button class='lien' style='color:#ff8a80;font-size:18px' title='Supprimer'>✖</button>" + (l.etat ? "<div class='info' style='font-size:11px'>" + esc(l.etat) + "</div>" : "") + "</td>";
+        tr.querySelector(".lien").onclick = function () { tr.remove(); total(); };
+        tr.querySelector(".q").oninput = total; tr.querySelector(".cp").onchange = total;
+        tr.querySelector(".nm").addEventListener("paste", function (e) {
+          var t = (e.clipboardData || window.clipboardData).getData("text");
+          if (!/[\t\n]/.test(t)) return;
+          e.preventDefault();
+          var rows = t.replace(/\r/g, "").split("\n").filter(function (x) { return x.trim(); }), cls = ["nm", "q", "dp", "ab", "fm", "fc", "sf"], cur = tr;
+          rows.forEach(function (r, i) {
+            if (i > 0) { carte({}); cur = $("sbLignes").lastChild; }
+            r.split("\t").forEach(function (v, j) { if (cls[j]) cur.querySelector("." + cls[j]).value = v.trim(); });
+          });
+          total();
+        });
+        $("sbLignes").appendChild(tr);
+        return;
+      }
       var d = document.createElement("div"); d.className = "carte sbL";
       d.innerHTML = "<div class='ligne'><div style='flex:3'><label style='margin-top:0'>Article (nom sur BDC)</label><input class='nm' value='" + esc(nom) + "'></div>" +
         "<button class='lien' style='flex:0;align-self:flex-start;color:#ff8a80;font-size:22px' title='Supprimer'>✖</button></div>" +
@@ -699,8 +735,8 @@
     }
     (src.lignes.length ? src.lignes : [{}]).forEach(carte); total();
     $("sbAjout").onclick = function () { carte({}); };
-    $("sbFM").onclick = function () { ouvrirFeuilleMere(b.id); };
-    $("sbScen").onclick = function () { ouvrirScenarios(b.id); };
+    if ($("sbFM")) $("sbFM").onclick = function () { ouvrirFeuilleMere(b.id); };
+    if ($("sbScen")) $("sbScen").onclick = function () { ouvrirScenarios(b.id); };
     if ($("pubGo")) $("pubGo").onclick = function () { publierCoches(b); };
     $("sbFcOk").onclick = function () { var v = $("sbFc").value.trim(); Array.prototype.forEach.call(document.querySelectorAll(".sbL"), function (c) { if (!c.querySelector(".cp").checked) c.querySelector(".fc").value = v; }); };
     function envoyer(env) {
@@ -747,9 +783,9 @@
                 machinesEtapes: P.machinesEtapes || [], etapes: P.etapesPlanche || [], couleurs: P.couleurs || [], papierB5: "" };
     var html = P.editeurFM.replace("<?!= donnees ?>", JSON.stringify(ctx).replace(/</g, "\\u003c"));
     FM_OUVERT = b.id;
-    montrer("vueLot");
-    $("titre").textContent = "Feuille mère";
-    $("cadre").srcdoc = "<!DOCTYPE html><html lang='fr'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>" +
+    var cadreFM = PL.id ? $("plCadre") : $("cadre");
+    if (!PL.id) { montrer("vueLot"); $("titre").textContent = "Feuille mère"; }
+    cadreFM.srcdoc = "<!DOCTYPE html><html lang='fr'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>" +
       "<style>html,body{background:#fff;color:#222}body{overflow-x:auto}</style>" + SHIM_FM + "</head><body>" +
       "<div style='margin:6px 0 10px;padding:6px 8px;background:#e8f0fe;border-radius:6px;font:13px Arial'>🗂️ <b>" + esc(b.libelle) + "</b> — les enregistrements partent à la synchronisation (hors ligne possible).</div>" +
       html + "</body></html>";
@@ -771,6 +807,76 @@
     soumettre(it).then(function (r) { if (r && !r.enAttente && !r.ok) alert("⛔ " + r.titre + "\n" + r.message); });
     return Promise.resolve({ enreg: b.feuillesMeres, message: "« " + nom + " » " + (action === "enregistrer" ? "enregistrée" : "supprimée") +
       " sur cet appareil. Envoi au serveur en cours (ou à la prochaine connexion) — suivez « En attente » / « À corriger »." });
+  }
+
+  /* ---------- Deux affichages : Téléphone (suivi, publication) / PC-tablette (espace de travail) ---------- */
+  var PL = { id: null, onglet: "lignes" };
+  function modePC() { var a = S.affichage || "auto"; return a === "pc" || (a === "auto" && Math.min(window.innerWidth, 4000) >= 760); }
+  function ouvrirBDC(id, onglet) { if (modePC()) { if (!PL.actif) afficherPlanifPC(id, onglet); else ouvrirBDCPC(id, onglet || "lignes"); } else ouvrirSuiviBDC(id); }
+
+  // Téléphone : consultation du BDC + publication ; la saisie se fait sur PC / tablette.
+  function ouvrirSuiviBDC(id) {
+    var b = bdcPlanif(id); if (!b) return;
+    var loc = S.planifLocal[id], L = (loc ? loc.lignes : b.lignes) || [];
+    $("titre").textContent = "Suivi BDC";
+    var h = "<div class='carte'><h3>" + esc(b.libelle) + "</h3><div class='info'>" + esc(b.client || "") + " · " + esc(b.statut || "") + "</div>" +
+      (loc ? "<div class='carte att' style='margin-top:8px'>⏳ Saisie du " + dateCourte(loc.quand) + (enAttentePlanif(id) ? " en attente d'envoi." : " envoyée.") + "</div>" : "") + "</div>" +
+      "<div class='carte'><h3>📝 Lignes (" + L.length + ")</h3><table>" + L.map(function (l) {
+        return "<tr><td>" + esc(l.abr || "—") + "</td><td style='font-size:13px'>" + esc(l.nom) + "</td><td class='v'>" + esc(l.qte) + "</td></tr>"; }).join("") + "</table></div>" +
+      "<div class='carte'><h3>🧱 Feuilles mères</h3><div class='info'>" + ((b.feuillesMeres || []).map(function (f) { return esc(f.nom) + " (" + esc(f.quand || "") + ")"; }).join("<br>") || "Aucune") + "</div></div>" +
+      (scenEnAttente(b.libelle) ? "<div class='carte att'>⏳ " + esc(scenEnAttente(b.libelle).titre) + " — attend l'envoi.</div>" : "") +
+      htmlPublication(b) +
+      "<div class='carte info'>Saisie des lignes, feuilles mères et scénarios : sur PC / tablette (ou Réglages › Affichage › PC / tablette).</div>";
+    $("vueListe").innerHTML = h; montrer("vueListe");
+    if ($("pubGo")) $("pubGo").onclick = function () { publierCoches(b); };
+  }
+
+  // PC / tablette : liste des BDC à gauche, BDC ouvert à droite avec onglets.
+  function afficherPlanifPC(id, onglet) {
+    var P = S.planif;
+    $("titre").textContent = "Planification";
+    if (!P) { $("vueListe").innerHTML = "<div class='carte'><h3>Planification</h3><p class='info'>Aucune donnée : connectez-vous au réseau puis appuyez sur ⟳.</p></div>"; montrer("vueListe"); return; }
+    montrer("vuePlanif");
+    $("plGauche").innerHTML = "<input id='plCherchePC' placeholder='Rechercher un BDC, un client…'><div class='info' style='margin:6px 2px'>" + P.bdcs.length + " BDC · données du " + dateCourte(P.genere) + "</div><div id='plListePC'></div>";
+    function liste() {
+      var q = $("plCherchePC").value.trim().toLowerCase();
+      $("plListePC").innerHTML = P.bdcs.filter(function (b) { return !q || (b.libelle + " " + b.client + " " + b.statut).toLowerCase().indexOf(q) !== -1; }).map(function (b) {
+        var att = enAttentePlanif(b.id), T = b.tirages || [], nPub = T.filter(function (t) { return /publi/i.test(t.statut || ""); }).length;
+        return "<div class='plItem" + (PL.id === b.id ? " sel" : "") + "' data-bdc='" + esc(b.id) + "'><b>" + esc(b.libelle) + "</b><div class='info'>" + esc(b.client || "—") + " · " + esc(b.statut || "—") +
+          "<br>" + b.lignes.length + " ligne(s) · " + (b.feuillesMeres || []).length + " f. mère(s)" + (T.length ? " · " + nPub + "/" + T.length + " publiée(s)" : "") + (att ? " · ⏳" : "") + "</div></div>";
+      }).join("") || "<p class='info'>Aucun BDC.</p>";
+      Array.prototype.forEach.call($("plListePC").querySelectorAll("[data-bdc]"), function (el) { el.onclick = function () { ouvrirBDCPC(el.getAttribute("data-bdc"), PL.onglet === "fiches" ? "fiches" : "lignes"); }; });
+    }
+    $("plCherchePC").oninput = liste;
+    PL.liste = liste;
+    if (id) ouvrirBDCPC(id, onglet || "lignes");
+    else { PL.id = null; liste(); $("plEntete").innerHTML = ""; $("plC").innerHTML = "<div class='carte info'>Choisissez un BDC à gauche.</div>"; $("plC").style.display = "block"; $("plCadre").style.display = "none"; }
+  }
+  function ouvrirBDCPC(id, onglet) {
+    var b = bdcPlanif(id); if (!b) return;
+    if (!PL.actif) { afficherPlanifPC(id, onglet); return; }
+    PL.id = id; PL.onglet = onglet || "lignes"; FM_OUVERT = id;
+    if (PL.liste) PL.liste();
+    var O = [["lignes", "📝 Lignes"], ["fm", "🧱 Feuilles mères" + ((b.feuillesMeres || []).length ? " (" + b.feuillesMeres.length + ")" : "")], ["scen", "🧩 Scénarios"], ["publication", "📤 Publication"], ["fiches", "🧾 Fiches"]];
+    $("plEntete").innerHTML = "<div class='plTitre'><b>" + esc(b.libelle) + "</b> <span class='info'>" + esc(b.client || "") + " · " + esc(b.statut || "") +
+      (b.qteGlobale !== "" && b.qteGlobale != null ? " · Qté globale " + Number(b.qteGlobale).toLocaleString("fr-FR") : "") + "</span></div>" +
+      "<div class='onglets'>" + O.map(function (x) { return "<button data-o='" + x[0] + "' class='" + (x[0] === PL.onglet ? "actif" : "") + "'>" + x[1] + "</button>"; }).join("") + "</div>";
+    Array.prototype.forEach.call($("plEntete").querySelectorAll("[data-o]"), function (bt) { bt.onclick = function () { ouvrirBDCPC(id, bt.getAttribute("data-o")); }; });
+    var C = $("plC"), F = $("plCadre");
+    var cadre = PL.onglet === "fm" || PL.onglet === "scen";
+    C.style.display = cadre ? "none" : "block"; F.style.display = cadre ? "block" : "none";
+    if (!cadre) F.srcdoc = "";
+    C.scrollTop = 0;
+    if (PL.onglet === "lignes") ouvrirSaisieBDC(id, { cible: C, table: true });
+    else if (PL.onglet === "fm") ouvrirFeuilleMere(id);
+    else if (PL.onglet === "scen") ouvrirScenarios(id);
+    else if (PL.onglet === "publication") {
+      C.innerHTML = (scenEnAttente(b.libelle) ? "<div class='carte att'>⏳ " + esc(scenEnAttente(b.libelle).titre) + " — attend l'envoi.</div>" : "") +
+        (htmlPublication(b) || "<div class='carte info'>Aucune imposition retenue : lancez les scénarios (onglet 🧩) puis « Retenir ».</div>");
+      if ($("pubGo")) $("pubGo").onclick = function () { publierCoches(b); };
+    } else C.innerHTML = "<div class='carte'><h3>🧾 Fiches</h3><p class='info'>Fiches d'atelier et Fiche Montage dans l'app : prochaine étape (5).</p></div>";
+    // Feuille mère / scénarios indisponibles : on revient sur les lignes.
+    if (cadre && !F.srcdoc) { C.style.display = "block"; F.style.display = "none"; C.innerHTML = "<div class='carte info'>Onglet indisponible pour l'instant (voir le message). Complétez les étapes précédentes ou synchronisez (⟳).</div>"; }
   }
 
   /* ---------- Scénarios de montage (calcul du script, exécuté dans l'app, hors ligne) ---------- */
@@ -806,9 +912,9 @@
       FM_OUVERT = b.id;
       var att = scenEnAttente(b.libelle), local = fms.some(function (f) { return f.quand === "⏳ sur cet appareil"; });
       var html = P.editeurScen.replace("<?!= donnees ?>", JSON.stringify(ctx).replace(/</g, "\\u003c"));
-      montrer("vueLot");
-      $("titre").textContent = "Scénarios de montage";
-      $("cadre").srcdoc = "<!DOCTYPE html><html lang='fr'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>" +
+      var cadreSc = PL.id ? $("plCadre") : $("cadre");
+      if (!PL.id) { montrer("vueLot"); $("titre").textContent = "Scénarios de montage"; }
+      cadreSc.srcdoc = "<!DOCTYPE html><html lang='fr'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>" +
         "<style>html,body{background:#fff;color:#222}body{overflow-x:auto}</style>" + SHIM_SCEN + "</head><body>" +
         "<div style='margin:6px 0 10px;padding:6px 8px;background:#e8f0fe;border-radius:6px;font:13px Arial'>🧩 <b>" + esc(b.libelle) + "</b> — calcul sur cet appareil (hors ligne possible). « Retenir » part à la synchronisation ; le serveur refuse si les données ont changé entre-temps." +
         (local ? "<br>⚠️ Feuille(s) mère(s) modifiée(s) sur cet appareil : elles partiront avant le scénario." : "") +
@@ -876,7 +982,7 @@
       soumettre(it).then(function (r) { if (r && !r.enAttente && !r.ok) alert("⛔ " + t.lettre + " : " + r.titre + "\n" + r.message); });
     });
     $("pubMsg").textContent = "📥 " + T.length + " demande(s) de publication envoyée(s) (ou gardées jusqu'à la connexion).";
-    setTimeout(function () { ouvrirSaisieBDC(b.id); }, 400);
+    setTimeout(function () { ouvrirBDC(b.id, "publication"); }, 400);
   }
 
   /* ---------- Saisies (formulaires Google : Stock, puis BASE) ---------- */
@@ -1132,6 +1238,7 @@
 
   /* ---------- Démarrage ---------- */
   $("btnMenu").onclick = function () { montrer("vueReglages"); };
+  $("choixAffichage").onchange = function () { S.affichage = this.value; ecrire("affichage", S.affichage); $("infoAffichage").textContent = "Affichage actuel : " + (modePC() ? "PC / tablette" : "Téléphone"); };
   $("annulerScan").onclick = function () { montrer("vueAccueil"); };
   $("btnRetour").onclick = function () {
     if (FM_OUVERT && $("vueLot").style.display !== "none" && !S.lotOuvert) { var id = FM_OUVERT; FM_OUVERT = null; ouvrirSaisieBDC(id); return; }
@@ -1142,6 +1249,8 @@
     synchroniser(true).then(function () {
       b.disabled = false; b.textContent = "⟳";
       if (S.lotOuvert) ouvrirLot(S.lotOuvert.bdc, S.lotOuvert.cle, true);
+      // Espace PC : liste à jour ; l'onglet Publication est rafraîchi (les saisies en cours ne sont pas touchées).
+      if (PL.actif && PL.liste) { PL.liste(); if (PL.id && PL.onglet === "publication") ouvrirBDCPC(PL.id, "publication"); }
     });
   };
   $("choixBdc").onchange = majChoixCle;
@@ -1174,8 +1283,9 @@
   }
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function () {});
 
-  Promise.all(["url", "donnees", "gabarit", "gv", "file", "envoyes", "aCorriger", "recents", "derniereSync", "agent", "formulaires", "planif", "planifLocal"].map(lire)).then(function (v) {
-    S.agent = v[9] || null; S.formulaires = v[10] || null; S.planif = v[11] || null; S.planifLocal = v[12] || {};
+  Promise.all(["url", "donnees", "gabarit", "gv", "file", "envoyes", "aCorriger", "recents", "derniereSync", "agent", "formulaires", "planif", "planifLocal", "affichage"].map(lire)).then(function (v) {
+    S.agent = v[9] || null; S.formulaires = v[10] || null; S.planif = v[11] || null; S.planifLocal = v[12] || {}; S.affichage = v[13] || "auto";
+    $("choixAffichage").value = S.affichage;
     S.url = v[0] || (typeof URL_SERVEUR === "string" ? URL_SERVEUR : "") || "";
     S.donnees = v[1] || null; S.gabarit = v[2] || ""; S.gv = v[3] || "";
     S.file = v[4] || []; S.envoyes = v[5] || []; S.aCorriger = v[6] || []; S.recents = v[7] || []; S.derniereSync = v[8] || 0;
