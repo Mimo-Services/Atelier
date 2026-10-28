@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-10-30 GL";
+  var VERSION_APP = "2026-10-31 GP";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -292,6 +292,10 @@
       var nC = comRetards().length;
       tuile("commercial", "🤝", "Commercial", "Contrats, BL, factures", nC ? { badge: "⏰" + nC, bcls: "rouge", cls: "large" } : { cls: "large" });
     }
+    if (droitMis()) {
+      var nM = misNbBadge();
+      tuile("missions", "🎯", "Missions", S.mis && S.mis.direction ? "Équipe, clôture" : "Mes missions", nM ? { badge: nM, bcls: "rouge", cls: "large" } : { cls: "large" });
+    }
     if (!S.agent && S.url) tuile("connexion", "🔐", "Saisies", "Se connecter");
     tuile("attente", "⏳", "En attente", S.file.length ? "à envoyer" : "rien", S.file.length ? { badge: S.file.length, bcls: "orange" } : {});
     tuile("corriger", "⛔", "À corriger", S.aCorriger.length ? "refusés" : "rien", S.aCorriger.length ? { badge: S.aCorriger.length, bcls: "rouge" } : {});
@@ -308,6 +312,7 @@
         else if (id === "finances") afficherFinances();
         else if (id === "rh") afficherRH();
         else if (id === "commercial") afficherCom();
+        else if (id === "missions") afficherMis();
         else if (id === "planif") { if (modePC()) afficherPlanifPC(); else afficherPlanif(); }
         else if (id === "attente") afficherListe("attente");
         else if (id === "corriger") afficherListe("corriger");
@@ -322,7 +327,7 @@
     if ($("btnConnexion")) $("btnConnexion").onclick = pageConnexion;
     if ($("btnDeconnexion")) $("btnDeconnexion").onclick = function () {
       if (S.file.some(function (x) { return x.type === "form"; }) && !confirm("Des saisies sont en attente d'envoi : elles partiront quand même. Changer d'agent ?")) return;
-      S.agent = null; S.formulaires = null; S.planif = null; S.fin = null; S.rh = null; S.com = null; ecrire("com", null); ecrire("agent", null); ecrire("formulaires", null); ecrire("planif", null); ecrire("fin", null); ecrire("rh", null); montrer("vueAccueil");
+      S.agent = null; S.formulaires = null; S.planif = null; S.fin = null; S.rh = null; S.com = null; S.mis = null; ecrire("com", null); ecrire("mis", null); ecrire("agent", null); ecrire("formulaires", null); ecrire("planif", null); ecrire("fin", null); ecrire("rh", null); montrer("vueAccueil");
     };
 
     var d = S.donnees;
@@ -368,6 +373,7 @@
   }
   /* Résumé lisible d'un élément de la file (déclaration atelier ou saisie de formulaire). */
   function descriptionItem(x) {
+    if (x.type === "mis") return "<b>🎯 " + esc(x.titre || "Missions") + "</b><br><small>" + esc(x.agent) + " · " + dateCourte(x.horodatage) + "</small>";
     if (x.type === "com") return "<b>🤝 " + esc(x.titre || "Commercial") + "</b><br><small>" + esc(x.agent) + " · " + dateCourte(x.horodatage) + "</small>";
     if (x.type === "rh") return "<b>👥 " + esc(x.titre || "RH") + "</b><br><small>" + esc(x.agent) + " · " + dateCourte(x.horodatage) + "</small>";
     if (x.type === "fin") return "<b>💰 " + esc(x.titre || "Finances") + "</b><br><small>" + esc(x.agent) + " · " + dateCourte(x.horodatage) + "</small>";
@@ -524,7 +530,7 @@
       majEtat();
       var envoi = envoiP ? envoiP.then(lancerEnvoi) : lancerEnvoi();
       envoi.then(function () { if (attenteJetons[it.jeton]) attenteJetons[it.jeton](resultats[it.jeton] || null); });
-      return attendre(reponse, (it.type === "planif" || it.type === "rh" || it.type === "com" ? DELAI_PLANIF : DELAI_ENVOI) + 5000).catch(function () { return null; }).then(function (r) {
+      return attendre(reponse, (it.type === "planif" || it.type === "rh" || it.type === "com" || it.type === "mis" ? DELAI_PLANIF : DELAI_ENVOI) + 5000).catch(function () { return null; }).then(function (r) {
         delete attenteJetons[it.jeton];
         synchroniser(false);
         if (!r) return enAttente();
@@ -560,7 +566,9 @@
       var p5 = (S.url && droitRH() && (forcerDonnees || n > 0 || ageRh > 5 * 60000)) ? rafraichirRH().catch(function () {}) : null;
       var ageCo = S.com ? Date.now() - S.com.recu : Infinity;
       var p6 = (S.url && droitCom() && (forcerDonnees || n > 0 || ageCo > 5 * 60000)) ? rafraichirCom().catch(function () {}) : null;
-      return Promise.all([p1, p2, p3, p4, p5, p6]);
+      var ageMi = S.mis ? Date.now() - S.mis.recu : Infinity;
+      var p7 = (S.url && droitMis() && (forcerDonnees || n > 0 || ageMi > 5 * 60000)) ? rafraichirMis().catch(function () {}) : null;
+      return Promise.all([p1, p2, p3, p4, p5, p6, p7]);
     }).catch(function () {}).then(function () { majEtat(); if ($("vueAccueil").style.display !== "none") majAccueil(); });
   }
   function erreurPassagere(r) {
@@ -574,20 +582,21 @@
       var it = S.file[0];
       it.essais = (it.essais || 0) + 1;
       var corps;
-      if (it.type === "com") corps = { api: "comEnvoyer", agent: it.agent, code: it.code, op: it.op, jeton: it.jeton, horodatage: String(it.horodatage), donnees: it.donnees };
+      if (it.type === "mis") corps = { api: "misEnvoyer", agent: it.agent, code: it.code, op: it.op, jeton: it.jeton, horodatage: String(it.horodatage), donnees: it.donnees };
+      else if (it.type === "com") corps = { api: "comEnvoyer", agent: it.agent, code: it.code, op: it.op, jeton: it.jeton, horodatage: String(it.horodatage), donnees: it.donnees };
       else if (it.type === "rh") corps = { api: "rhEnvoyer", agent: it.agent, code: it.code, op: it.op, jeton: it.jeton, horodatage: String(it.horodatage), donnees: it.donnees };
       else if (it.type === "fin") corps = { api: "finEnvoyer", agent: it.agent, code: it.code, op: it.op, jeton: it.jeton, horodatage: String(it.horodatage), donnees: it.donnees };
       else if (it.type === "planif") corps = { api: "planifEnvoyer", agent: it.agent, code: it.code, op: it.op, jeton: it.jeton, horodatage: String(it.horodatage), donnees: it.donnees };
       else if (it.type === "form") corps = { api: "repondre", agent: it.agent, code: it.code, formulaire: it.form, jeton: it.jeton, horodatage: String(it.horodatage), reponses: it.reponses };
       else { corps = { api: "declarer" }; for (var k in it.o) corps[k] = it.o[k]; }
-      return requete(S.url, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(corps), redirect: "follow" }, it.type === "planif" || it.type === "fin" || it.type === "rh" || it.type === "com" ? DELAI_PLANIF : DELAI_ENVOI)
+      return requete(S.url, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(corps), redirect: "follow" }, it.type === "planif" || it.type === "fin" || it.type === "rh" || it.type === "com" || it.type === "mis" ? DELAI_PLANIF : DELAI_ENVOI)
         .then(function (r) {
           S.derniereSync = Date.now(); ecrire("derniereSync", S.derniereSync);
           if (erreurPassagere(r) && it.essais < 6) { it.erreur = r.message; return sauver().then(function () { return n; }); }
           S.file.shift();
           resultats[it.jeton] = r;
           if (attenteJetons[it.jeton]) attenteJetons[it.jeton](r);
-          if (r.ok) { if (it.o) { S.envoyes.push({ jeton: it.jeton, o: it.o, recuA: Date.now() }); n++; } else if (it.type === "planif" || it.type === "fin" || it.type === "rh" || it.type === "com") n++; }
+          if (r.ok) { if (it.o) { S.envoyes.push({ jeton: it.jeton, o: it.o, recuA: Date.now() }); n++; } else if (it.type === "planif" || it.type === "fin" || it.type === "rh" || it.type === "com" || it.type === "mis") n++; }
           else { var c = JSON.parse(JSON.stringify(it)); c.r = r; delete c.code; S.aCorriger.push(c); }
           return sauver().then(function () { majEtat(); return suivant(); });
         }, function (e) {
@@ -2083,11 +2092,166 @@
     $("rlEnv").onclick = function () { envoyerCom("relance", { facture: f.id, client: f.client, mode: $("rlM").value, commentaire: $("rlC").value.trim(), prochaine: $("rlP").value }, "Relance " + f.id, function () { ficheFactureCom(f.id); }); };
   }
 
+  /* ---------- 🎯 Missions : créer, assigner, check-list, suivi ; clôture par DG / WALID ---------- */
+  function droitMis() { return !!(S.agent && S.formulaires && S.formulaires.droits); }
+  var rafMis = null;
+  function rafraichirMis() {
+    if (!S.url || !droitMis()) return Promise.resolve();
+    if (rafMis) return rafMis;
+    rafMis = api({ api: "missions" }).then(function (r) { r.recu = Date.now(); S.mis = r; return ecrire("mis", r); })
+      .then(function () { rafMis = null; }, function (e) { rafMis = null; throw e; });
+    return rafMis;
+  }
+  var COUL_MIS = { "En attente": "#e65100", "En cours": "#1565c0", "À clôturer": "#6a1b9a", "Terminée": "#2e7d32", "Annulée": "#777" };
+  function misOuv(m) { return m.statut !== "Terminée" && m.statut !== "Annulée"; }
+  function misAuj() { var d = new Date(); return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); }
+  function misPour(m, nom) { return m.assignes.some(function (a) { return nomRH(a) === nomRH(nom); }); }
+  function misAttente(id) { return S.file.filter(function (x) { return x.type === "mis" && x.donnees && x.donnees.id === id; }); }
+  function misNbBadge() {
+    var M = S.mis; if (!M) return 0;
+    var fin = misAuj() + 86400000, moi = M.agent;
+    return M.missions.filter(function (m) { return misOuv(m) && ((misPour(m, moi) && m.statut !== "À clôturer" && m.echeance && m.echeance < fin) || (M.direction && m.statut === "À clôturer")); }).length;
+  }
+  function envoyerMis(op, donnees, titre, suite) {
+    var it = { type: "mis", op: op, jeton: nouveauJeton(), horodatage: Date.now(), agent: S.agent.nom, code: S.agent.code, donnees: donnees, titre: titre, resume: "Missions", essais: 0 };
+    soumettre(it).then(function (r) {
+      var fin = function () { if (suite) suite(r); else afficherMis(); };
+      if (r.ok && !r.enAttente) return rafraichirMis().catch(function () {}).then(function () { if (!/^☑|^☐/.test(titre)) alert("✅ " + r.titre + (r.message ? "\n" + r.message : "")); fin(); });
+      alert((r.enAttente ? "📥 " : "⛔ ") + (r.titre || "") + "\n" + (r.message || "")); fin();
+    });
+  }
+  function htmlMis(m) {
+    var auj = misAuj(), ret = misOuv(m) && m.echeance && m.echeance < auj, jour = misOuv(m) && m.echeance >= auj && m.echeance < auj + 86400000;
+    var nf = m.liste.filter(function (i) { return i.fait; }).length, att = misAttente(m.id).length;
+    return "<div class='carte" + (att ? " att" : "") + "' data-mi='" + esc(m.id) + "' style='cursor:pointer" + (misOuv(m) ? "" : ";opacity:.6") + (m.prio === "Haute" && misOuv(m) ? ";border-left:4px solid #c62828" : "") + "'>" +
+      "<div class='ligne' style='justify-content:space-between'><b>" + esc(m.titre) + "</b><span style='flex:0;white-space:nowrap;font-size:13px;font-weight:700;color:" + (COUL_MIS[m.statut] || "#999") + "'>" + esc(m.statut) + "</span></div>" +
+      "<div class='info'>" + esc(m.assignes.join(", ")) + (m.par && !misPour(m, m.par) ? " · par " + esc(m.par) : "") + (m.rec ? " · 🔁 " + esc(m.rec.toLowerCase()) : "") +
+      (m.liste.length ? " · ☑ " + nf + "/" + m.liste.length : "") + "</div>" +
+      "<div style='font-size:13px;font-weight:700;color:" + (ret ? "#c62828" : jour ? "#e65100" : "var(--texte2,#888)") + "'>" + (m.echeance ? (ret ? "⏰ En retard · " : jour ? "Aujourd'hui · " : "Échéance ") + jourLib(m.echeance) : "Sans échéance") +
+      (m.prio === "Haute" ? " · haute priorité" : "") + (att ? " · ⏳ en attente d'envoi" : "") + "</div></div>";
+  }
+  var MISV = { onglet: "moi", clos: false };
+  function afficherMis(id) {
+    $("titre").textContent = "Missions";
+    var M = S.mis;
+    if (!M) {
+      $("vueListe").innerHTML = "<div class='carte'><h3>🎯 Missions</h3><p class='info'>Aucune donnée sur cet appareil : réseau puis ⟳.</p></div>"; montrer("vueListe");
+      rafraichirMis().then(function () { if (S.mis) afficherMis(id); }).catch(function () {});
+      return;
+    }
+    if (id && M.missions.some(function (m) { return m.id === id; })) { ficheMis(id); return; }
+    var moi = M.agent, O = [["moi", "Mes missions"], ["donnees", "Confiées"]].concat(M.direction ? [["cloturer", "À clôturer (" + M.missions.filter(function (m) { return m.statut === "À clôturer"; }).length + ")"], ["equipe", "Équipe"]] : []);
+    var envoi = S.file.filter(function (x) { return x.type === "mis"; }).length;
+    var h = "<div class='carte'><h3>🎯 Missions</h3><div class='info'>" + esc(moi) + (M.direction ? " · clôture des missions" : "") + " · données du " + dateCourte(M.recu || M.genere) + "</div>" +
+      "<button class='bouton' id='miNouv'>➕ Nouvelle mission</button><div class='onglets' style='margin-top:10px'>" +
+      O.map(function (o) { return "<button data-o='" + o[0] + "' class='" + (MISV.onglet === o[0] ? "actif" : "") + "' style='border-radius:10px;border-bottom:1px solid var(--bord)'>" + o[1] + "</button>"; }).join("") + "</div>" +
+      (MISV.onglet !== "equipe" ? "<label style='font-weight:400'><input type='checkbox' id='miClos' style='width:auto'" + (MISV.clos ? " checked" : "") + "> afficher les missions closes</label>" : "") + "</div>" +
+      (envoi ? "<div class='carte att'>⏳ " + envoi + " opération(s) en attente d'envoi.</div>" : "") + "<div id='miL'></div>";
+    $("vueListe").innerHTML = h; montrer("vueListe");
+    $("miNouv").onclick = function () { formulaireMis(null); };
+    Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-o]"), function (b) { b.onclick = function () { MISV.onglet = b.getAttribute("data-o"); afficherMis(); }; });
+    if ($("miClos")) $("miClos").onchange = function () { MISV.clos = this.checked; afficherMis(); };
+    var auj = misAuj(), C = $("miL");
+    if (MISV.onglet === "equipe") {
+      var P = {};
+      M.missions.filter(misOuv).forEach(function (m) { m.assignes.forEach(function (a) {
+        var o = P[a] = P[a] || { att: 0, cours: 0, clo: 0, ret: 0 };
+        if (m.statut === "À clôturer") o.clo++; else if (m.statut === "En cours") o.cours++; else o.att++;
+        if (m.statut !== "À clôturer" && m.echeance && m.echeance < auj) o.ret++;
+      }); });
+      C.innerHTML = "<div class='carte'><h3>Tableau d'équipe</h3><table><tr><td><b>Agent</b></td><td class='v'><b>Attente</b></td><td class='v'><b>En cours</b></td><td class='v'><b>À clôt.</b></td><td class='v'><b>Retard</b></td></tr>" +
+        Object.keys(P).sort().map(function (a) { var o = P[a]; return "<tr data-ag='" + esc(a) + "' style='cursor:pointer'><td>" + esc(a) + "</td><td class='v'>" + o.att + "</td><td class='v'>" + o.cours + "</td><td class='v'>" + o.clo + "</td><td class='v'" + (o.ret ? " style='color:#c62828;font-weight:700'" : "") + ">" + o.ret + "</td></tr>"; }).join("") +
+        "</table><div class='info'>Touchez un agent pour voir ses missions.</div></div><div id='miAg'></div>";
+      Array.prototype.forEach.call(C.querySelectorAll("[data-ag]"), function (tr) {
+        tr.onclick = function () { var a = tr.getAttribute("data-ag"); $("miAg").innerHTML = M.missions.filter(function (m) { return misOuv(m) && misPour(m, a); }).sort(function (x, y) { return (x.echeance || 9e15) - (y.echeance || 9e15); }).map(htmlMis).join("");
+          Array.prototype.forEach.call($("miAg").querySelectorAll("[data-mi]"), function (el) { el.onclick = function () { ficheMis(el.getAttribute("data-mi")); }; }); };
+      });
+      return;
+    }
+    var L = M.missions.filter(function (m) {
+      if (!MISV.clos && !misOuv(m)) return false;
+      if (MISV.onglet === "moi") return misPour(m, moi);
+      if (MISV.onglet === "donnees") return nomRH(m.par) === nomRH(moi) && !misPour(m, moi);
+      return m.statut === "À clôturer";
+    }).sort(function (a, b) { return (misOuv(b) - misOuv(a)) || (a.echeance || 9e15) - (b.echeance || 9e15) || ((a.prio === "Haute") ? -1 : 1); });
+    C.innerHTML = L.map(htmlMis).join("") || "<p class='info' style='padding:0 4px'>Aucune mission ici.</p>";
+    Array.prototype.forEach.call(C.querySelectorAll("[data-mi]"), function (el) { el.onclick = function () { ficheMis(el.getAttribute("data-mi")); }; });
+  }
+  function ficheMis(id) {
+    var M = S.mis, m = M.missions.filter(function (x) { return x.id === id; })[0];
+    if (!m) { afficherMis(); return; }
+    $("titre").textContent = m.id;
+    var moi = M.agent, ass = misPour(m, moi), cre = nomRH(m.par) === nomRH(moi), dir = M.direction, ouv = misOuv(m), att = misAttente(m.id).length;
+    var h = htmlMis(m).replace("cursor:pointer", "") + "<div class='carte'>" + (m.desc ? "<div style='white-space:pre-line'>" + esc(m.desc) + "</div>" : "<div class='info'>Pas de description.</div>") +
+      "<div class='info' style='margin-top:6px'>" + esc(m.id) + " · créée par " + esc(m.par) + " le " + jourLib(m.cree) + (m.source && m.source !== "DuoCore" ? " · " + esc(m.source) : "") + "</div></div>";
+    if (m.liste.length) h += "<div class='carte'><h3>Check-list</h3>" + m.liste.map(function (i, k) {
+      return "<label style='font-weight:400;display:flex;gap:8px;align-items:flex-start;margin:6px 0'><input type='checkbox' class='miCk' data-k='" + k + "' style='width:auto;margin-top:3px'" + (i.fait ? " checked" : "") + (ouv && (ass || cre || dir) && !att ? "" : " disabled") + ">" +
+        "<span" + (i.fait ? " style='text-decoration:line-through;color:#888'" : "") + ">" + esc(i.t) + (i.fait ? " <small class='info'>(" + esc(i.par) + " " + jourLib(i.q) + ")</small>" : "") + "</span></label>"; }).join("") + "</div>";
+    if (ouv && !att) {
+      h += "<div class='carte'><label>Commentaire</label><input id='miCom'>";
+      if (ass) h += (m.statut !== "En cours" && m.statut !== "À clôturer" ? "<button class='bouton second' id='miCours'>▶ Je commence (en cours)</button>" : "") +
+        (m.statut !== "À clôturer" ? "<button class='bouton' id='miSig' style='background:#6a1b9a'>✅ Signaler terminée (à clôturer)</button>" : "<div class='info'>Signalée terminée : en attente de clôture par DG / WALID.</div>");
+      if (dir) h += "<div class='ligne'><button class='bouton' id='miFin' style='background:var(--vert)'>🏁 Clôturer : terminée</button><button class='bouton' id='miAnn' style='background:var(--rouge)'>⛔ Annuler</button></div>";
+      h += "<button class='bouton second' id='miCm'>💬 Ajouter le commentaire</button>" + (cre || dir ? "<button class='bouton second' id='miMod'>✏️ Modifier</button>" : "") + "<div class='info' id='miMsg'></div></div>";
+    }
+    h += "<div class='carte'><h3>Historique</h3>" + m.historique.slice().reverse().map(function (x) { return "<div class='info'>" + dateCourte(x.q) + " · " + esc(x.a) + " · " + esc(x.act) + (x.c ? " — " + esc(x.c) : "") + "</div>"; }).join("") + "</div>";
+    $("vueListe").innerHTML = h; montrer("vueListe");
+    function com() { return $("miCom") ? $("miCom").value.trim() : ""; }
+    var retour = function () { ficheMis(m.id); };
+    Array.prototype.forEach.call(document.querySelectorAll(".miCk"), function (c) {
+      c.onchange = function () { var k = +c.getAttribute("data-k"); m.liste[k].fait = c.checked; envoyerMis("cocher", { id: m.id, index: k, fait: c.checked }, (c.checked ? "☑ " : "☐ ") + m.liste[k].t, retour); };
+    });
+    if ($("miCours")) $("miCours").onclick = function () { envoyerMis("statut", { id: m.id, version: m.version, statut: "En cours", commentaire: com() }, "En cours " + m.id, retour); };
+    if ($("miSig")) $("miSig").onclick = function () {
+      var reste = m.liste.filter(function (i) { return !i.fait; }).length;
+      if (!confirm((reste ? reste + " étape(s) non cochée(s). " : "") + "Signaler « " + m.titre + " » terminée ? DG / WALID la clôtureront.")) return;
+      envoyerMis("statut", { id: m.id, version: m.version, statut: "À clôturer", commentaire: com() }, "À clôturer " + m.id, retour);
+    };
+    if ($("miFin")) $("miFin").onclick = function () { if (confirm("Clôturer « " + m.titre + " » (terminée) ?" + (m.rec ? "\nLa suivante (" + m.rec.toLowerCase() + ") sera créée." : ""))) envoyerMis("statut", { id: m.id, version: m.version, statut: "Terminée", commentaire: com() }, "Clôture " + m.id, retour); };
+    if ($("miAnn")) $("miAnn").onclick = function () { if (!com()) { $("miMsg").textContent = "⛔ Indiquez la raison dans le commentaire."; return; } if (confirm("Annuler « " + m.titre + " » ?")) envoyerMis("statut", { id: m.id, version: m.version, statut: "Annulée", commentaire: com() }, "Annulation " + m.id, retour); };
+    if ($("miCm")) $("miCm").onclick = function () { if (!com()) { $("miMsg").textContent = "⛔ Écrivez le commentaire."; return; } envoyerMis("commenter", { id: m.id, commentaire: com() }, "Commentaire " + m.id, retour); };
+    if ($("miMod")) $("miMod").onclick = function () { formulaireMis(m); };
+  }
+  function formulaireMis(src) {
+    var M = S.mis, s = src || {}, lst = (s.liste || []).map(function (i) { return { t: i.t, fait: i.fait, par: i.par, q: i.q }; });
+    $("titre").textContent = src ? "Modifier " + s.id : "Nouvelle mission";
+    var demain = new Date(misAuj() + 86400000);
+    $("vueListe").innerHTML = "<div class='carte'><h3>" + (src ? "✏️ " + esc(s.id) : "➕ Nouvelle mission") + "</h3>" +
+      "<label>Titre</label><input id='mfT' value='" + esc(s.titre || "") + "'><label>Description</label><textarea id='mfD' rows='3'>" + esc(s.desc || "") + "</textarea>" +
+      "<label>Assignée à (une ou plusieurs personnes)</label><div id='mfA'>" + M.agents.map(function (a) {
+        return "<label style='font-weight:400;display:inline-block;margin:2px 10px 2px 0'><input type='checkbox' class='mfAg' value='" + esc(a) + "' style='width:auto'" + ((s.assignes || []).some(function (x) { return nomRH(x) === nomRH(a); }) ? " checked" : "") + "> " + esc(a) + "</label>"; }).join("") + "</div>" +
+      "<div class='ligne'><div><label>Échéance</label><input id='mfE' type='date' value='" + dateISO(s.echeance || demain.getTime()) + "'></div><div><label>Priorité</label><select id='mfP'>" +
+      M.priorites.map(function (p) { return "<option" + (p === (s.prio || "Normale") ? " selected" : "") + ">" + p + "</option>"; }).join("") + "</select></div></div>" +
+      "<label>Récurrence</label><select id='mfR'>" + M.recurrences.map(function (r) { return "<option value='" + r + "'" + (r === (s.rec || "") ? " selected" : "") + ">" + (r || "Aucune (une seule fois)") + "</option>"; }).join("") + "</select>" +
+      "<div class='info'>Récurrente : à la clôture, la suivante est créée automatiquement avec la check-list remise à zéro.</div>" +
+      "<label>Check-list (étapes à cocher)</label><div id='mfL'></div><div class='ligne'><input id='mfLn' placeholder='Nouvelle étape'><button class='bouton second' id='mfLa' style='flex:0;width:auto'>➕</button></div>" +
+      (src ? "<label>Commentaire (raison du changement)</label><input id='mfC'>" : "") +
+      "<button class='bouton' id='mfEnv'>" + (src ? "Enregistrer" : "📤 Créer et notifier") + "</button><div class='info' id='mfM'></div></div>";
+    montrer("vueListe");
+    function dessiner() {
+      $("mfL").innerHTML = lst.map(function (i, k) { return "<div class='ligne' style='align-items:center'><span style='flex:1'>" + (i.fait ? "☑ " : "☐ ") + esc(i.t) + "</span><button class='bouton second' data-x='" + k + "' style='flex:0;width:auto;padding:4px 8px'>✕</button></div>"; }).join("") || "<div class='info'>Aucune étape.</div>";
+      Array.prototype.forEach.call($("mfL").querySelectorAll("[data-x]"), function (b) { b.onclick = function () { lst.splice(+b.getAttribute("data-x"), 1); dessiner(); }; });
+    }
+    dessiner();
+    function ajouter() { var t = $("mfLn").value.trim(); if (t) { lst.push({ t: t, fait: false }); $("mfLn").value = ""; dessiner(); } }
+    $("mfLa").onclick = ajouter; $("mfLn").onkeydown = function (e) { if (e.key === "Enter") { e.preventDefault(); ajouter(); } };
+    $("mfEnv").onclick = function () {
+      if ($("mfLn").value.trim()) ajouter();
+      var d = { titre: $("mfT").value.trim(), desc: $("mfD").value.trim(), assignes: Array.prototype.filter.call(document.querySelectorAll(".mfAg"), function (c) { return c.checked; }).map(function (c) { return c.value; }),
+        echeance: $("mfE").value, prio: $("mfP").value, rec: $("mfR").value, liste: lst };
+      var err = !d.titre ? "titre" : !d.assignes.length ? "au moins une personne" : !d.echeance ? "échéance" : "";
+      if (err) { $("mfM").textContent = "⛔ Indiquez : " + err + "."; return; }
+      if (src) { d.id = s.id; d.version = s.version; d.commentaire = $("mfC").value.trim(); envoyerMis("modifier", d, "Modification " + s.id, function () { ficheMis(s.id); }); }
+      else envoyerMis("creer", d, "Mission " + d.titre, function (r) { if (r && r.id) ficheMis(r.id); else afficherMis(); });
+    };
+  }
+
   function ouvrirDepuisNotif(d) {
     synchroniser(true).catch(function () {}).then(function () {
       if (d.vue === "finances" && typeof afficherFinances === "function") afficherFinances(d.id);
       else if (d.vue === "rh" && droitRH()) afficherRH(d.id);
       else if (d.vue === "commercial" && droitCom()) afficherCom(d.id);
+      else if (d.vue === "missions" && droitMis()) afficherMis(d.id);
       else montrer("vueAccueil");
     });
   }
@@ -2578,8 +2742,8 @@
   }
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function () {});
 
-  Promise.all(["url", "donnees", "gabarit", "gv", "file", "envoyes", "aCorriger", "recents", "derniereSync", "agent", "formulaires", "planif", "planifLocal", "affichage", "fin", "rh", "com"].map(lire)).then(function (v) {
-    S.fin = v[14] || null; S.rh = v[15] || null; S.com = v[16] || null;
+  Promise.all(["url", "donnees", "gabarit", "gv", "file", "envoyes", "aCorriger", "recents", "derniereSync", "agent", "formulaires", "planif", "planifLocal", "affichage", "fin", "rh", "com", "mis"].map(lire)).then(function (v) {
+    S.fin = v[14] || null; S.rh = v[15] || null; S.com = v[16] || null; S.mis = v[17] || null;
     S.agent = v[9] || null; S.formulaires = v[10] || null; S.planif = v[11] || null; S.planifLocal = v[12] || {}; S.affichage = v[13] || "auto";
     $("choixAffichage").value = S.affichage;
     S.url = v[0] || (typeof URL_SERVEUR === "string" ? URL_SERVEUR : "") || "";
