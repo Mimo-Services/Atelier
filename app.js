@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-10-28 GF";
+  var VERSION_APP = "2026-10-28 GH";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -989,7 +989,8 @@
       "<table>" + ligne("Montant", "<b>" + gnf(d.montant) + " " + esc(d.devise) + "</b>" + (d.devise !== "GNF" ? "<br><small>taux " + gnf(d.taux) + " → " + gnf(d.gnf) + " GNF</small>" : "")) +
       ligne("Fournisseur", esc(d.fournisseur)) + ligne("Facture", d.facture ? esc(d.facture) : d.refFacture ? "Réf. " + esc(d.refFacture) : "") +
       ligne("Objet", esc(d.objet)) + ligne("Mode", esc(d.mode)) + ligne("Compte", esc(d.compte) + (d.contrepartie ? " → " + esc(d.contrepartie) : "")) +
-      ligne("Bénéficiaire", esc(d.beneficiaire)) + ligne("Société", esc(d.societe)) + ligne("Échéance", d.echeance ? dateCourte(d.echeance).split(" ")[0] : "") +
+      ligne("Bénéficiaire", esc(d.beneficiaire)) + ligne("Catégorie", esc(d.categorie)) + ligne("Reçu", d.recu ? gnf(d.recu) + " " + esc(d.deviseRecue) : "") +
+      ligne("Base", d.ligneBase ? "ligne " + esc(d.ligneBase) : "") + ligne("Société", esc(d.societe)) + ligne("Échéance", d.echeance ? dateCourte(d.echeance).split(" ")[0] : "") +
       ligne("Demandeur", esc(d.demandeur) + " · " + dateCourte(d.date)) +
       (d.solde ? ligne("Réglé / reste", gnf(d.solde.regle) + " / <b>" + gnf(d.solde.reste) + " GNF</b>" + (d.solde.engage ? "<br><small>dont " + gnf(d.solde.engage) + " en cours</small>" : "")) : "") +
       ligne("Walid", trace(d.walid)) + (d.validations.indexOf("DG") >= 0 ? ligne("DG", trace(d.dg)) : "") + "</table></div>" +
@@ -1091,11 +1092,14 @@
       "<div id='ffFactB'><label>Facture à régler</label><select id='ffFact'></select><div id='ffFactI' class='info'></div></div>" +
       "<div id='ffRefB'><label>Réf. de la facture</label><input id='ffRef' value='" + esc(src.refFacture || "") + "'><label>Échéance</label><input id='ffEch' type='date' value='" + (src.echeance ? new Date(src.echeance).toISOString().slice(0, 10) : "") + "'></div>" +
       "<label>Objet</label><input id='ffObj' value='" + esc(src.objet || "") + "'>" +
-      "<div class='ligne'><div style='flex:2'><label>Montant</label><input id='ffMt' inputmode='decimal' value='" + esc(src.montant || "") + "'></div><div><label>Devise</label><select id='ffDev'>" + opts(["GNF", "USD", "EUR"], src.devise || "GNF") + "</select></div></div>" +
+      "<div class='ligne'><div style='flex:2'><label>Montant</label><input id='ffMt' inputmode='decimal' value='" + esc(src.montant || "") + "'></div><div><label>Devise</label><select id='ffDev'>" + opts(["GNF", "USD", "EURO", "TND"], src.devise || "GNF") + "</select></div></div>" +
       "<div id='ffTauxB'><label>Taux (1 unité = … GNF)</label><input id='ffTaux' inputmode='decimal' value='" + esc(src.taux && src.devise !== "GNF" ? src.taux : "") + "'></div>" +
       "<div id='ffGnf' class='info'></div>" +
       "<div id='ffModeB'><label>Mode de paiement</label><select id='ffMode'>" + opts(["Espèces", "Chèque", "Virement"], src.mode, "— choisir —") + "</select></div>" +
       "<div class='ligne' id='ffCptB'><div><label id='ffCptL'>Compte</label><select id='ffCpt'></select></div><div id='ffCtpB'><label id='ffCtpL'>Vers</label><select id='ffCtp'></select></div></div>" +
+      "<div id='ffChqI' class='info'>Chèque client (recouvrement) : à déclarer en Saisie BASE › COMMERCIAL › Recouvrement, pas ici.</div>" +
+      "<div id='ffRecuB'><label id='ffRecuL'>Montant reçu</label><input id='ffRecu' inputmode='decimal' value='" + esc(src.recu || "") + "'></div>" +
+      "<div id='ffCatB'><label>Catégorie (trésorerie)</label><select id='ffCat'>" + opts(F.categories || [], src.categorie, "— choisir —") + "</select></div>" +
       "<div id='ffBenB'><label>Bénéficiaire du chèque / virement</label><input id='ffBen' value='" + esc(src.beneficiaire || "") + "'></div>" +
       champFichiers("ffP") + (src.pieces && src.pieces.length ? "<div class='info'>Déjà jointes : " + src.pieces.length + " pièce(s).</div>" : "") +
       "<div id='ffRegle' class='carte' style='margin-top:10px'></div>" +
@@ -1117,10 +1121,10 @@
       if (t === "Dépense de caisse" || (t === "Règlement fournisseur" && v("ffMode") === "Espèces")) { srcL = CA; lS = "Caisse"; }
       else if (t === "Règlement fournisseur") { srcL = BA; lS = "Compte bancaire"; }
       else if (t === "Mouvement de trésorerie") {
-        if (op === "Retrait") { srcL = BA.concat(CH); dstL = CA; lS = "Depuis (banque ou chèque reçu)"; lD = "Vers la caisse"; }
+        if (op === "Retrait") { srcL = BA; dstL = CA; lS = "Compte du chèque"; lD = "Vers la caisse"; }
         else if (op === "Versement") { srcL = CA; dstL = BA; lS = "Depuis la caisse"; lD = "Vers le compte bancaire"; }
         else if (op === "Virement") { srcL = BA; dstL = BA; lS = "Depuis le compte"; lD = "Vers le compte (ou bénéficiaire)"; }
-        else if (op === "Dépôt de chèque") { srcL = CH; dstL = BA; lS = "Origine"; lD = "Vers le compte bancaire"; }
+        else if (op === "Dépôt de chèque") { srcL = BA; dstL = BA; lS = "Chèque tiré sur"; lD = "Déposé sur"; }
         else if (op === "Transfert entre caisses") { srcL = CA; dstL = CA; lS = "Depuis la caisse"; lD = "Vers la caisse"; }
       }
       function remplir(id, L, val, vide) { var cur = $(id).value || val || ""; $(id).innerHTML = (vide ? "<option value=''>" + vide + "</option>" : "") + L.map(function (c) { return "<option" + (c.nom === cur ? " selected" : "") + ">" + esc(c.nom) + "</option>"; }).join(""); }
@@ -1128,9 +1132,16 @@
       $("ffCptL").textContent = lS; $("ffCtpL").textContent = lD;
       $("ffCptB").style.display = t === "Facture d'achat" ? "none" : "";
       $("ffCtpB").style.display = dstL ? "" : "none";
-      var cpt = F.comptes.filter(function (c) { return c.nom === v("ffCpt") || (v("ffCpt") === (F.chequeRecu || "Chèque reçu") && c.nom === v("ffCtp")); })[0];
+      var cpt = F.comptes.filter(function (c) { return c.nom === v("ffCpt"); })[0];
       if (cpt && cpt.devise) { $("ffDev").value = cpt.devise; $("ffDev").disabled = true; dev = cpt.devise; } else $("ffDev").disabled = false;
+      var devR = dst && dst.devise && dst.devise !== dev ? dst.devise : "";
+      $("ffChqI").style.display = t === "Mouvement de trésorerie" && op === "Dépôt de chèque" ? "" : "none";
+      $("ffRecuB").style.display = devR ? "" : "none"; $("ffRecuL").textContent = "Montant reçu sur " + (dst ? dst.nom : "") + " (" + devR + ")";
       $("ffBenB").style.display = (t === "Règlement fournisseur" && v("ffMode") !== "Espèces") || (t === "Mouvement de trésorerie" && op === "Virement" && !v("ffCtp")) ? "" : "none";
+      // Catégorie : imposée (« Alimentation ») pour les mouvements internes, à choisir sinon.
+      var catAuto = t === "Mouvement de trésorerie" && !(op === "Virement" && !v("ffCtp"));
+      $("ffCatB").style.display = t === "Facture d'achat" || catAuto ? "none" : "";
+      var dst = F.comptes.filter(function (c) { return c.nom === v("ffCtp"); })[0];
       $("ffTauxB").style.display = dev === "GNF" ? "none" : "";
       var four = v("ffFour"), connu = F.fournisseurs.some(function (f) { return f.nom.toLowerCase() === four.toLowerCase(); });
       $("ffNouvF").style.display = four && !connu ? "" : "none";
@@ -1143,7 +1154,7 @@
       var g = nb(v("ffMt")) * (dev === "GNF" ? 1 : nb(v("ffTaux")));
       $("ffGnf").textContent = dev !== "GNF" && g ? "= " + gnf(g) + " GNF" : "";
       // Règle de validation (aperçu ; le serveur décide).
-      var gros = g >= (F.seuil || 5000000), deux = t === "Facture d'achat" || (t === "Dépense de caisse" && gros) || (t === "Règlement fournisseur" && !(v("ffMode") === "Espèces" && !gros)) || (t === "Mouvement de trésorerie" && !((op === "Dépôt de chèque" || op === "Transfert entre caisses") && !gros));
+      var gros = g >= (F.seuil || 5000000), deux = t === "Facture d'achat" || (t === "Dépense de caisse" && gros) || (t === "Règlement fournisseur" && !((v("ffMode") === "Espèces" || v("ffMode") === "Chèque") && !gros)) || (t === "Mouvement de trésorerie" && !((op === "Dépôt de chèque" || op === "Transfert entre caisses") && !gros));
       var photo = t === "Facture d'achat" ? "photo de la facture obligatoire" : (t === "Règlement fournisseur" && v("ffMode") === "Chèque") || (t === "Mouvement de trésorerie" && (op === "Dépôt de chèque" || op === "Retrait")) ? "photo du chèque obligatoire" : "pièces facultatives";
       $("ffRegle").innerHTML = "🔐 Validation : <b>" + (deux ? "Walid puis DG" : "Walid") + "</b> · 📷 " + photo + (t !== "Facture d'achat" ? " · preuve du paiement à joindre après validation" + (t === "Dépense de caisse" ? " (facultative)" : "") : "");
     }
@@ -1155,9 +1166,10 @@
       var s = { no: src.no, type: t, op: v("ffOp"), societe: v("ffSoc"), fournisseur: $("ffFourB").style.display === "none" ? "" : v("ffFour"), facture: t === "Règlement fournisseur" ? v("ffFact") : "",
         refFacture: t === "Facture d'achat" ? v("ffRef") : "", echeance: t === "Facture d'achat" ? v("ffEch") : "", objet: v("ffObj"), montant: nb(v("ffMt")), devise: v("ffDev"), taux: nb(v("ffTaux")),
         mode: t === "Règlement fournisseur" ? v("ffMode") : t === "Dépense de caisse" ? "Espèces" : "", compte: v("ffCpt"), contrepartie: $("ffCtpB").style.display === "none" ? "" : v("ffCtp"),
-        beneficiaire: $("ffBenB").style.display === "none" ? "" : v("ffBen"), commentaire: v("ffCom"), fourTel: v("ffTel"), fourNif: v("ffNif"), fourRib: v("ffRib") };
+        beneficiaire: $("ffBenB").style.display === "none" ? "" : v("ffBen"), commentaire: v("ffCom"),
+        categorie: $("ffCatB").style.display === "none" ? "" : v("ffCat"), recu: $("ffRecuB").style.display === "none" ? 0 : nb(v("ffRecu")), fourTel: v("ffTel"), fourNif: v("ffNif"), fourRib: v("ffRib") };
       if (t === "Facture d'achat") { s.compte = ""; s.contrepartie = ""; }
-      var err = !s.compte && t !== "Facture d'achat" ? "compte" : $("ffCtpB").style.display !== "none" && !s.contrepartie && !(s.op === "Virement" && s.beneficiaire) ? "compte de destination" : !(s.montant > 0) ? "montant" : s.devise !== "GNF" && !(s.taux > 0) ? "taux de change" : t === "Mouvement de trésorerie" && !s.op ? "mouvement" :
+      var err = !s.compte && t !== "Facture d'achat" ? "compte" : $("ffCatB").style.display !== "none" && !s.categorie ? "catégorie" : $("ffRecuB").style.display !== "none" && !(s.recu > 0) ? "montant reçu" : $("ffCtpB").style.display !== "none" && !s.contrepartie && !(s.op === "Virement" && s.beneficiaire) ? "compte de destination" : !(s.montant > 0) ? "montant" : s.devise !== "GNF" && !(s.taux > 0) ? "taux de change" : t === "Mouvement de trésorerie" && !s.op ? "mouvement" :
         (t === "Facture d'achat" || t === "Règlement fournisseur") && !s.fournisseur ? "fournisseur" : t === "Règlement fournisseur" && !s.mode ? "mode de paiement" : "";
       if (err) { m.textContent = "⛔ Indiquez le " + err + "."; return; }
       var nbP = (FICH.ffP || []).length + ((src.pieces || []).length);
