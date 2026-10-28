@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-10-28 GI";
+  var VERSION_APP = "2026-10-28 GJ";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -927,6 +927,7 @@
     var nouv = S.file.filter(function (x) { return x.type === "fin" && x.op === "creer"; });
     var h = "<div class='carte'><h3>💰 Finances</h3><div class='info'>" + esc(F.agent) + (F.role ? " · valideur " + esc(F.role) : F.comptable ? " · comptable (lecture)" : "") + " · données du " + dateCourte(F.recu || F.genere) + "</div>" +
       "<button class='bouton' id='fnNouv'>➕ Nouvelle demande</button>" +
+      (F.role || F.comptable ? "<div class='ligne'><button class='bouton second' id='fnSol'>📊 Soldes</button><button class='bouton second' id='fnExp'>📤 Export du mois</button></div>" : "") +
       (F.suiviAchat || F.comptable ? "<button class='bouton second' id='fnAch'>📦 Suivi des achats (" + ((F.achat && F.achat.ouverts) || []).length + ")</button>" : "") +
       "<div class='onglets' style='margin-top:10px'>" + [["traiter", "À traiter (" + finNbATraiter() + ")"], ["miennes", "Mes demandes"]].concat(F.role || F.comptable ? [["toutes", "Toutes"]] : [])
         .map(function (o) { return "<button data-f='" + o[0] + "' class='" + (FIN.filtre === o[0] ? "actif" : "") + "' style='border-radius:10px;border-bottom:1px solid var(--bord)'>" + o[1] + "</button>"; }).join("") + "</div>" +
@@ -955,6 +956,8 @@
     $("fnCherche").oninput = liste; liste();
     $("fnNouv").onclick = function () { formulaireFin(null); };
     if ($("fnAch")) $("fnAch").onclick = function () { afficherSuiviAchats(); };
+    if ($("fnSol")) $("fnSol").onclick = function () { afficherSoldes("fournisseurs"); };
+    if ($("fnExp")) $("fnExp").onclick = exporterFin;
   }
 
   // Pièce : image affichée, PDF ouvert ; gardée en mémoire le temps de la session.
@@ -1228,6 +1231,76 @@
       if (!confirm((t === "Opération constatée" ? "Enregistrer : " : "Envoyer la demande : ") + lib + " · " + gnf(s.montant) + " " + s.devise + " ?")) return;
       envoyerFin(src.no ? "modifier" : "creer", src.no ? { demande: s, version: src.version, fichiers: FICH.ffP } : { demande: s, fichiers: FICH.ffP }, (src.no ? "Correction " + src.no : lib) + " · " + gnf(s.montant) + " " + s.devise, src.no);
     };
+  }
+
+  // Soldes : fournisseurs (factures, règlements, avances, échéances) et trésorerie (soldes réels de BASE + engagements DuoCore).
+  function afficherSoldes(onglet) {
+    var F = S.fin, D = F.demandes, now = Date.now();
+    $("titre").textContent = "Soldes";
+    var h = "<div class='carte'><div class='onglets'>" + [["fournisseurs", "🏭 Fournisseurs"], ["tresorerie", "🏦 Trésorerie"]].map(function (o) {
+      return "<button data-s='" + o[0] + "' class='" + (onglet === o[0] ? "actif" : "") + "' style='border-radius:10px;border-bottom:1px solid var(--bord)'>" + o[1] + "</button>"; }).join("") +
+      "</div><div class='info' style='margin-top:6px'>Données du " + dateCourte(F.recu || F.genere) + " (⟳ pour actualiser).</div></div>";
+    if (onglet === "fournisseurs") {
+      var P = {};
+      D.forEach(function (d) {
+        if (!d.fournisseur) return;
+        var f = P[d.fournisseur] = P[d.fournisseur] || { fact: 0, regle: 0, avances: 0, engage: 0, echu: 0, factures: [] };
+        if (d.type === "Facture d'achat" && d.solde) {
+          f.fact += d.solde.total; f.regle += d.solde.regle; f.engage += d.solde.engage;
+          if (d.solde.reste > 0) { f.factures.push(d); if (d.echeance && d.echeance < now) f.echu += d.solde.reste; }
+        }
+        if (d.type === "Règlement fournisseur" && !d.facture && d.statut === "Exécutée") f.avances += d.gnf;
+      });
+      var K = Object.keys(P).sort(function (a, b) { return (P[b].fact - P[b].regle) - (P[a].fact - P[a].regle); });
+      var tot = K.reduce(function (t, k) { return t + P[k].fact - P[k].regle - P[k].avances; }, 0), totE = K.reduce(function (t, k) { return t + P[k].echu; }, 0);
+      h += "<div class='carte'><b>Reste à payer : " + gnf(tot) + " GNF</b>" + (totE ? "<br><span style='color:#c62828;font-weight:700'>dont échu : " + gnf(totE) + " GNF</span>" : "") + "</div>" +
+        K.map(function (k) {
+          var f = P[k], reste = f.fact - f.regle - f.avances;
+          return "<div class='carte'><div class='ligne' style='justify-content:space-between'><b>" + esc(k) + "</b><b style='flex:0;white-space:nowrap'>" + gnf(reste) + " GNF</b></div>" +
+            "<div class='info'>Facturé " + gnf(f.fact) + " · réglé " + gnf(f.regle) + (f.avances ? " · avances " + gnf(f.avances) : "") + (f.engage ? " · en cours " + gnf(f.engage) : "") + "</div>" +
+            (f.echu ? "<div style='color:#c62828;font-weight:700'>Échu : " + gnf(f.echu) + " GNF</div>" : "") +
+            f.factures.map(function (d) { var r = d.echeance && d.echeance < now; return "<div class='info' data-no='" + esc(d.no) + "' style='cursor:pointer" + (r ? ";color:#ff8a80" : "") + "'>• " + esc(d.no) + (d.refFacture ? " · " + esc(d.refFacture) : "") +
+              " · reste " + gnf(d.solde.reste) + (d.echeance ? " · échéance " + dateCourte(d.echeance).split(" ")[0] + (r ? " ⚠️" : "") : "") + "</div>"; }).join("") + "</div>";
+        }).join("") || "<div class='carte info'>Aucune facture fournisseur.</div>";
+    } else {
+      var T = F.tresorerie || [], eng = {};
+      // Engagements : demandes validées (à exécuter) ou en attente de validation, par compte débité.
+      D.forEach(function (d) {
+        if (["À exécuter", "En attente Walid", "En attente DG"].indexOf(d.statut) < 0 || !d.compte) return;
+        var e = eng[d.compte] = eng[d.compte] || { aExec: 0, attente: 0 };
+        if (d.statut === "À exécuter") e.aExec += d.montant; else e.attente += d.montant;
+      });
+      var G = {}; T.forEach(function (c) { (G[c.groupe] = G[c.groupe] || []).push(c); });
+      h += Object.keys(G).map(function (g) {
+        return "<div class='carte'><h3>" + esc(g) + "</h3><table>" + G[g].map(function (c) {
+          var e = eng[c.compte] || {}, dispo = c.solde - (e.aExec || 0);
+          return "<tr><td>" + esc(c.compte) + "<br><small class='info'>" + esc(c.societe) + (e.aExec ? " · à payer " + gnf(e.aExec) : "") + (e.attente ? " · en validation " + gnf(e.attente) : "") + "</small></td>" +
+            "<td class='v'>" + gnf(c.solde) + " " + esc(c.devise) + (e.aExec ? "<br><small style='color:" + (dispo < 0 ? "#ff8a80" : "#9ccc65") + "'>après paiements : " + gnf(dispo) + "</small>" : "") + "</td></tr>";
+        }).join("") + "</table></div>";
+      }).join("") || "<div class='carte info'>Feuille « Tresorerie Disponible » introuvable ou vide.</div>";
+    }
+    $("vueListe").innerHTML = h; montrer("vueListe");
+    Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-s]"), function (b) { b.onclick = function () { afficherSoldes(b.getAttribute("data-s")); }; });
+    Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-no]"), function (el) { el.onclick = function () { ouvrirDemandeFin(el.getAttribute("data-no")); }; });
+  }
+  // Export mensuel (réseau) : classeur Drive + fichier .xlsx téléchargé.
+  function exporterFin() {
+    var d = new Date(), def = d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2);
+    var mois = prompt("Mois à exporter (AAAA-MM) :", def);
+    if (!mois) return;
+    if (!/^\d{4}-\d{2}$/.test(mois.trim())) { alert("Format : AAAA-MM (ex. " + def + ")."); return; }
+    if (!navigator.onLine) { alert("Export : réseau nécessaire."); return; }
+    $("titre").textContent = "Export…";
+    api({ api: "finExport", mois: mois.trim() }, 180000).then(function (r) {
+      $("titre").textContent = "Finances";
+      if (r.xlsx) {
+        var bin = atob(r.xlsx), u = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+        var f = new File([u], r.nom, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+        if (navigator.canShare && navigator.canShare({ files: [f] }) && confirm("✅ " + r.message + "\nPartager le fichier ? (Annuler = télécharger)")) navigator.share({ files: [f], title: r.nom }).catch(function () {});
+        else { var a = document.createElement("a"); a.href = URL.createObjectURL(f); a.download = r.nom; document.body.appendChild(a); a.click(); a.remove(); }
+      }
+      if (confirm("✅ " + r.titre + " : " + r.message + "\nOuvrir aussi le classeur dans Google Drive ?")) window.open(r.url, "_blank");
+    }, function (e) { $("titre").textContent = "Finances"; alert("⛔ Export : " + e.message); });
   }
 
   // Suivi des achats (DG / WALID) : tracking, livraison, statut, entrée en stock → ligne SUIVI ACHAT dans Base.
