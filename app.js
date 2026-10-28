@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-10-28 GD";
+  var VERSION_APP = "2026-10-28 GF";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -280,6 +280,10 @@
       var nPl = S.file.filter(function (x) { return x.type === "planif"; }).length;
       tuile("planif", "🗂️", "Planification", "BDC, saisie", nPl ? { badge: nPl, bcls: "orange", cls: "large" } : { cls: "large" });
     }
+    if (droitFin()) {
+      var nF = finNbATraiter();
+      tuile("finances", "💰", "Finances", S.fin && S.fin.role ? "Validation " + S.fin.role : S.fin && S.fin.comptable ? "Comptabilité" : "Demandes, paiements", nF ? { badge: nF, bcls: "rouge", cls: "large" } : { cls: "large" });
+    }
     if (!S.agent && S.url) tuile("connexion", "🔐", "Saisies", "Se connecter");
     tuile("attente", "⏳", "En attente", S.file.length ? "à envoyer" : "rien", S.file.length ? { badge: S.file.length, bcls: "orange" } : {});
     tuile("corriger", "⛔", "À corriger", S.aCorriger.length ? "refusés" : "rien", S.aCorriger.length ? { badge: S.aCorriger.length, bcls: "rouge" } : {});
@@ -293,6 +297,7 @@
         else if (id === "manuel") montrer("vueManuel");
         else if (id.indexOf("form:") === 0) ouvrirFormulaire(id.substring(5));
         else if (id === "connexion") pageConnexion();
+        else if (id === "finances") afficherFinances();
         else if (id === "planif") { if (modePC()) afficherPlanifPC(); else afficherPlanif(); }
         else if (id === "attente") afficherListe("attente");
         else if (id === "corriger") afficherListe("corriger");
@@ -307,7 +312,7 @@
     if ($("btnConnexion")) $("btnConnexion").onclick = pageConnexion;
     if ($("btnDeconnexion")) $("btnDeconnexion").onclick = function () {
       if (S.file.some(function (x) { return x.type === "form"; }) && !confirm("Des saisies sont en attente d'envoi : elles partiront quand même. Changer d'agent ?")) return;
-      S.agent = null; S.formulaires = null; S.planif = null; ecrire("agent", null); ecrire("formulaires", null); ecrire("planif", null); montrer("vueAccueil");
+      S.agent = null; S.formulaires = null; S.planif = null; S.fin = null; ecrire("agent", null); ecrire("formulaires", null); ecrire("planif", null); ecrire("fin", null); montrer("vueAccueil");
     };
 
     var d = S.donnees;
@@ -353,6 +358,7 @@
   }
   /* Résumé lisible d'un élément de la file (déclaration atelier ou saisie de formulaire). */
   function descriptionItem(x) {
+    if (x.type === "fin") return "<b>💰 " + esc(x.titre || "Finances") + "</b><br><small>" + esc(x.agent) + " · " + dateCourte(x.horodatage) + "</small>";
     if (x.type === "planif") return "<b>🗂️ " + esc(x.titre || "Planification") + "</b><br>" + esc(x.resume || "") + "<br><small>" + esc(x.agent) + " · " + dateCourte(x.horodatage) + "</small>";
     if (x.type === "form") return "<b>" + esc(x.titre || "Saisie") + "</b><br>" + esc(x.resume || "") + "<br><small>" + esc(x.agent) + " · " + dateCourte(x.horodatage) + "</small>";
     var o = x.o;
@@ -536,7 +542,9 @@
       var p2 = (S.url && S.agent && (forcerDonnees || ageF > RAFRAICHIR_APRES)) ? rafraichirFormulaires().catch(function () {}) : null;
       var ageP = S.planif ? Date.now() - S.planif.recu : Infinity;
       var p3 = (S.url && droitPlanif() && (forcerDonnees || n > 0 || ageP > RAFRAICHIR_APRES)) ? rafraichirPlanif().catch(function () {}) : null;
-      return Promise.all([p1, p2, p3]);
+      var ageFi = S.fin ? Date.now() - S.fin.recu : Infinity;
+      var p4 = (S.url && droitFin() && (forcerDonnees || n > 0 || ageFi > 5 * 60000)) ? rafraichirFin().catch(function () {}) : null;
+      return Promise.all([p1, p2, p3, p4]);
     }).catch(function () {}).then(function () { majEtat(); if ($("vueAccueil").style.display !== "none") majAccueil(); });
   }
   function erreurPassagere(r) {
@@ -550,17 +558,18 @@
       var it = S.file[0];
       it.essais = (it.essais || 0) + 1;
       var corps;
-      if (it.type === "planif") corps = { api: "planifEnvoyer", agent: it.agent, code: it.code, op: it.op, jeton: it.jeton, horodatage: String(it.horodatage), donnees: it.donnees };
+      if (it.type === "fin") corps = { api: "finEnvoyer", agent: it.agent, code: it.code, op: it.op, jeton: it.jeton, horodatage: String(it.horodatage), donnees: it.donnees };
+      else if (it.type === "planif") corps = { api: "planifEnvoyer", agent: it.agent, code: it.code, op: it.op, jeton: it.jeton, horodatage: String(it.horodatage), donnees: it.donnees };
       else if (it.type === "form") corps = { api: "repondre", agent: it.agent, code: it.code, formulaire: it.form, jeton: it.jeton, horodatage: String(it.horodatage), reponses: it.reponses };
       else { corps = { api: "declarer" }; for (var k in it.o) corps[k] = it.o[k]; }
-      return requete(S.url, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(corps), redirect: "follow" }, it.type === "planif" ? DELAI_PLANIF : DELAI_ENVOI)
+      return requete(S.url, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(corps), redirect: "follow" }, it.type === "planif" || it.type === "fin" ? DELAI_PLANIF : DELAI_ENVOI)
         .then(function (r) {
           S.derniereSync = Date.now(); ecrire("derniereSync", S.derniereSync);
           if (erreurPassagere(r) && it.essais < 6) { it.erreur = r.message; return sauver().then(function () { return n; }); }
           S.file.shift();
           resultats[it.jeton] = r;
           if (attenteJetons[it.jeton]) attenteJetons[it.jeton](r);
-          if (r.ok) { if (it.o) { S.envoyes.push({ jeton: it.jeton, o: it.o, recuA: Date.now() }); n++; } else if (it.type === "planif") n++; }
+          if (r.ok) { if (it.o) { S.envoyes.push({ jeton: it.jeton, o: it.o, recuA: Date.now() }); n++; } else if (it.type === "planif" || it.type === "fin") n++; }
           else { var c = JSON.parse(JSON.stringify(it)); c.r = r; delete c.code; S.aCorriger.push(c); }
           return sauver().then(function () { majEtat(); return suivant(); });
         }, function (e) {
@@ -881,6 +890,281 @@
     } else afficherFiches(b, C, true);
     // Feuille mère / scénarios indisponibles : on revient sur les lignes.
     if (cadre && !F.srcdoc) { C.style.display = "block"; F.style.display = "none"; C.innerHTML = "<div class='carte info'>Onglet indisponible pour l'instant (voir le message). Complétez les étapes précédentes ou synchronisez (⟳).</div>"; }
+  }
+
+  /* ---------- Finances : demandes, validations (Walid puis DG), preuves ---------- */
+  function droitFin() { return !!(S.agent && S.formulaires && S.formulaires.droits && S.formulaires.droits.finances); }
+  var rafFin = null;
+  function rafraichirFin() {
+    if (!S.url || !droitFin()) return Promise.resolve();
+    if (rafFin) return rafFin;
+    rafFin = api({ api: "finances" }).then(function (r) { r.recu = Date.now(); S.fin = r; return ecrire("fin", r); })
+      .then(function () { rafFin = null; }, function (e) { rafFin = null; throw e; });
+    return rafFin;
+  }
+  function gnf(v) { return Math.round(+v || 0).toLocaleString("fr-FR"); }
+  function finAttente(no) { return S.file.filter(function (x) { return x.type === "fin" && x.donnees && (x.donnees.no === no || (x.donnees.demande && x.donnees.demande.no === no)); }); }
+  function finATraiter(d) {
+    var F = S.fin, role = F && F.role;
+    if (finAttente(d.no).length) return false;
+    if (role && ((d.statut === "En attente Walid" && role === "Walid") || (d.statut === "En attente DG" && role === "DG"))) return true;
+    return d.demandeur === (S.agent && S.agent.nom) && (d.statut === "À corriger" || d.statut === "À exécuter");
+  }
+  function finNbATraiter() { return S.fin ? S.fin.demandes.filter(finATraiter).length : 0; }
+  var COUL_ST = { "En attente Walid": "#e65100", "En attente DG": "#e65100", "À corriger": "#b26a00", "Refusée": "#c62828", "Validée": "#2e7d32", "À exécuter": "#1565c0", "Exécutée": "#2e7d32", "Annulée": "#777" };
+  function statutFin(d) { return d.solde && d.statut === "Validée" ? (d.solde.reste <= 0 ? "Soldée" : d.solde.regle > 0 ? "Partiellement payée" : "Validée — à payer") : d.statut; }
+  function libelleFin(d) { return d.type === "Mouvement de trésorerie" ? d.op : d.type; }
+  var FIN = { filtre: "traiter" };
+  function afficherFinances(no) {
+    $("titre").textContent = "Finances";
+    var F = S.fin;
+    if (!F) {
+      $("vueListe").innerHTML = "<div class='carte'><h3>💰 Finances</h3><p class='info'>Aucune donnée sur cet appareil : réseau puis ⟳.</p></div>"; montrer("vueListe");
+      rafraichirFin().then(function () { if (S.fin) afficherFinances(no); }).catch(function () {});
+      return;
+    }
+    if (no) { ouvrirDemandeFin(no); return; }
+    var nouv = S.file.filter(function (x) { return x.type === "fin" && x.op === "creer"; });
+    var h = "<div class='carte'><h3>💰 Finances</h3><div class='info'>" + esc(F.agent) + (F.role ? " · valideur " + esc(F.role) : F.comptable ? " · comptable (lecture)" : "") + " · données du " + dateCourte(F.recu || F.genere) + "</div>" +
+      "<button class='bouton' id='fnNouv'>➕ Nouvelle demande</button>" +
+      "<div class='onglets' style='margin-top:10px'>" + [["traiter", "À traiter (" + finNbATraiter() + ")"], ["miennes", "Mes demandes"]].concat(F.role || F.comptable ? [["toutes", "Toutes"]] : [])
+        .map(function (o) { return "<button data-f='" + o[0] + "' class='" + (FIN.filtre === o[0] ? "actif" : "") + "' style='border-radius:10px;border-bottom:1px solid var(--bord)'>" + o[1] + "</button>"; }).join("") + "</div>" +
+      "<input id='fnCherche' placeholder='Rechercher (n°, fournisseur, objet…)' style='margin-top:8px'></div>" +
+      (nouv.length ? "<div class='carte att'>⏳ " + nouv.length + " nouvelle(s) demande(s) sur cet appareil, en attente d'envoi.</div>" : "") +
+      "<div id='fnListe'></div>";
+    $("vueListe").innerHTML = h; montrer("vueListe");
+    function liste() {
+      var q = $("fnCherche").value.trim().toLowerCase(), moi = S.agent.nom;
+      var L = F.demandes.filter(function (d) {
+        if (FIN.filtre === "traiter" && !finATraiter(d)) return false;
+        if (FIN.filtre === "miennes" && d.demandeur !== moi) return false;
+        return !q || (d.no + " " + d.type + " " + d.op + " " + d.fournisseur + " " + d.objet + " " + d.refFacture + " " + d.demandeur).toLowerCase().indexOf(q) >= 0;
+      }).sort(function (a, b) { return b.date - a.date; });
+      $("fnListe").innerHTML = L.map(function (d) {
+        var att = finAttente(d.no).length;
+        return "<div class='carte" + (att ? " att" : "") + "' data-no='" + esc(d.no) + "' style='cursor:pointer'><div class='ligne' style='justify-content:space-between'><b>" + esc(d.no) + " · " + esc(libelleFin(d)) + "</b>" +
+          "<b style='flex:0;white-space:nowrap'>" + gnf(d.montant) + " " + esc(d.devise) + "</b></div>" +
+          "<div class='info'>" + esc(d.fournisseur || d.objet || d.compte || "") + " · " + esc(d.demandeur) + " · " + dateCourte(d.date) + "</div>" +
+          "<div style='color:" + (COUL_ST[d.statut] || "#999") + ";font-weight:700;font-size:14px'>" + esc(statutFin(d)) + (att ? " · ⏳ action en attente d'envoi" : "") +
+          (d.solde ? " · reste " + gnf(d.solde.reste) + " GNF" : "") + "</div></div>";
+      }).join("") || "<p class='info' style='padding:0 4px'>Rien ici.</p>";
+      Array.prototype.forEach.call($("fnListe").querySelectorAll("[data-no]"), function (el) { el.onclick = function () { ouvrirDemandeFin(el.getAttribute("data-no")); }; });
+    }
+    Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-f]"), function (b) { b.onclick = function () { FIN.filtre = b.getAttribute("data-f"); afficherFinances(); }; });
+    $("fnCherche").oninput = liste; liste();
+    $("fnNouv").onclick = function () { formulaireFin(null); };
+  }
+
+  // Pièce : image affichée, PDF ouvert ; gardée en mémoire le temps de la session.
+  var PIECES = {};
+  function voirPiece(no, p, cible) {
+    var aff = function (o) {
+      var url = URL.createObjectURL(o);
+      if (p.type === "pdf") { window.open(url, "_blank"); return; }
+      cible.innerHTML = "<img src='" + url + "' style='max-width:100%;border-radius:8px;margin-top:8px'>";
+    };
+    if (PIECES[p.id]) { aff(PIECES[p.id]); return; }
+    cible.innerHTML = "<div class='info'>⏳ Chargement…</div>";
+    api({ api: "finPiece", no: no, id: p.id }, 120000).then(function (r) {
+      var bin = atob(r.data), u = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+      PIECES[p.id] = new Blob([u], { type: r.mime || (p.type === "pdf" ? "application/pdf" : "image/jpeg") }); cible.innerHTML = ""; aff(PIECES[p.id]);
+    }, function (e) { cible.innerHTML = "<div class='info'>⛔ " + esc(e.message) + " (réseau nécessaire pour voir les pièces)</div>"; });
+  }
+  function htmlPieces(d, liste, titre, k) {
+    if (!liste.length) return "";
+    return "<div class='carte'><h3>" + titre + "</h3>" + liste.map(function (p, i) {
+      return "<button class='bouton second' data-p='" + k + i + "' style='display:inline-block;width:auto;padding:8px 12px;margin-right:6px'>" + (p.type === "pdf" ? "📄 " : "🖼️ ") + esc(p.nom.replace(d.no + " ", "")) + "</button>";
+    }).join("") + "<div id='pv" + k + "'></div></div>";
+  }
+  function ouvrirDemandeFin(no) {
+    var F = S.fin, d = F && F.demandes.filter(function (x) { return x.no === no; })[0];
+    if (!d) { afficherFinances(); return; }
+    $("titre").textContent = d.no;
+    var moi = S.agent.nom, att = finAttente(no), role = F.role;
+    function ligne(l, v) { return v ? "<tr><td>" + l + "</td><td class='v' style='white-space:normal'>" + v + "</td></tr>" : ""; }
+    function trace(t, r) { return t ? (t.d === "valider" ? "✅" : t.d === "refuser" ? "⛔" : "✏️") + " " + esc(t.a) + " · " + dateCourte(t.q) + (t.c ? " — " + esc(t.c) : "") : "<span class='info'>en attente</span>"; }
+    var h = "<div class='carte'><h3>" + esc(d.no) + " · " + esc(libelleFin(d)) + "</h3>" +
+      "<div style='color:" + (COUL_ST[d.statut] || "#999") + ";font-weight:700'>" + esc(statutFin(d)) + "</div>" +
+      (att.length ? "<div class='carte att'>⏳ " + esc(att[0].titre) + " — en attente d'envoi.</div>" : "") +
+      "<table>" + ligne("Montant", "<b>" + gnf(d.montant) + " " + esc(d.devise) + "</b>" + (d.devise !== "GNF" ? "<br><small>taux " + gnf(d.taux) + " → " + gnf(d.gnf) + " GNF</small>" : "")) +
+      ligne("Fournisseur", esc(d.fournisseur)) + ligne("Facture", d.facture ? esc(d.facture) : d.refFacture ? "Réf. " + esc(d.refFacture) : "") +
+      ligne("Objet", esc(d.objet)) + ligne("Mode", esc(d.mode)) + ligne("Compte", esc(d.compte) + (d.contrepartie ? " → " + esc(d.contrepartie) : "")) +
+      ligne("Bénéficiaire", esc(d.beneficiaire)) + ligne("Société", esc(d.societe)) + ligne("Échéance", d.echeance ? dateCourte(d.echeance).split(" ")[0] : "") +
+      ligne("Demandeur", esc(d.demandeur) + " · " + dateCourte(d.date)) +
+      (d.solde ? ligne("Réglé / reste", gnf(d.solde.regle) + " / <b>" + gnf(d.solde.reste) + " GNF</b>" + (d.solde.engage ? "<br><small>dont " + gnf(d.solde.engage) + " en cours</small>" : "")) : "") +
+      ligne("Walid", trace(d.walid)) + (d.validations.indexOf("DG") >= 0 ? ligne("DG", trace(d.dg)) : "") + "</table></div>" +
+      htmlPieces(d, d.pieces, "Pièces", "P") + htmlPieces(d, d.preuves, "Preuves", "R") +
+      "<div class='carte'><h3>Historique</h3>" + d.historique.map(function (x) { return "<div class='info'>" + dateCourte(x.q) + " · " + esc(x.a) + " · " + esc(x.act) + (x.c ? " — " + esc(x.c) : "") + "</div>"; }).join("") + "</div>" +
+      "<div id='fnActions'></div>";
+    $("vueListe").innerHTML = h; montrer("vueListe");
+    Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-p]"), function (b) {
+      b.onclick = function () { var k = b.getAttribute("data-p"), src = k.charAt(0) === "R" ? d.preuves : d.pieces;
+        voirPiece(d.no, src[+k.substring(1)], $("pv" + k.charAt(0))); };
+    });
+    if (att.length) return;
+    var A = $("fnActions"), peutValider = (d.statut === "En attente Walid" && role === "Walid") || (d.statut === "En attente DG" && role === "DG");
+    if (peutValider) {
+      A.innerHTML = "<div class='carte'><h3>Votre décision</h3><label>Commentaire (obligatoire pour refuser ou faire corriger)</label><textarea id='fnCom' rows='2'></textarea>" +
+        "<button class='bouton' id='fnVal' style='background:var(--vert)'>✅ Valider</button><button class='bouton alerte' id='fnCor'>✏️ À corriger</button><button class='bouton' id='fnRef' style='background:var(--rouge)'>⛔ Refuser</button><div id='fnMsg' class='info'></div></div>";
+      [["fnVal", "valider"], ["fnCor", "corriger"], ["fnRef", "refuser"]].forEach(function (x) {
+        $(x[0]).onclick = function () {
+          var com = $("fnCom").value.trim();
+          if (x[1] !== "valider" && !com) { $("fnMsg").textContent = "⛔ Commentaire obligatoire."; return; }
+          if (x[1] !== "valider" && !confirm((x[1] === "refuser" ? "Refuser " : "Renvoyer pour correction ") + d.no + " ?")) return;
+          envoyerFin("decider", { no: d.no, version: d.version, decision: x[1], commentaire: com }, (x[1] === "valider" ? "Validation " : x[1] === "refuser" ? "Refus " : "Correction ") + d.no, d.no);
+        };
+      });
+    } else if (d.statut === "À exécuter" && (d.demandeur === moi || role)) {
+      A.innerHTML = "<div class='carte'><h3>Paiement effectué</h3><div class='info'>" + (d.type === "Dépense de caisse" ? "Justificatif facultatif." : "Photo de la preuve obligatoire : reçu, talon de chèque, avis de virement…") + "</div>" +
+        champFichiers("fnPr") + "<label>Commentaire</label><input id='fnCom'><button class='bouton' id='fnExe'>🧾 Clôturer : paiement effectué</button><div id='fnMsg' class='info'></div></div>";
+      lierFichiers("fnPr");
+      $("fnExe").onclick = function () {
+        var f = FICH.fnPr || [];
+        if (!f.length && d.type !== "Dépense de caisse") { $("fnMsg").textContent = "⛔ Ajoutez la photo de la preuve."; return; }
+        envoyerFin("executer", { no: d.no, version: d.version, commentaire: $("fnCom").value.trim(), fichiers: f }, "Paiement " + d.no, d.no);
+      };
+    } else if (d.demandeur === moi && ["En attente Walid", "En attente DG", "À corriger"].indexOf(d.statut) >= 0) {
+      A.innerHTML = "<div class='carte'>" + (d.statut === "À corriger" ? "<button class='bouton' id='fnMod'>✏️ Corriger et renvoyer</button>" : "") +
+        "<button class='bouton second' id='fnAnn'>Annuler la demande</button></div>";
+      if ($("fnMod")) $("fnMod").onclick = function () { formulaireFin(d); };
+      $("fnAnn").onclick = function () { if (confirm("Annuler " + d.no + " ?")) envoyerFin("annuler", { no: d.no, version: d.version }, "Annulation " + d.no, d.no); };
+    }
+  }
+  function envoyerFin(op, donnees, titre, retour) {
+    var it = { type: "fin", op: op, jeton: nouveauJeton(), horodatage: Date.now(), agent: S.agent.nom, code: S.agent.code, donnees: donnees, titre: titre, resume: "Finances", essais: 0 };
+    soumettre(it).then(function (r) {
+      if (r.ok && !r.enAttente) return rafraichirFin().catch(function () {}).then(function () { alert("✅ " + r.titre + (r.message ? "\n" + r.message : "")); if (r.no || retour) ouvrirDemandeFin(r.no || retour); else afficherFinances(); });
+      alert((r.enAttente ? "📥 " : "⛔ ") + (r.titre || "") + "\n" + (r.message || ""));
+      if (retour && S.fin.demandes.some(function (x) { return x.no === retour; })) ouvrirDemandeFin(retour); else afficherFinances();
+    });
+  }
+
+  // Photos (compressées) et PDF : [{nom, type, data base64}]
+  var FICH = {};
+  function champFichiers(id) {
+    return "<label>Photos / PDF</label><div class='ligne'><button class='bouton second' id='" + id + "Ph' style='margin-top:6px'>📷 Photo</button><button class='bouton second' id='" + id + "Fi' style='margin-top:6px'>📎 Fichier</button></div>" +
+      "<input type='file' id='" + id + "InPh' accept='image/*' capture='environment' style='display:none'><input type='file' id='" + id + "InFi' accept='image/*,application/pdf' multiple style='display:none'>" +
+      "<div id='" + id + "Li' class='info'></div>";
+  }
+  function compresser(file) {
+    return new Promise(function (ok, ko) {
+      var rd = new FileReader();
+      rd.onerror = function () { ko(new Error("lecture impossible")); };
+      if (/pdf/i.test(file.type)) {
+        if (file.size > 6e6) { ko(new Error("PDF trop lourd (6 Mo max)")); return; }
+        rd.onload = function () { ok({ nom: file.name, type: "application/pdf", data: String(rd.result).split(",")[1] }); }; rd.readAsDataURL(file); return;
+      }
+      rd.onload = function () {
+        var im = new Image();
+        im.onload = function () {
+          var k = Math.min(1, 1600 / Math.max(im.width, im.height)), c = document.createElement("canvas");
+          c.width = Math.round(im.width * k); c.height = Math.round(im.height * k); c.getContext("2d").drawImage(im, 0, 0, c.width, c.height);
+          ok({ nom: file.name || "photo.jpg", type: "image/jpeg", data: c.toDataURL("image/jpeg", 0.72).split(",")[1] });
+        };
+        im.onerror = function () { ko(new Error("image illisible")); };
+        im.src = rd.result;
+      };
+      rd.readAsDataURL(file);
+    });
+  }
+  function lierFichiers(id) {
+    FICH[id] = [];
+    function maj() { $(id + "Li").innerHTML = FICH[id].map(function (f, i) { return "• " + esc(f.nom) + " (" + Math.round(f.data.length * 0.75 / 1024) + " Ko) <button class='lien' data-x='" + i + "'>retirer</button>"; }).join("<br>");
+      Array.prototype.forEach.call($(id + "Li").querySelectorAll("[data-x]"), function (b) { b.onclick = function () { FICH[id].splice(+b.getAttribute("data-x"), 1); maj(); }; }); }
+    function prendre(inp) { Promise.all(Array.prototype.map.call(inp.files, compresser)).then(function (L) { FICH[id] = FICH[id].concat(L); inp.value = ""; maj(); }, function (e) { alert("⛔ " + e.message); }); }
+    $(id + "Ph").onclick = function () { $(id + "InPh").click(); }; $(id + "Fi").onclick = function () { $(id + "InFi").click(); };
+    $(id + "InPh").onchange = function () { prendre(this); }; $(id + "InFi").onchange = function () { prendre(this); };
+  }
+
+  // Nouvelle demande (ou correction d'une demande « À corriger »).
+  function formulaireFin(src) {
+    var F = S.fin; src = src || {};
+    $("titre").textContent = src.no ? "Corriger " + src.no : "Nouvelle demande";
+    function opts(L, v, vide) { return (vide ? "<option value=''>" + vide + "</option>" : "") + L.map(function (x) { return "<option" + (x === v ? " selected" : "") + ">" + esc(x) + "</option>"; }).join(""); }
+    var cpts = F.comptes.map(function (c) { return c.nom; });
+    var h = "<div class='carte'><label>Type</label><select id='ffType'>" + opts(F.types, src.type || "Règlement fournisseur") + "</select>" +
+      "<div id='ffOpB'><label>Mouvement</label><select id='ffOp'>" + opts(F.opsBanque, src.op, "— choisir —") + "</select></div>" +
+      "<label>Société</label><select id='ffSoc'>" + opts(["AB", "M2S"], src.societe || "AB") + "</select>" +
+      "<div id='ffFourB'><label>Fournisseur</label><input id='ffFour' list='ffFourL' value='" + esc(src.fournisseur || "") + "' placeholder='Nom (nouveau : ajouté à la liste)'>" +
+      "<datalist id='ffFourL'>" + F.fournisseurs.map(function (f) { return "<option value='" + esc(f.nom) + "'>"; }).join("") + "</datalist>" +
+      "<div id='ffNouvF' style='display:none'><div class='ligne'><div><label>Téléphone</label><input id='ffTel'></div><div><label>NIF</label><input id='ffNif'></div></div><label>RIB / compte</label><input id='ffRib'></div></div>" +
+      "<div id='ffFactB'><label>Facture à régler</label><select id='ffFact'></select><div id='ffFactI' class='info'></div></div>" +
+      "<div id='ffRefB'><label>Réf. de la facture</label><input id='ffRef' value='" + esc(src.refFacture || "") + "'><label>Échéance</label><input id='ffEch' type='date' value='" + (src.echeance ? new Date(src.echeance).toISOString().slice(0, 10) : "") + "'></div>" +
+      "<label>Objet</label><input id='ffObj' value='" + esc(src.objet || "") + "'>" +
+      "<div class='ligne'><div style='flex:2'><label>Montant</label><input id='ffMt' inputmode='decimal' value='" + esc(src.montant || "") + "'></div><div><label>Devise</label><select id='ffDev'>" + opts(["GNF", "USD", "EUR"], src.devise || "GNF") + "</select></div></div>" +
+      "<div id='ffTauxB'><label>Taux (1 unité = … GNF)</label><input id='ffTaux' inputmode='decimal' value='" + esc(src.taux && src.devise !== "GNF" ? src.taux : "") + "'></div>" +
+      "<div id='ffGnf' class='info'></div>" +
+      "<div id='ffModeB'><label>Mode de paiement</label><select id='ffMode'>" + opts(["Espèces", "Chèque", "Virement"], src.mode, "— choisir —") + "</select></div>" +
+      "<div class='ligne' id='ffCptB'><div><label id='ffCptL'>Compte</label><select id='ffCpt'></select></div><div id='ffCtpB'><label id='ffCtpL'>Vers</label><select id='ffCtp'></select></div></div>" +
+      "<div id='ffBenB'><label>Bénéficiaire du chèque / virement</label><input id='ffBen' value='" + esc(src.beneficiaire || "") + "'></div>" +
+      champFichiers("ffP") + (src.pieces && src.pieces.length ? "<div class='info'>Déjà jointes : " + src.pieces.length + " pièce(s).</div>" : "") +
+      "<div id='ffRegle' class='carte' style='margin-top:10px'></div>" +
+      "<label>Commentaire</label><input id='ffCom'>" +
+      "<button class='bouton' id='ffEnv'>📤 Envoyer la demande</button><div id='ffMsg' class='info' style='white-space:pre-line'></div></div>";
+    $("vueListe").innerHTML = h; montrer("vueListe"); lierFichiers("ffP");
+    function v(id) { return $(id).value.trim(); }
+    function nb(x) { x = String(x || "").replace(/[\s  ]/g, "").replace(",", "."); return parseFloat(x) || 0; }
+    function maj() {
+      var t = v("ffType"), op = v("ffOp"), dev = v("ffDev");
+      $("ffOpB").style.display = t === "Mouvement de trésorerie" ? "" : "none";
+      $("ffFourB").style.display = t === "Facture d'achat" || t === "Règlement fournisseur" ? "" : "none";
+      $("ffFactB").style.display = t === "Règlement fournisseur" ? "" : "none";
+      $("ffRefB").style.display = t === "Facture d'achat" ? "" : "none";
+      $("ffModeB").style.display = t === "Règlement fournisseur" ? "" : "none";
+      // Comptes possibles selon l'opération : source (débitée) → destination (créditée) ; devise = celle du compte.
+      var CA = F.comptes.filter(function (c) { return c.type === "Caisse"; }), BA = F.comptes.filter(function (c) { return c.type === "Banque"; }), CH = [{ nom: F.chequeRecu || "Chèque reçu", type: "Chèque" }];
+      var srcL = CA.concat(BA), dstL = null, lS = "Compte", lD = "Vers";
+      if (t === "Dépense de caisse" || (t === "Règlement fournisseur" && v("ffMode") === "Espèces")) { srcL = CA; lS = "Caisse"; }
+      else if (t === "Règlement fournisseur") { srcL = BA; lS = "Compte bancaire"; }
+      else if (t === "Mouvement de trésorerie") {
+        if (op === "Retrait") { srcL = BA.concat(CH); dstL = CA; lS = "Depuis (banque ou chèque reçu)"; lD = "Vers la caisse"; }
+        else if (op === "Versement") { srcL = CA; dstL = BA; lS = "Depuis la caisse"; lD = "Vers le compte bancaire"; }
+        else if (op === "Virement") { srcL = BA; dstL = BA; lS = "Depuis le compte"; lD = "Vers le compte (ou bénéficiaire)"; }
+        else if (op === "Dépôt de chèque") { srcL = CH; dstL = BA; lS = "Origine"; lD = "Vers le compte bancaire"; }
+        else if (op === "Transfert entre caisses") { srcL = CA; dstL = CA; lS = "Depuis la caisse"; lD = "Vers la caisse"; }
+      }
+      function remplir(id, L, val, vide) { var cur = $(id).value || val || ""; $(id).innerHTML = (vide ? "<option value=''>" + vide + "</option>" : "") + L.map(function (c) { return "<option" + (c.nom === cur ? " selected" : "") + ">" + esc(c.nom) + "</option>"; }).join(""); }
+      remplir("ffCpt", srcL, src.compte, "— choisir —"); remplir("ffCtp", dstL || [], src.contrepartie, op === "Virement" ? "— bénéficiaire externe —" : "— choisir —");
+      $("ffCptL").textContent = lS; $("ffCtpL").textContent = lD;
+      $("ffCptB").style.display = t === "Facture d'achat" ? "none" : "";
+      $("ffCtpB").style.display = dstL ? "" : "none";
+      var cpt = F.comptes.filter(function (c) { return c.nom === v("ffCpt") || (v("ffCpt") === (F.chequeRecu || "Chèque reçu") && c.nom === v("ffCtp")); })[0];
+      if (cpt && cpt.devise) { $("ffDev").value = cpt.devise; $("ffDev").disabled = true; dev = cpt.devise; } else $("ffDev").disabled = false;
+      $("ffBenB").style.display = (t === "Règlement fournisseur" && v("ffMode") !== "Espèces") || (t === "Mouvement de trésorerie" && op === "Virement" && !v("ffCtp")) ? "" : "none";
+      $("ffTauxB").style.display = dev === "GNF" ? "none" : "";
+      var four = v("ffFour"), connu = F.fournisseurs.some(function (f) { return f.nom.toLowerCase() === four.toLowerCase(); });
+      $("ffNouvF").style.display = four && !connu ? "" : "none";
+      if (t === "Règlement fournisseur") {
+        var Fa = F.factures.filter(function (f) { return !four || f.fournisseur.toLowerCase() === four.toLowerCase(); }), cur = $("ffFact").value || src.facture || "";
+        $("ffFact").innerHTML = "<option value=''>Sans facture (avance)</option>" + Fa.map(function (f) { return "<option value='" + esc(f.no) + "'" + (f.no === cur ? " selected" : "") + ">" + esc(f.no + " · " + f.fournisseur + (f.ref ? " · " + f.ref : "") + " · reste " + gnf(f.reste - f.engage) + " GNF") + "</option>"; }).join("");
+        var fa = Fa.filter(function (f) { return f.no === $("ffFact").value; })[0];
+        $("ffFactI").textContent = fa ? "Total " + gnf(fa.total) + " GNF · déjà réglé " + gnf(fa.total - fa.reste) + " · en cours " + gnf(fa.engage) + " · disponible " + gnf(fa.reste - fa.engage) + " GNF (règlement par tranches possible)" : "";
+      }
+      var g = nb(v("ffMt")) * (dev === "GNF" ? 1 : nb(v("ffTaux")));
+      $("ffGnf").textContent = dev !== "GNF" && g ? "= " + gnf(g) + " GNF" : "";
+      // Règle de validation (aperçu ; le serveur décide).
+      var gros = g >= (F.seuil || 5000000), deux = t === "Facture d'achat" || (t === "Dépense de caisse" && gros) || (t === "Règlement fournisseur" && !(v("ffMode") === "Espèces" && !gros)) || (t === "Mouvement de trésorerie" && !((op === "Dépôt de chèque" || op === "Transfert entre caisses") && !gros));
+      var photo = t === "Facture d'achat" ? "photo de la facture obligatoire" : (t === "Règlement fournisseur" && v("ffMode") === "Chèque") || (t === "Mouvement de trésorerie" && (op === "Dépôt de chèque" || op === "Retrait")) ? "photo du chèque obligatoire" : "pièces facultatives";
+      $("ffRegle").innerHTML = "🔐 Validation : <b>" + (deux ? "Walid puis DG" : "Walid") + "</b> · 📷 " + photo + (t !== "Facture d'achat" ? " · preuve du paiement à joindre après validation" + (t === "Dépense de caisse" ? " (facultative)" : "") : "");
+    }
+    ["ffType", "ffOp", "ffDev", "ffMode", "ffFact", "ffCpt", "ffCtp"].forEach(function (id) { $(id).onchange = maj; });
+    ["ffMt", "ffTaux", "ffFour"].forEach(function (id) { $(id).oninput = maj; });
+    maj();
+    $("ffEnv").onclick = function () {
+      var t = v("ffType"), m = $("ffMsg");
+      var s = { no: src.no, type: t, op: v("ffOp"), societe: v("ffSoc"), fournisseur: $("ffFourB").style.display === "none" ? "" : v("ffFour"), facture: t === "Règlement fournisseur" ? v("ffFact") : "",
+        refFacture: t === "Facture d'achat" ? v("ffRef") : "", echeance: t === "Facture d'achat" ? v("ffEch") : "", objet: v("ffObj"), montant: nb(v("ffMt")), devise: v("ffDev"), taux: nb(v("ffTaux")),
+        mode: t === "Règlement fournisseur" ? v("ffMode") : t === "Dépense de caisse" ? "Espèces" : "", compte: v("ffCpt"), contrepartie: $("ffCtpB").style.display === "none" ? "" : v("ffCtp"),
+        beneficiaire: $("ffBenB").style.display === "none" ? "" : v("ffBen"), commentaire: v("ffCom"), fourTel: v("ffTel"), fourNif: v("ffNif"), fourRib: v("ffRib") };
+      if (t === "Facture d'achat") { s.compte = ""; s.contrepartie = ""; }
+      var err = !s.compte && t !== "Facture d'achat" ? "compte" : $("ffCtpB").style.display !== "none" && !s.contrepartie && !(s.op === "Virement" && s.beneficiaire) ? "compte de destination" : !(s.montant > 0) ? "montant" : s.devise !== "GNF" && !(s.taux > 0) ? "taux de change" : t === "Mouvement de trésorerie" && !s.op ? "mouvement" :
+        (t === "Facture d'achat" || t === "Règlement fournisseur") && !s.fournisseur ? "fournisseur" : t === "Règlement fournisseur" && !s.mode ? "mode de paiement" : "";
+      if (err) { m.textContent = "⛔ Indiquez le " + err + "."; return; }
+      var nbP = (FICH.ffP || []).length + ((src.pieces || []).length);
+      if (/obligatoire/.test($("ffRegle").textContent) && !nbP) { m.textContent = "⛔ Photo obligatoire (voir ci-dessus)."; return; }
+      if (!confirm("Envoyer la demande : " + (t === "Mouvement de trésorerie" ? s.op : t) + " · " + gnf(s.montant) + " " + s.devise + " ?")) return;
+      envoyerFin(src.no ? "modifier" : "creer", src.no ? { demande: s, version: src.version, fichiers: FICH.ffP } : { demande: s, fichiers: FICH.ffP }, (src.no ? "Correction " + src.no : "Demande " + (t === "Mouvement de trésorerie" ? s.op : t)) + " · " + gnf(s.montant) + " " + s.devise, src.no);
+    };
   }
 
   /* ---------- Notifications (Firebase Cloud Messaging) ---------- */
@@ -1431,7 +1715,8 @@
   }
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function () {});
 
-  Promise.all(["url", "donnees", "gabarit", "gv", "file", "envoyes", "aCorriger", "recents", "derniereSync", "agent", "formulaires", "planif", "planifLocal", "affichage"].map(lire)).then(function (v) {
+  Promise.all(["url", "donnees", "gabarit", "gv", "file", "envoyes", "aCorriger", "recents", "derniereSync", "agent", "formulaires", "planif", "planifLocal", "affichage", "fin"].map(lire)).then(function (v) {
+    S.fin = v[14] || null;
     S.agent = v[9] || null; S.formulaires = v[10] || null; S.planif = v[11] || null; S.planifLocal = v[12] || {}; S.affichage = v[13] || "auto";
     $("choixAffichage").value = S.affichage;
     S.url = v[0] || (typeof URL_SERVEUR === "string" ? URL_SERVEUR : "") || "";
