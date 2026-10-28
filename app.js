@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-10-28 GC";
+  var VERSION_APP = "2026-10-28 GD";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -909,15 +909,18 @@
   function activerNotifications(test) {
     var cfg = S.formulaires && S.formulaires.notif;
     if (!cfg || !S.agent) return Promise.reject(new Error("configuration ou agent manquant"));
+    // Chaque étape signale la sienne en cas d'échec (diagnostic : téléchargement, Firebase, serveur).
+    function etape(nom, pr) { return pr.catch(function (e) { throw new Error(nom + " : " + ((e && e.message) || e)); }); }
+    function essai(f, n) { return f().catch(function (e) { if (n > 0) return new Promise(function (ok) { setTimeout(ok, 2000); }).then(function () { return essai(f, n - 1); }); throw e; }); }
     return Notification.requestPermission().then(function (perm) {
       if (perm !== "granted") throw new Error("autorisation refusée");
-      return Promise.all([chargerFirebase(), navigator.serviceWorker.ready]);
+      return Promise.all([etape("1/3 Téléchargement de Firebase (www.gstatic.com)", essai(chargerFirebase, 1)), navigator.serviceWorker.ready]);
     }).then(function (r) {
       var F = r[0], appF = F.app.getApps().length ? F.app.getApp() : F.app.initializeApp(cfg.config);
-      return F.msg.getToken(F.msg.getMessaging(appF), { vapidKey: cfg.vapid, serviceWorkerRegistration: r[1] });
+      return etape("2/3 Jeton Firebase (googleapis.com)", essai(function () { return F.msg.getToken(F.msg.getMessaging(appF), { vapidKey: cfg.vapid, serviceWorkerRegistration: r[1] }); }, 2));
     }).then(function (jeton) {
-      if (!jeton) throw new Error("aucun jeton reçu");
-      return api({ api: "notifEnregistrer", token: jeton, appareil: (modePC() ? "PC/tablette · " : "Téléphone · ") + navigator.platform, test: !!test }).then(function () {
+      if (!jeton) throw new Error("2/3 Jeton Firebase : aucun jeton reçu");
+      return etape("3/3 Enregistrement au serveur", api({ api: "notifEnregistrer", token: jeton, appareil: (modePC() ? "PC/tablette · " : "Téléphone · ") + navigator.platform, test: !!test })).then(function () {
         return ecrire("notif", { jeton: jeton, agent: S.agent.nom, quand: Date.now() });
       });
     });
