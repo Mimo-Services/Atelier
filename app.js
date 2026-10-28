@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-10-27 GB";
+  var VERSION_APP = "2026-10-28 GC";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -335,6 +335,7 @@
       b.onclick = function () { var r = rc[+b.getAttribute("data-i")]; ouvrirLot(r.bdc, r.cle); };
     });
     $("urlServeur").value = S.url || "";
+    majCarteNotif();
     if ($("infoAffichage")) $("infoAffichage").textContent = "Affichage actuel : " + (modePC() ? "PC / tablette" : "Téléphone");
     $("infoVersion").textContent = "Application " + VERSION_APP + (d ? " · serveur " + d.version : "");
   }
@@ -882,6 +883,65 @@
     if (cadre && !F.srcdoc) { C.style.display = "block"; F.style.display = "none"; C.innerHTML = "<div class='carte info'>Onglet indisponible pour l'instant (voir le message). Complétez les étapes précédentes ou synchronisez (⟳).</div>"; }
   }
 
+  /* ---------- Notifications (Firebase Cloud Messaging) ---------- */
+  var FIREBASE_SDK = "https://www.gstatic.com/firebasejs/10.12.2/";
+  function notifDispo() { return "Notification" in window && "serviceWorker" in navigator && "PushManager" in window; }
+  function iosHorsEcranAccueil() { return /iphone|ipad|ipod/i.test(navigator.userAgent) && !(navigator.standalone || matchMedia("(display-mode: standalone)").matches); }
+  function majCarteNotif() {
+    var i = $("infoNotif"), b = $("btnNotif"); if (!i) return;
+    var cfg = S.formulaires && S.formulaires.notif;
+    lire("notif").then(function (n) {
+      var ok = n && n.agent === (S.agent && S.agent.nom) && Notification.permission === "granted";
+      if (!notifDispo()) { i.textContent = iosHorsEcranAccueil() ? "Sur iPhone : installez d'abord DuoCore sur l'écran d'accueil (Partager › Sur l'écran d'accueil), puis ouvrez-le depuis l'icône." : "Ce navigateur ne gère pas les notifications."; b.style.display = "none"; return; }
+      b.style.display = "";
+      if (!S.agent) { i.textContent = "Connectez-vous d'abord (agent)."; b.disabled = true; return; }
+      if (!cfg) { i.textContent = "Pas encore configurées sur le serveur (BASE › 🔔 Configurer les notifications), ou ⟳ à faire."; b.disabled = true; return; }
+      if (Notification.permission === "denied") { i.textContent = "⛔ Notifications bloquées pour DuoCore : autorisez-les dans les réglages du navigateur / du téléphone, puis réessayez."; b.disabled = false; return; }
+      b.disabled = false;
+      i.textContent = ok ? "✅ Actives sur cet appareil pour " + n.agent + " (depuis le " + dateCourte(n.quand) + ")." : "Inactives sur cet appareil.";
+      b.textContent = ok ? "Envoyer une notification de test" : "Activer sur cet appareil";
+    });
+  }
+  function chargerFirebase() {
+    return Promise.all([import(FIREBASE_SDK + "firebase-app.js"), import(FIREBASE_SDK + "firebase-messaging.js")]).then(function (m) { return { app: m[0], msg: m[1] }; });
+  }
+  // Jeton de l'appareil (Firebase) → enregistré au serveur pour l'agent connecté.
+  function activerNotifications(test) {
+    var cfg = S.formulaires && S.formulaires.notif;
+    if (!cfg || !S.agent) return Promise.reject(new Error("configuration ou agent manquant"));
+    return Notification.requestPermission().then(function (perm) {
+      if (perm !== "granted") throw new Error("autorisation refusée");
+      return Promise.all([chargerFirebase(), navigator.serviceWorker.ready]);
+    }).then(function (r) {
+      var F = r[0], appF = F.app.getApps().length ? F.app.getApp() : F.app.initializeApp(cfg.config);
+      return F.msg.getToken(F.msg.getMessaging(appF), { vapidKey: cfg.vapid, serviceWorkerRegistration: r[1] });
+    }).then(function (jeton) {
+      if (!jeton) throw new Error("aucun jeton reçu");
+      return api({ api: "notifEnregistrer", token: jeton, appareil: (modePC() ? "PC/tablette · " : "Téléphone · ") + navigator.platform, test: !!test }).then(function () {
+        return ecrire("notif", { jeton: jeton, agent: S.agent.nom, quand: Date.now() });
+      });
+    });
+  }
+  // Au démarrage (une fois par jour) : jeton rafraîchi / rattaché à l'agent connecté.
+  function verifierNotifications() {
+    if (!notifDispo() || Notification.permission !== "granted" || !S.agent || !(S.formulaires && S.formulaires.notif) || !navigator.onLine) return;
+    lire("notif").then(function (n) {
+      if (n && n.agent === S.agent.nom && Date.now() - n.quand < 86400000) return;
+      activerNotifications(false).catch(function () {});
+    });
+  }
+  if ("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", function (e) {
+    var m = e.data || {};
+    if (m.type === "notif") synchroniser(true).catch(function () {});
+    if (m.type === "ouvrir") ouvrirDepuisNotif(m.data || {});
+  });
+  function ouvrirDepuisNotif(d) {
+    synchroniser(true).catch(function () {}).then(function () {
+      if (d.vue === "finances" && typeof afficherFinances === "function") afficherFinances(d.id);
+      else montrer("vueAccueil");
+    });
+  }
+
   /* ---------- Fiches (étape 5) : PDF gardés sur l'appareil (lecture, impression, partage hors ligne) ---------- */
   function base64Blob(b64) { var bin = atob(b64), n = bin.length, u = new Uint8Array(n); for (var i = 0; i < n; i++) u[i] = bin.charCodeAt(i); return new Blob([u], { type: "application/pdf" }); }
   function nomFichierPdf(f) { return String(f.nom).replace(/\.pdf$/i, "").replace(/[\\/:*?"<>|]+/g, "-").substring(0, 120) + ".pdf"; }
@@ -1319,6 +1379,10 @@
 
   /* ---------- Démarrage ---------- */
   $("btnMenu").onclick = function () { montrer("vueReglages"); };
+  $("btnNotif").onclick = function () {
+    var b = this; b.disabled = true; $("infoNotif").textContent = "⏳ Activation…";
+    activerNotifications(true).then(function () { majCarteNotif(); }, function (e) { $("infoNotif").textContent = "⛔ " + e.message; b.disabled = false; });
+  };
   $("choixAffichage").onchange = function () { S.affichage = this.value; ecrire("affichage", S.affichage); $("infoAffichage").textContent = "Affichage actuel : " + (modePC() ? "PC / tablette" : "Téléphone"); };
   $("annulerScan").onclick = function () { montrer("vueAccueil"); };
   $("btnRetour").onclick = function () {
@@ -1372,6 +1436,8 @@
     S.file = v[4] || []; S.envoyes = v[5] || []; S.aCorriger = v[6] || []; S.recents = v[7] || []; S.derniereSync = v[8] || 0;
     if (!S.gabarit) S.gv = "";
     var q = new URLSearchParams(location.search), bdc = q.get("bdc"), cle = q.get("cle");
+    if (q.get("notif")) { history.replaceState(null, "", location.pathname); setTimeout(function () { ouvrirDepuisNotif({ vue: q.get("notif"), id: q.get("id") }); }, 300); }
+    setTimeout(verifierNotifications, 4000);
     if (cle) history.replaceState(null, "", location.pathname);
     if (cle && S.donnees) { ouvrirLot(bdc || "", cle); synchroniser(false); }
     else {

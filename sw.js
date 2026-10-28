@@ -1,6 +1,6 @@
 // Service worker : garde l'application sur le téléphone pour qu'elle s'ouvre sans réseau.
 // Changer VERSION à chaque mise à jour des fichiers de l'application.
-var VERSION = "duocore-2026-10-27-GB";
+var VERSION = "duocore-2026-10-28-GC";
 var FICHIERS = ["./", "index.html", "app.js", "config.js", "manifest.webmanifest",
   "icone-192.png", "icone-512.png", "icone-maskable-512.png", "apple-touch-icon.png"];
 var JSQR = "https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js";
@@ -18,6 +18,25 @@ self.addEventListener("activate", function (e) {
   e.waitUntil(caches.keys().then(function (cles) {
     return Promise.all(cles.filter(function (k) { return k !== VERSION; }).map(function (k) { return caches.delete(k); }));
   }).then(function () { return self.clients.claim(); }));
+});
+
+// Notifications (Firebase Cloud Messaging, messages « data ») : affichées ici, que l'app soit ouverte ou non.
+self.addEventListener("push", function (e) {
+  var d = {};
+  try { var j = e.data ? e.data.json() : {}; d = j.data || j || {}; } catch (x) { d = { texte: e.data ? e.data.text() : "" }; }
+  var titre = d.titre || "DuoCore";
+  e.waitUntil(Promise.all([
+    self.registration.showNotification(titre, { body: d.texte || "", icon: "icone-192.png", badge: "icone-192.png", tag: d.tag || undefined, renotify: !!d.tag, data: d }),
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(function (cl) { cl.forEach(function (c) { c.postMessage({ type: "notif", data: d }); }); })
+  ]));
+});
+self.addEventListener("notificationclick", function (e) {
+  e.notification.close();
+  var d = e.notification.data || {}, cible = "./?notif=" + encodeURIComponent(d.vue || "accueil") + (d.id ? "&id=" + encodeURIComponent(d.id) : "");
+  e.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(function (cl) {
+    for (var i = 0; i < cl.length; i++) { if ("focus" in cl[i]) { cl[i].postMessage({ type: "ouvrir", data: d }); return cl[i].focus(); } }
+    return self.clients.openWindow(cible);
+  }));
 });
 
 self.addEventListener("fetch", function (e) {
