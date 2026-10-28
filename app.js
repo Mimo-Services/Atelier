@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-10-28 GJ";
+  var VERSION_APP = "2026-10-29 GK";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -284,6 +284,10 @@
       var nF = finNbATraiter();
       tuile("finances", "💰", "Finances", S.fin && S.fin.role ? "Validation " + S.fin.role : S.fin && S.fin.comptable ? "Comptabilité" : "Demandes, paiements", nF ? { badge: nF, bcls: "rouge", cls: "large" } : { cls: "large" });
     }
+    if (droitRH()) {
+      var nR = rhNbATraiter();
+      tuile("rh", "👥", "Ressources humaines", S.rh && S.rh.direction ? "Personnel, validation" : "Personnel, événements", nR ? { badge: nR, bcls: "rouge", cls: "large" } : { cls: "large" });
+    }
     if (!S.agent && S.url) tuile("connexion", "🔐", "Saisies", "Se connecter");
     tuile("attente", "⏳", "En attente", S.file.length ? "à envoyer" : "rien", S.file.length ? { badge: S.file.length, bcls: "orange" } : {});
     tuile("corriger", "⛔", "À corriger", S.aCorriger.length ? "refusés" : "rien", S.aCorriger.length ? { badge: S.aCorriger.length, bcls: "rouge" } : {});
@@ -298,6 +302,7 @@
         else if (id.indexOf("form:") === 0) ouvrirFormulaire(id.substring(5));
         else if (id === "connexion") pageConnexion();
         else if (id === "finances") afficherFinances();
+        else if (id === "rh") afficherRH();
         else if (id === "planif") { if (modePC()) afficherPlanifPC(); else afficherPlanif(); }
         else if (id === "attente") afficherListe("attente");
         else if (id === "corriger") afficherListe("corriger");
@@ -312,7 +317,7 @@
     if ($("btnConnexion")) $("btnConnexion").onclick = pageConnexion;
     if ($("btnDeconnexion")) $("btnDeconnexion").onclick = function () {
       if (S.file.some(function (x) { return x.type === "form"; }) && !confirm("Des saisies sont en attente d'envoi : elles partiront quand même. Changer d'agent ?")) return;
-      S.agent = null; S.formulaires = null; S.planif = null; S.fin = null; ecrire("agent", null); ecrire("formulaires", null); ecrire("planif", null); ecrire("fin", null); montrer("vueAccueil");
+      S.agent = null; S.formulaires = null; S.planif = null; S.fin = null; S.rh = null; ecrire("agent", null); ecrire("formulaires", null); ecrire("planif", null); ecrire("fin", null); ecrire("rh", null); montrer("vueAccueil");
     };
 
     var d = S.donnees;
@@ -358,6 +363,7 @@
   }
   /* Résumé lisible d'un élément de la file (déclaration atelier ou saisie de formulaire). */
   function descriptionItem(x) {
+    if (x.type === "rh") return "<b>👥 " + esc(x.titre || "RH") + "</b><br><small>" + esc(x.agent) + " · " + dateCourte(x.horodatage) + "</small>";
     if (x.type === "fin") return "<b>💰 " + esc(x.titre || "Finances") + "</b><br><small>" + esc(x.agent) + " · " + dateCourte(x.horodatage) + "</small>";
     if (x.type === "planif") return "<b>🗂️ " + esc(x.titre || "Planification") + "</b><br>" + esc(x.resume || "") + "<br><small>" + esc(x.agent) + " · " + dateCourte(x.horodatage) + "</small>";
     if (x.type === "form") return "<b>" + esc(x.titre || "Saisie") + "</b><br>" + esc(x.resume || "") + "<br><small>" + esc(x.agent) + " · " + dateCourte(x.horodatage) + "</small>";
@@ -512,7 +518,7 @@
       majEtat();
       var envoi = envoiP ? envoiP.then(lancerEnvoi) : lancerEnvoi();
       envoi.then(function () { if (attenteJetons[it.jeton]) attenteJetons[it.jeton](resultats[it.jeton] || null); });
-      return attendre(reponse, (it.type === "planif" ? DELAI_PLANIF : DELAI_ENVOI) + 5000).catch(function () { return null; }).then(function (r) {
+      return attendre(reponse, (it.type === "planif" || it.type === "rh" ? DELAI_PLANIF : DELAI_ENVOI) + 5000).catch(function () { return null; }).then(function (r) {
         delete attenteJetons[it.jeton];
         synchroniser(false);
         if (!r) return enAttente();
@@ -544,7 +550,9 @@
       var p3 = (S.url && droitPlanif() && (forcerDonnees || n > 0 || ageP > RAFRAICHIR_APRES)) ? rafraichirPlanif().catch(function () {}) : null;
       var ageFi = S.fin ? Date.now() - S.fin.recu : Infinity;
       var p4 = (S.url && droitFin() && (forcerDonnees || n > 0 || ageFi > 5 * 60000)) ? rafraichirFin().catch(function () {}) : null;
-      return Promise.all([p1, p2, p3, p4]);
+      var ageRh = S.rh ? Date.now() - S.rh.recu : Infinity;
+      var p5 = (S.url && droitRH() && (forcerDonnees || n > 0 || ageRh > 5 * 60000)) ? rafraichirRH().catch(function () {}) : null;
+      return Promise.all([p1, p2, p3, p4, p5]);
     }).catch(function () {}).then(function () { majEtat(); if ($("vueAccueil").style.display !== "none") majAccueil(); });
   }
   function erreurPassagere(r) {
@@ -558,18 +566,19 @@
       var it = S.file[0];
       it.essais = (it.essais || 0) + 1;
       var corps;
-      if (it.type === "fin") corps = { api: "finEnvoyer", agent: it.agent, code: it.code, op: it.op, jeton: it.jeton, horodatage: String(it.horodatage), donnees: it.donnees };
+      if (it.type === "rh") corps = { api: "rhEnvoyer", agent: it.agent, code: it.code, op: it.op, jeton: it.jeton, horodatage: String(it.horodatage), donnees: it.donnees };
+      else if (it.type === "fin") corps = { api: "finEnvoyer", agent: it.agent, code: it.code, op: it.op, jeton: it.jeton, horodatage: String(it.horodatage), donnees: it.donnees };
       else if (it.type === "planif") corps = { api: "planifEnvoyer", agent: it.agent, code: it.code, op: it.op, jeton: it.jeton, horodatage: String(it.horodatage), donnees: it.donnees };
       else if (it.type === "form") corps = { api: "repondre", agent: it.agent, code: it.code, formulaire: it.form, jeton: it.jeton, horodatage: String(it.horodatage), reponses: it.reponses };
       else { corps = { api: "declarer" }; for (var k in it.o) corps[k] = it.o[k]; }
-      return requete(S.url, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(corps), redirect: "follow" }, it.type === "planif" || it.type === "fin" ? DELAI_PLANIF : DELAI_ENVOI)
+      return requete(S.url, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(corps), redirect: "follow" }, it.type === "planif" || it.type === "fin" || it.type === "rh" ? DELAI_PLANIF : DELAI_ENVOI)
         .then(function (r) {
           S.derniereSync = Date.now(); ecrire("derniereSync", S.derniereSync);
           if (erreurPassagere(r) && it.essais < 6) { it.erreur = r.message; return sauver().then(function () { return n; }); }
           S.file.shift();
           resultats[it.jeton] = r;
           if (attenteJetons[it.jeton]) attenteJetons[it.jeton](r);
-          if (r.ok) { if (it.o) { S.envoyes.push({ jeton: it.jeton, o: it.o, recuA: Date.now() }); n++; } else if (it.type === "planif" || it.type === "fin") n++; }
+          if (r.ok) { if (it.o) { S.envoyes.push({ jeton: it.jeton, o: it.o, recuA: Date.now() }); n++; } else if (it.type === "planif" || it.type === "fin" || it.type === "rh") n++; }
           else { var c = JSON.parse(JSON.stringify(it)); c.r = r; delete c.code; S.aCorriger.push(c); }
           return sauver().then(function () { majEtat(); return suivant(); });
         }, function (e) {
@@ -908,12 +917,13 @@
     var F = S.fin, role = F && F.role;
     if (finAttente(d.no).length) return false;
     if (role && ((d.statut === "En attente Walid" && role === "Walid") || (d.statut === "En attente DG" && role === "DG"))) return true;
+    if (d.demandeur === F.auto && d.statut === "À exécuter" && (role || F.comptable || F.rh)) return true;
     return d.demandeur === (S.agent && S.agent.nom) && (d.statut === "À corriger" || d.statut === "À exécuter");
   }
   function finNbATraiter() { return S.fin ? S.fin.demandes.filter(finATraiter).length : 0; }
   var COUL_ST = { "En attente Walid": "#e65100", "En attente DG": "#e65100", "À corriger": "#b26a00", "Refusée": "#c62828", "Validée": "#2e7d32", "À exécuter": "#1565c0", "Exécutée": "#2e7d32", "Annulée": "#777" };
   function statutFin(d) { return d.solde && d.statut === "Validée" ? (d.solde.reste <= 0 ? "Soldée" : d.solde.regle > 0 ? "Partiellement payée" : "Validée — à payer") : d.statut; }
-  function libelleFin(d) { return d.type === "Mouvement de trésorerie" || d.type === "Opération constatée" ? d.op : d.type === "Paiement RH" ? "Paie RH · " + d.personnel : d.type; }
+  function libelleFin(d) { return d.type === "Mouvement de trésorerie" || d.type === "Opération constatée" ? d.op : d.type === "Paiement RH" ? (S.fin && d.demandeur === S.fin.auto ? "Salaire · " : "Paie RH · ") + d.personnel : d.type; }
   var FIN = { filtre: "traiter" };
   function afficherFinances(no) {
     $("titre").textContent = "Finances";
@@ -991,12 +1001,13 @@
     var h = "<div class='carte'><h3>" + esc(d.no) + " · " + esc(libelleFin(d)) + "</h3>" +
       "<div style='color:" + (COUL_ST[d.statut] || "#999") + ";font-weight:700'>" + esc(statutFin(d)) + "</div>" +
       (att.length ? "<div class='carte att'>⏳ " + esc(att[0].titre) + " — en attente d'envoi.</div>" : "") +
-      "<table>" + ligne("Montant", "<b>" + gnf(d.montant) + " " + esc(d.devise) + "</b>" + (d.devise !== "GNF" ? "<br><small>taux " + gnf(d.taux) + " → " + gnf(d.gnf) + " GNF</small>" : "")) +
+      "<table>" + ligne("Montant", "<b>" + gnf(d.montant) + " " + esc(d.devise) + "</b>" + (d.devise !== "GNF" ? (d.taux ? "<br><small>taux " + gnf(d.taux) + " → " + gnf(d.gnf) + " GNF</small>" : "<br><small>montant dans la devise du salaire ; compte et taux choisis au paiement</small>") : "")) +
       ligne("Fournisseur", esc(d.fournisseur)) + ligne("Facture", d.facture ? esc(d.facture) : d.refFacture ? "Réf. " + esc(d.refFacture) : "") +
       ligne("Objet", esc(d.objet)) + ligne("Mode", esc(d.mode)) + ligne("Compte", esc(d.compte) + (d.contrepartie ? " → " + esc(d.contrepartie) : "")) +
       ligne("Personnel", esc(d.personnel) + (d.motifRH ? " · " + esc(d.motifRH) : "")) +
       ligne("Achat", d.achat ? esc(d.achat.nature + " · " + (d.achat.article || d.achat.designation || (d.achat.articles || []).join(", ")) + (d.achat.quantite ? " · qté " + d.achat.quantite : "")) + (d.achatId ? " [" + esc(d.achatId) + "]" : "") : "") +
-      ligne("Bénéficiaire", esc(d.beneficiaire)) + ligne("Catégorie", esc(d.categorie)) + ligne("Reçu", d.recu ? gnf(d.recu) + " " + esc(d.deviseRecue) : "") +
+      ligne("Bénéficiaire", esc(d.beneficiaire)) + ligne("Catégorie", esc(d.categorie)) + ligne(d.type === "Paiement RH" ? "Équivalent" : "Reçu", d.recu ? gnf(d.recu) + " " + esc(d.deviseRecue) : "") +
+      ligne("Mois", d.dateEffet ? moisLib(d.dateEffet) : "") +
       ligne("Base", d.ligneBase ? "ligne " + esc(d.ligneBase) : "") + ligne("Société", esc(d.societe)) + ligne("Échéance", d.echeance ? dateCourte(d.echeance).split(" ")[0] : "") +
       ligne("Demandeur", esc(d.demandeur) + " · " + dateCourte(d.date)) +
       (d.solde ? ligne("Réglé / reste", gnf(d.solde.regle) + " / <b>" + gnf(d.solde.reste) + " GNF</b>" + (d.solde.engage ? "<br><small>dont " + gnf(d.solde.engage) + " en cours</small>" : "")) : "") +
@@ -1022,17 +1033,43 @@
           envoyerFin("decider", { no: d.no, version: d.version, decision: x[1], commentaire: com }, (x[1] === "valider" ? "Validation " : x[1] === "refuser" ? "Refus " : "Correction ") + d.no, d.no);
         };
       });
-    } else if (d.statut === "À exécuter" && (d.demandeur === moi || role)) {
-      A.innerHTML = "<div class='carte'><h3>Paiement effectué</h3><div class='info'>" + (d.type === "Dépense de caisse" ? "Justificatif facultatif." : "Photo de la preuve obligatoire : reçu, talon de chèque, avis de virement…") + "</div>" +
+    } else if (d.statut === "À exécuter" && (d.demandeur === moi || role || (d.demandeur === F.auto && (F.comptable || F.rh)))) {
+      var auto = d.demandeur === F.auto;
+      // Salaire automatique : mode, compte payeur et, si sa devise diffère de celle du salaire, montant payé et taux.
+      A.innerHTML = "<div class='carte'><h3>Paiement effectué</h3>" +
+        (auto ? "<div class='ligne'><div><label>Mode</label><select id='fnPm'><option" + (d.beneficiaire ? "" : " selected") + ">Espèces</option><option" + (d.beneficiaire ? " selected" : "") + ">Virement</option></select></div>" +
+          "<div style='flex:2'><label>Compte payeur</label><select id='fnPc'></select></div></div>" +
+          "<div id='fnPmB'><label id='fnPmL'>Montant payé</label><input id='fnPmt' inputmode='decimal'></div><div id='fnPtB'><label>Taux (1 unité = … GNF)</label><input id='fnPt' inputmode='decimal'></div>" +
+          "<div class='info' id='fnPi'></div>" : "") +
+        "<div class='info'>" + (d.type === "Dépense de caisse" ? "Justificatif facultatif." : "Photo de la preuve obligatoire : reçu, talon de chèque, avis de virement…") + "</div>" +
         champFichiers("fnPr") + "<label>Commentaire</label><input id='fnCom'><button class='bouton' id='fnExe'>🧾 Clôturer : paiement effectué</button><div id='fnMsg' class='info'></div></div>";
       lierFichiers("fnPr");
+      function nbx(x) { x = String(x || "").replace(/[\s  ]/g, "").replace(",", "."); return parseFloat(x) || 0; }
+      function cptP() { return F.comptes.filter(function (c) { return c.nom === $("fnPc").value; })[0]; }
+      function majP() {
+        var esp = $("fnPm").value === "Espèces", cur = $("fnPc").value;
+        $("fnPc").innerHTML = "<option value=''>— choisir —</option>" + F.comptes.filter(function (c) { return c.type === (esp ? "Caisse" : "Banque"); })
+          .map(function (c) { return "<option" + (c.nom === cur ? " selected" : "") + ">" + esc(c.nom) + "</option>"; }).join("");
+        var c = cptP(), dev = c ? c.devise : d.devise;
+        $("fnPmB").style.display = c && dev !== d.devise ? "" : "none"; $("fnPmL").textContent = "Montant payé en " + dev;
+        $("fnPtB").style.display = c && dev !== "GNF" ? "" : "none";
+        $("fnPi").textContent = "Net à payer : " + gnf(d.montant) + " " + d.devise + (c && dev !== d.devise ? " — payé en " + dev + " (le net reste l'équivalent pour le Journal RH)" : "");
+      }
+      if (auto) { $("fnPm").onchange = majP; $("fnPc").onchange = majP; majP(); }
       $("fnExe").onclick = function () {
-        var f = FICH.fnPr || [];
+        var f = FICH.fnPr || [], x = { no: d.no, version: d.version, commentaire: $("fnCom").value.trim(), fichiers: f };
+        if (auto) {
+          var c = cptP();
+          if (!c) { $("fnMsg").textContent = "⛔ Choisissez le compte payeur."; return; }
+          x.paiement = { mode: $("fnPm").value, compte: c.nom, montant: c.devise !== d.devise ? nbx($("fnPmt").value) : d.montant, taux: c.devise !== "GNF" ? nbx($("fnPt").value) : 1 };
+          if (!(x.paiement.montant > 0)) { $("fnMsg").textContent = "⛔ Indiquez le montant payé."; return; }
+          if (!(x.paiement.taux > 0)) { $("fnMsg").textContent = "⛔ Indiquez le taux."; return; }
+        }
         if (!f.length && d.type !== "Dépense de caisse") { $("fnMsg").textContent = "⛔ Ajoutez la photo de la preuve."; return; }
-        envoyerFin("executer", { no: d.no, version: d.version, commentaire: $("fnCom").value.trim(), fichiers: f }, "Paiement " + d.no, d.no);
+        envoyerFin("executer", x, "Paiement " + d.no, d.no);
       };
-    } else if (d.demandeur === moi && ["En attente Walid", "En attente DG", "À corriger"].indexOf(d.statut) >= 0) {
-      A.innerHTML = "<div class='carte'>" + (d.statut === "À corriger" ? "<button class='bouton' id='fnMod'>✏️ Corriger et renvoyer</button>" : "") +
+    } else if ((d.demandeur === moi || (d.demandeur === F.auto && role)) && ["En attente Walid", "En attente DG", "À corriger"].indexOf(d.statut) >= 0) {
+      A.innerHTML = "<div class='carte'>" + (d.statut === "À corriger" && d.demandeur === moi ? "<button class='bouton' id='fnMod'>✏️ Corriger et renvoyer</button>" : "") +
         "<button class='bouton second' id='fnAnn'>Annuler la demande</button></div>";
       if ($("fnMod")) $("fnMod").onclick = function () { formulaireFin(d); };
       $("fnAnn").onclick = function () { if (confirm("Annuler " + d.no + " ?")) envoyerFin("annuler", { no: d.no, version: d.version }, "Annulation " + d.no, d.no); };
@@ -1096,7 +1133,8 @@
       "<div id='ffOcB'><label>Opération constatée (sans validation)</label><select id='ffOc'>" + opts(F.opsConstatees || [], src.type === "Opération constatée" ? src.op : "", "— choisir —") + "</select></div>" +
       "<label>Société</label><select id='ffSoc'>" + opts(["AB", "M2S"], src.societe || "AB") + "</select>" +
       "<div id='ffRhB'><div class='ligne'><div><label>Personnel</label><select id='ffPers'>" + opts(F.personnel || [], src.personnel, "— choisir —") + "</select></div>" +
-      "<div><label>Motif</label><select id='ffMotRH'>" + opts(F.motifsRH || [], src.motifRH, "— choisir —") + "</select></div></div></div>" +
+      "<div><label>Motif</label><select id='ffMotRH'>" + opts(F.motifsRH || [], src.motifRH, "— choisir —") + "</select></div></div>" +
+      "<div id='ffMoisB'><label>Mois du salaire</label><input id='ffMois' type='month' value='" + (src.dateEffet ? new Date(src.dateEffet).toISOString().slice(0, 7) : "") + "'></div></div>" +
       "<div id='ffFourB'><label>Fournisseur</label><input id='ffFour' list='ffFourL' value='" + esc(src.fournisseur || "") + "' placeholder='Nom (nouveau : ajouté à la liste)'>" +
       "<datalist id='ffFourL'>" + F.fournisseurs.map(function (f) { return "<option value='" + esc(f.nom) + "'>"; }).join("") + "</datalist>" +
       "<div id='ffNouvF' style='display:none'><div class='ligne'><div><label>Téléphone</label><input id='ffTel'></div><div><label>NIF</label><input id='ffNif'></div></div><label>RIB / compte</label><input id='ffRib'></div></div>" +
@@ -1110,6 +1148,7 @@
       "<div id='ffGnf' class='info'></div>" +
       "<div id='ffChqI' class='info'>Chèque client (recouvrement) : à déclarer en COMMERCIAL › Recouvrement, pas ici.</div>" +
       "<div id='ffRecuB'><label id='ffRecuL'>Montant reçu</label><input id='ffRecu' inputmode='decimal' value='" + esc(src.recu || "") + "'></div>" +
+      "<div id='ffEqB'><label id='ffEqL'>Équivalent</label><input id='ffEq' inputmode='decimal' value='" + esc(src.type === "Paiement RH" && src.recu ? src.recu : "") + "'></div>" +
       "<div id='ffCatB'><label>Catégorie (trésorerie)</label><select id='ffCat'>" + opts(F.categories || [], src.categorie, "— choisir —") + "</select></div>" +
       // Achat d'article (Fourniture Locale / Importée) → Suivi Achats
       "<div id='ffAchB' class='carte' style='margin-top:10px'><h3>📦 Achat (Suivi Achats)</h3>" +
@@ -1168,6 +1207,11 @@
       var devR = dst && dst.devise && dst.devise !== dev ? dst.devise : "";
       vis("ffChqI", t === "Mouvement de trésorerie" && op === "Dépôt de chèque");
       vis("ffRecuB", !!devR); $("ffRecuL").textContent = "Montant reçu sur " + (dst ? dst.nom : "") + " (" + devR + ")";
+      // Paie RH : mois du salaire ; équivalent dans la devise du salaire si le compte est dans une autre devise.
+      var mot = v("ffMotRH"), devSal = t === "Paiement RH" ? (F.devisesPersonnel || {})[v("ffPers")] || "" : "";
+      vis("ffMoisB", t === "Paiement RH" && mot === "SALAIRE (RH)");
+      vis("ffEqB", !!devSal && devSal !== dev && ["SALAIRE (RH)", "AVANCE (RH)", "PRIME SUR SALAIRE (RH)"].indexOf(mot) >= 0);
+      $("ffEqL").textContent = "Équivalent en " + devSal + " (devise du salaire de " + v("ffPers") + ")";
       vis("ffBenB", (t === "Règlement fournisseur" && mode && mode !== "Espèces") || (t === "Mouvement de trésorerie" && op === "Virement" && !v("ffCtp")));
       vis("ffTauxB", dev !== "GNF");
       var four = v("ffFour"), connu = F.fournisseurs.some(function (f) { return f.nom.toLowerCase() === four.toLowerCase(); });
@@ -1204,7 +1248,7 @@
       $("ffRegle").innerHTML = "🔐 Validation : <b>" + regle + "</b> · 📷 " + photo + (t !== "Facture d'achat" && t !== "Opération constatée" ? " · preuve du paiement à joindre après validation" + (t === "Dépense de caisse" ? " (facultative)" : "") : "");
       $("ffEnv").textContent = t === "Opération constatée" ? "📒 Enregistrer" : "📤 Envoyer la demande";
     }
-    ["ffType", "ffOp", "ffOc", "ffDev", "ffMode", "ffFact", "ffCpt", "ffCtp", "ffCat", "ffAN", "ffACat", "ffACatN"].forEach(function (id) { $(id).onchange = maj; });
+    ["ffType", "ffOp", "ffOc", "ffDev", "ffMode", "ffFact", "ffCpt", "ffCtp", "ffCat", "ffAN", "ffACat", "ffACatN", "ffPers", "ffMotRH"].forEach(function (id) { $(id).onchange = maj; });
     ["ffMt", "ffTaux", "ffFour"].forEach(function (id) { $(id).oninput = maj; });
     maj();
     $("ffEnv").onclick = function () {
@@ -1213,13 +1257,13 @@
         refFacture: t === "Facture d'achat" ? v("ffRef") : "", echeance: t === "Facture d'achat" ? v("ffEch") : "", objet: v("ffObj"), montant: nb(v("ffMt")), devise: v("ffDev"), taux: nb(v("ffTaux")),
         mode: on("ffModeB") ? v("ffMode") : t === "Dépense de caisse" ? "Espèces" : "", compte: t === "Facture d'achat" ? "" : v("ffCpt"), contrepartie: on("ffCtpB") ? v("ffCtp") : "",
         beneficiaire: on("ffBenB") ? v("ffBen") : "", commentaire: v("ffCom"), personnel: t === "Paiement RH" ? v("ffPers") : "", motifRH: t === "Paiement RH" ? v("ffMotRH") : "",
-        categorie: on("ffCatB") ? v("ffCat") : "", recu: on("ffRecuB") ? nb(v("ffRecu")) : 0, fourTel: v("ffTel"), fourNif: v("ffNif"), fourRib: v("ffRib") };
+        categorie: on("ffCatB") ? v("ffCat") : "", recu: on("ffRecuB") ? nb(v("ffRecu")) : on("ffEqB") ? nb(v("ffEq")) : 0, moisEffet: on("ffMoisB") ? v("ffMois") : "", fourTel: v("ffTel"), fourNif: v("ffNif"), fourRib: v("ffRib") };
       if (on("ffAchB")) s.achat = { nature: v("ffAN"), categorie: v("ffACat"), article: v("ffAArt"), designation: v("ffADes"), catNouvel: v("ffACatN"),
         carac: { y: v("ffAY"), x: v("ffAX"), kg: v("ffAKg"), unites: v("ffAU"), metres: v("ffAM") }, quantite: nb(v("ffAQ")), expediteur: v("ffAExp"), typeFrais: v("ffATF"),
         articles: Array.prototype.filter.call(document.querySelectorAll(".ffAO"), function (c) { return c.checked; }).map(function (c) { return c.value; }) };
       var A = s.achat;
       var err = t === "Paiement RH" && !s.personnel ? "personnel" : t === "Paiement RH" && !s.motifRH ? "motif RH" : on("ffModeB") && !s.mode ? "mode de paiement" :
-        !s.compte && t !== "Facture d'achat" ? "compte" : on("ffCatB") && !s.categorie && t !== "Facture d'achat" ? "catégorie" : on("ffRecuB") && !(s.recu > 0) ? "montant reçu" :
+        !s.compte && t !== "Facture d'achat" ? "compte" : on("ffCatB") && !s.categorie && t !== "Facture d'achat" ? "catégorie" : on("ffRecuB") && !(s.recu > 0) ? "montant reçu" : on("ffEqB") && !(s.recu > 0) ? "équivalent dans la devise du salaire" : on("ffMoisB") && !s.moisEffet ? "mois du salaire" :
         on("ffCtpB") && !s.contrepartie && !(op === "Virement" && s.beneficiaire) ? "compte de destination" : !(s.montant > 0) ? "montant" : s.devise !== "GNF" && !(s.taux > 0) ? "taux de change" :
         (t === "Mouvement de trésorerie" || t === "Opération constatée") && !op ? "opération" : (t === "Facture d'achat" || t === "Règlement fournisseur") && !s.fournisseur ? "fournisseur" :
         A && !A.nature ? "nature de l'achat" : A && A.nature === "Article existant" && !A.article ? "article acheté" : A && A.nature === "Nouvel article" && !(A.designation && A.catNouvel) ? "nouvel article (désignation et catégorie)" :
@@ -1398,9 +1442,306 @@
     if (m.type === "notif") synchroniser(true).catch(function () {});
     if (m.type === "ouvrir") ouvrirDepuisNotif(m.data || {});
   });
+  /* ---------- 👥 Ressources humaines : personnel, événements (validés par Walid), paie du mois ---------- */
+  function droitRH() { var d = S.agent && S.formulaires && S.formulaires.droits; return !!(d && (d.rh || d.validation)); }
+  var rafRH = null;
+  function rafraichirRH() {
+    if (!S.url || !droitRH()) return Promise.resolve();
+    if (rafRH) return rafRH;
+    rafRH = api({ api: "rh" }).then(function (r) { r.recu = Date.now(); S.rh = r; return ecrire("rh", r); })
+      .then(function () { rafRH = null; }, function (e) { rafRH = null; throw e; });
+    return rafRH;
+  }
+  function z2(n) { return (n < 10 ? "0" : "") + n; }
+  function moisLib(t) { var d = new Date(t); return z2(d.getMonth() + 1) + "/" + d.getFullYear(); }
+  function jourLib(t) { var d = new Date(t); return z2(d.getDate()) + "/" + z2(d.getMonth() + 1) + "/" + d.getFullYear(); }
+  function cleLib(c) { var m = String(c).split("-"); return m[1] + "/" + m[0]; }
+  function cleMois(t) { var d = new Date(t); return d.getFullYear() + "-" + z2(d.getMonth() + 1); }
+  function nomRH(x) { return String(x || "").trim().toUpperCase(); }
+  function nombre(v) { return typeof v === "number" ? v.toLocaleString("fr-FR", { maximumFractionDigits: 2 }) : esc(v); }
+  function rhAttente(no) { return S.file.filter(function (x) { return x.type === "rh" && x.donnees && x.donnees.no === no; }); }
+  function rhNbATraiter() {
+    var R = S.rh; if (!R || !R.direction) return 0;
+    return R.evenements.filter(function (e) { return e.statut === "En attente Walid" && !rhAttente(e.no).length; }).length;
+  }
+  var COUL_EV = { "En attente Walid": "#e65100", "Validé": "#2e7d32", "Refusé": "#c62828", "Annulé": "#777" };
+  function envoyerRH(op, donnees, titre, suite) {
+    var it = { type: "rh", op: op, jeton: nouveauJeton(), horodatage: Date.now(), agent: S.agent.nom, code: S.agent.code, donnees: donnees, titre: titre, resume: "RH", essais: 0 };
+    soumettre(it).then(function (r) {
+      var fin = function () { if (suite) suite(r); else afficherRH(); };
+      if (r.ok && !r.enAttente) return rafraichirRH().catch(function () {}).then(function () { alert("✅ " + r.titre + (r.message ? "\n" + r.message : "")); fin(); });
+      alert((r.enAttente ? "📥 " : "⛔ ") + (r.titre || "") + "\n" + (r.message || "")); fin();
+    });
+  }
+  function journalDe(nom) { return (S.rh.journal || []).filter(function (j) { return nomRH(j.nom) === nomRH(nom); }).sort(function (a, b) { return a.mois < b.mois ? 1 : -1; }); }
+
+  var RHV = { onglet: "personnel", mois: "" };
+  function afficherRH(id) {
+    $("titre").textContent = "Ressources humaines";
+    var R = S.rh;
+    if (!R) {
+      $("vueListe").innerHTML = "<div class='carte'><h3>👥 Ressources humaines</h3><p class='info'>Aucune donnée sur cet appareil : réseau puis ⟳.</p></div>"; montrer("vueListe");
+      rafraichirRH().then(function () { if (S.rh) afficherRH(id); }).catch(function () {});
+      return;
+    }
+    if (id && /^RH-/.test(id)) { ouvrirEvRH(id); return; }
+    if (id === "paie") RHV.onglet = "paie";
+    var nEv = R.evenements.filter(function (e) { return e.statut === "En attente Walid"; }).length;
+    var envoi = S.file.filter(function (x) { return x.type === "rh"; }).length;
+    var h = "<div class='carte'><h3>👥 Ressources humaines</h3><div class='info'>" + esc(R.agent) + (R.direction ? " · direction (" + esc(R.role) + ")" : " · responsable RH") + " · données du " + dateCourte(R.recu || R.genere) + "</div>" +
+      "<button class='bouton' id='rhEv'>➕ Événement : heures, absence, congé, prélèvement</button>" +
+      (R.direction ? "<button class='bouton second' id='rhNouv'>👤 Nouvel agent</button>" : "") +
+      "<div class='onglets' style='margin-top:10px'>" + [["personnel", "Personnel"], ["evenements", "Événements" + (nEv ? " (" + nEv + ")" : "")], ["paie", "Paie du mois"], ["historique", "Historique"]]
+        .map(function (o) { return "<button data-o='" + o[0] + "' class='" + (RHV.onglet === o[0] ? "actif" : "") + "' style='border-radius:10px;border-bottom:1px solid var(--bord)'>" + o[1] + "</button>"; }).join("") + "</div></div>" +
+      (envoi ? "<div class='carte att'>⏳ " + envoi + " opération(s) RH sur cet appareil, en attente d'envoi.</div>" : "") +
+      "<div id='rhCorps'></div>";
+    $("vueListe").innerHTML = h; montrer("vueListe");
+    Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-o]"), function (b) { b.onclick = function () { RHV.onglet = b.getAttribute("data-o"); afficherRH(); }; });
+    $("rhEv").onclick = function () { formulaireEvRH(""); };
+    if ($("rhNouv")) $("rhNouv").onclick = formulaireNouvelRH;
+    var C = $("rhCorps");
+    if (RHV.onglet === "personnel") {
+      C.innerHTML = "<div class='carte'><input id='rhQ' placeholder='Rechercher un agent'></div><div id='rhL'></div>";
+      var liste = function () {
+        var q = $("rhQ").value.trim().toLowerCase();
+        var P = R.personnel.filter(function (p) { return !q || p.nom.toLowerCase().indexOf(q) >= 0 || (p.intitule || "").toLowerCase().indexOf(q) >= 0; })
+          .sort(function (a, b) { return (b.actif - a.actif) || a.nom.localeCompare(b.nom); });
+        $("rhL").innerHTML = P.map(function (p) {
+          var j = journalDe(p.nom)[0], att = R.evenements.filter(function (e) { return e.statut === "En attente Walid" && nomRH(e.personnel) === nomRH(p.nom); }).length;
+          return "<div class='carte' data-n='" + esc(p.nom) + "' style='cursor:pointer" + (p.actif ? "" : ";opacity:.55") + "'><div class='ligne' style='justify-content:space-between'><b>" + esc(p.nom) + "</b>" +
+            "<b style='flex:0;white-space:nowrap'>" + nombre(p.actuel) + " " + esc(p.devise) + "</b></div>" +
+            "<div class='info'>" + (p.actif ? "" : "Parti · ") + (j ? "Paie " + cleLib(j.mois) + " : net " + nombre(j.v[12]) + " " + esc(j.v[13]) + " · " + esc(j.v[16]) : "Aucune paie au journal") +
+            (att ? " · <b style='color:#e65100'>" + att + " événement(s) en attente</b>" : "") + "</div></div>";
+        }).join("") || "<p class='info' style='padding:0 4px'>Personne.</p>";
+        Array.prototype.forEach.call($("rhL").querySelectorAll("[data-n]"), function (el) { el.onclick = function () { ficheRH(el.getAttribute("data-n")); }; });
+      };
+      $("rhQ").oninput = liste; liste();
+    } else if (RHV.onglet === "evenements") {
+      var E = R.evenements.slice().sort(function (a, b) { return ((b.statut === "En attente Walid") - (a.statut === "En attente Walid")) || b.saisi - a.saisi; }).slice(0, 120);
+      C.innerHTML = E.map(htmlEvRH).join("") || "<p class='info' style='padding:0 4px'>Aucun événement.</p>";
+      Array.prototype.forEach.call(C.querySelectorAll("[data-ev]"), function (el) { el.onclick = function () { ouvrirEvRH(el.getAttribute("data-ev")); }; });
+    } else if (RHV.onglet === "paie") afficherPaieRH(C);
+    else {
+      C.innerHTML = "<div class='carte'><h3>Salaires de base, arrivées, départs</h3>" + (R.historique.slice().reverse().map(function (x) {
+        return "<div class='info'>" + jourLib(x.date) + " · " + esc(x.agent) + " · <b>" + esc(x.action) + "</b> · " + esc(x.personnel) + " · " + esc(x.detail) + " · dès " + esc(cleLib(x.mois)) +
+          (x.etat === "En attente" ? " · <b style='color:#e65100'>en attente du mois</b>" : "") + "</div>";
+      }).join("") || "<div class='info'>Rien pour l'instant.</div>") + "</div>";
+    }
+  }
+  function htmlEvRH(e) {
+    var att = rhAttente(e.no).length;
+    return "<div class='carte" + (att ? " att" : "") + "' data-ev='" + esc(e.no) + "' style='cursor:pointer'><div class='ligne' style='justify-content:space-between'><b>" + esc(e.type) + " · " + esc(e.personnel) + "</b>" +
+      "<b style='flex:0;white-space:nowrap'>" + nombre(e.qte) + " " + esc(e.unite) + "</b></div>" +
+      "<div class='info'>" + esc(e.no) + " · effet " + jourLib(e.effet) + " · saisi par " + esc(e.par) + (e.com ? " · " + esc(e.com) : "") + "</div>" +
+      "<div style='color:" + (COUL_EV[e.statut] || "#999") + ";font-weight:700;font-size:14px'>" + esc(e.statut) + (att ? " · ⏳ action en attente d'envoi" : "") + "</div></div>";
+  }
+  function ouvrirEvRH(no) {
+    var R = S.rh, e = R && R.evenements.filter(function (x) { return x.no === no; })[0];
+    if (!e) { RHV.onglet = "evenements"; afficherRH(); return; }
+    $("titre").textContent = e.no;
+    var h = htmlEvRH(e).replace("cursor:pointer", "") + "<div class='carte'><h3>Historique</h3>" + e.historique.map(function (x) {
+      return "<div class='info'>" + dateCourte(x.q) + " · " + esc(x.a) + " · " + esc(x.act) + (x.c ? " — " + esc(x.c) : "") + "</div>"; }).join("") +
+      (e.ligneBase ? "<div class='info'>📒 Base, ligne " + esc(e.ligneBase) + "</div>" : "") + "</div><div id='rhAct'></div>" +
+      "<button class='bouton second' id='rhFiche'>Fiche de " + esc(e.personnel) + "</button>";
+    $("vueListe").innerHTML = h; montrer("vueListe");
+    $("rhFiche").onclick = function () { ficheRH(e.personnel); };
+    if (e.statut !== "En attente Walid" || rhAttente(e.no).length) return;
+    var A = $("rhAct");
+    if (R.direction) {
+      A.innerHTML = "<div class='carte'><h3>Votre décision</h3><label>Commentaire (obligatoire pour refuser)</label><input id='rhCom'>" +
+        "<button class='bouton' id='rhVal' style='background:var(--vert)'>✅ Valider (inscrit dans Base)</button><button class='bouton' id='rhRef' style='background:var(--rouge)'>⛔ Refuser</button><div id='rhMsg' class='info'></div></div>";
+      $("rhVal").onclick = function () { envoyerRH("decider", { no: e.no, version: e.version, decision: "valider", commentaire: $("rhCom").value.trim() }, "Validation " + e.no, function () { ouvrirEvRH(e.no); }); };
+      $("rhRef").onclick = function () {
+        var c = $("rhCom").value.trim(); if (!c) { $("rhMsg").textContent = "⛔ Commentaire obligatoire."; return; }
+        if (confirm("Refuser " + e.no + " ?")) envoyerRH("decider", { no: e.no, version: e.version, decision: "refuser", commentaire: c }, "Refus " + e.no, function () { ouvrirEvRH(e.no); });
+      };
+    } else if (nomRH(e.par) === nomRH(R.agent)) {
+      A.innerHTML = "<div class='carte'><button class='bouton second' id='rhAnn'>Annuler cet événement</button></div>";
+      $("rhAnn").onclick = function () { if (confirm("Annuler " + e.no + " ?")) envoyerRH("annuler", { no: e.no, version: e.version }, "Annulation " + e.no, function () { ouvrirEvRH(e.no); }); };
+    }
+  }
+
+  function ficheRH(nom, moisSel) {
+    var R = S.rh, p = R.personnel.filter(function (x) { return nomRH(x.nom) === nomRH(nom); })[0];
+    if (!p) { afficherRH(); return; }
+    $("titre").textContent = p.nom;
+    var J = journalDe(p.nom), j = J.filter(function (x) { return x.mois === moisSel; })[0] || J[0];
+    // Évolution du salaire de base (changements seulement).
+    var cles = Object.keys(p.salaires).sort(), evol = [], prec = null;
+    cles.forEach(function (k) { var v = p.salaires[k]; if (v !== prec) evol.push([k, v]); prec = v; });
+    var an = String(new Date().getFullYear()), cum = { cm: 0, ca: 0, ha: 0, hs: 0 };
+    J.forEach(function (x) { if (x.mois.indexOf(an) === 0) { cum.hs += +x.v[7] || 0; cum.ha += +x.v[8] || 0; cum.cm += +x.v[14] || 0; cum.ca += +x.v[15] || 0; } });
+    var EV = R.evenements.filter(function (e) { return nomRH(e.personnel) === nomRH(p.nom); }).sort(function (a, b) { return b.effet - a.effet; });
+    var PA = R.paie.filter(function (d) { return nomRH(d.personnel) === nomRH(p.nom); }).sort(function (a, b) { return b.date - a.date; });
+    var MV = R.saisies.filter(function (x) { return nomRH(x.nom) === nomRH(p.nom); }).sort(function (a, b) { return b.effet - a.effet; }).slice(0, 40);
+    function tr(l, v, b) { return "<tr><td>" + l + "</td><td class='v'>" + (b ? "<b>" + v + "</b>" : v) + "</td></tr>"; }
+    var h = "<div class='carte'><h3>" + esc(p.nom) + (p.actif ? "" : " · parti") + "</h3><table>" +
+      tr("Salaire de base", nombre(p.actuel) + " " + esc(p.devise), true) + (p.intitule ? tr("Titulaire du compte", esc(p.intitule)) : "") + (p.rib ? tr("RIB", esc(p.rib)) : "") +
+      tr("Évolution", evol.map(function (x) { return cleLib(x[0]) + " : " + nombre(x[1]); }).join("<br>") || "—") + "</table>" +
+      "<button class='bouton' id='rhFEv'>➕ Événement pour " + esc(p.nom) + "</button>" +
+      (droitFin() ? "<button class='bouton second' id='rhFPay'>💰 Paiement (avance, prime, salaire…)</button>" : "") +
+      (R.direction ? "<div class='ligne'><button class='bouton second' id='rhFSal'>💵 Salaire de base</button>" + (p.actif ? "<button class='bouton second' id='rhFDep'>🚪 Départ</button>" : "") + "</div>" : "") + "</div>";
+    // Paie (Journal RH)
+    h += "<div class='carte'><h3>🧾 Paie</h3>" + (J.length ? "<select id='rhFM'>" + J.map(function (x) { return "<option value='" + x.mois + "'" + (x === j ? " selected" : "") + ">" + cleLib(x.mois) + "</option>"; }).join("") + "</select>" +
+      "<table>" + R.entetesJournal.map(function (t, i) {
+        var v = j.v[i]; if (i !== 0 && i !== 11 && i !== 12 && i !== 16 && (v === 0 || v === "")) return "";
+        return tr(esc(t.replace(/ \(RH\)| \(GNF\)/g, "").toLowerCase().replace(/^./, function (c) { return c.toUpperCase(); })) + (/\(GNF\)/.test(t) ? " <small>GNF</small>" : ""), nombre(v), i === 12 || i === 16);
+      }).join("") + "</table><div class='info'>Primes et prises en charge : affichées, hors net. Heure sup = salaire/26/8 ; heure d'absence = salaire/26/4.</div>" : "<div class='info'>Aucune ligne au Journal RH.</div>") + "</div>";
+    // Paiements (Finances)
+    h += "<div class='carte'><h3>💰 Paiements</h3>" + (PA.map(function (d) {
+      return "<div class='info' data-fin='" + esc(d.no) + "' style='cursor:pointer'>" + esc(d.no) + " · " + esc((d.motif || "").replace(" (RH)", "")) + (d.dateEffet ? " " + moisLib(d.dateEffet) : "") + " · <b>" + nombre(d.montant) + " " + esc(d.devise) + "</b>" +
+        (d.recu ? " (= " + nombre(d.recu) + " " + esc(d.deviseRecue) + ")" : "") + " · <span style='color:" + (COUL_ST[d.statut] || "#999") + ";font-weight:700'>" + esc(d.statut) + "</span></div>";
+    }).join("") || "<div class='info'>Aucune demande.</div>") + "</div>";
+    // Congés et absences
+    h += "<div class='carte'><h3>🗓️ Congés et absences " + an + "</h3><table>" + tr("Congé autorisé", nombre(cum.ca) + " j") + tr("Congé maladie", nombre(cum.cm) + " j") +
+      tr("Heures d'absence", nombre(cum.ha) + " h") + tr("Heures sup", nombre(cum.hs) + " h") + "</table>" + EV.slice(0, 30).map(htmlEvRH).join("") + "</div>";
+    // Mouvements (Journal Saisie RH)
+    h += "<div class='carte'><h3>📒 Mouvements (12 mois)</h3>" + (MV.map(function (x) {
+      return "<div class='info'>" + jourLib(x.effet) + " · " + esc(x.type.replace(" (RH)", "")) + " · " + (x.montant !== "" ? "<b>" + nombre(x.montant) + " " + esc(x.devise) + "</b>" + (x.equiv !== "" && x.devCible && x.devCible !== x.devise ? " (= " + nombre(x.equiv) + " " + esc(x.devCible) + ")" : "") : nombre(x.qte) + " " + esc(String(x.unite).toLowerCase())) +
+        (x.paye ? " · " + esc(x.paye) : "") + "</div>";
+    }).join("") || "<div class='info'>Aucun mouvement.</div>") + "</div>";
+    $("vueListe").innerHTML = h; montrer("vueListe");
+    if ($("rhFM")) $("rhFM").onchange = function () { ficheRH(p.nom, this.value); };
+    $("rhFEv").onclick = function () { formulaireEvRH(p.nom); };
+    if ($("rhFPay")) $("rhFPay").onclick = function () {
+      var go = function () { if (S.fin) formulaireFin({ type: "Paiement RH", personnel: p.nom }); else alert("Données Finances absentes : réseau puis ⟳."); };
+      if (S.fin) go(); else rafraichirFin().catch(function () {}).then(go);
+    };
+    if ($("rhFSal")) $("rhFSal").onclick = function () { formulaireSalaireRH(p); };
+    if ($("rhFDep")) $("rhFDep").onclick = function () { formulaireDepartRH(p); };
+    Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-ev]"), function (el) { el.onclick = function () { ouvrirEvRH(el.getAttribute("data-ev")); }; });
+    Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-fin]"), function (el) {
+      el.onclick = function () { if (!droitFin()) return; var no = el.getAttribute("data-fin"); if (S.fin && S.fin.demandes.some(function (x) { return x.no === no; })) ouvrirDemandeFin(no); else rafraichirFin().catch(function () {}).then(function () { afficherFinances(no); }); };
+    });
+  }
+
+  function formulaireEvRH(nom) {
+    var R = S.rh, T = R.types, types = Object.keys(T);
+    $("titre").textContent = "Événement RH";
+    var actifs = R.personnel.filter(function (p) { return p.actif; });
+    $("vueListe").innerHTML = "<div class='carte'><h3>➕ Événement RH</h3>" +
+      "<label>Agent</label><select id='reP'><option value=''>— choisir —</option>" + actifs.map(function (p) { return "<option" + (nomRH(p.nom) === nomRH(nom) ? " selected" : "") + ">" + esc(p.nom) + "</option>"; }).join("") + "</select>" +
+      "<label>Type</label><select id='reT'>" + types.map(function (t) { return "<option>" + esc(t) + "</option>"; }).join("") + "</select>" +
+      "<div class='ligne'><div><label id='reQL'>Quantité</label><input id='reQ' inputmode='decimal'></div><div><label>Date d'effet</label><input id='reD' type='date' value='" + new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10) + "'></div></div>" +
+      "<label>Commentaire</label><input id='reC'>" +
+      "<div class='info' id='reI'></div><button class='bouton' id='reEnv'>📤 Envoyer</button><div class='info' id='reM'></div></div>";
+    montrer("vueListe");
+    function maj() {
+      var t = T[$("reT").value], p = actifs.filter(function (x) { return x.nom === $("reP").value; })[0];
+      $("reQL").textContent = t.unite === "devise" ? "Montant (" + (p ? p.devise : "devise du salaire") + ")" : "Nombre de " + t.unite;
+      $("reI").textContent = (R.direction ? "Saisi par la direction : validé et inscrit dans Base tout de suite." : "Validation : Walid, puis inscrit dans Base.") + " Le mois de la date d'effet compte pour la paie.";
+    }
+    $("reT").onchange = maj; $("reP").onchange = maj; maj();
+    $("reEnv").onclick = function () {
+      var p = $("reP").value, q = parseFloat(String($("reQ").value).replace(/\s/g, "").replace(",", ".")), dt = $("reD").value, t = $("reT").value;
+      if (!p) { $("reM").textContent = "⛔ Choisissez l'agent."; return; }
+      if (!(q > 0)) { $("reM").textContent = "⛔ Quantité."; return; }
+      if (!dt) { $("reM").textContent = "⛔ Date d'effet."; return; }
+      if (!confirm(t + " · " + p + " : " + q + " — " + dt.split("-").reverse().join("/") + " ?")) return;
+      envoyerRH("evenement", { personnel: p, type: t, quantite: q, effet: dt, commentaire: $("reC").value.trim() }, t + " · " + p, function (r) { if (r.no) ouvrirEvRH(r.no); else ficheRH(p); });
+    };
+  }
+  function moisCourant() { return cleMois(Date.now()); }
+  function formulaireSalaireRH(p) {
+    $("titre").textContent = "Salaire de " + p.nom;
+    $("vueListe").innerHTML = "<div class='carte'><h3>💵 Salaire de base · " + esc(p.nom) + "</h3><div class='info'>Actuel : " + nombre(p.actuel) + " " + esc(p.devise) + "</div>" +
+      "<div class='ligne'><div style='flex:2'><label>Nouveau salaire (" + esc(p.devise) + ")</label><input id='rsM' inputmode='decimal'></div><div><label>À partir de</label><input id='rsD' type='month' value='" + moisCourant() + "'></div></div>" +
+      "<label>Commentaire</label><input id='rsC'><div class='info'>Mois passé : le Journal RH est recalculé (une demande de salaire en validation est mise à jour). Mois pas encore ouvert : appliqué le 1er.</div>" +
+      "<button class='bouton' id='rsEnv'>Enregistrer</button><button class='bouton second' id='rsAnn'>Retour</button><div class='info' id='rsMsg'></div></div>";
+    montrer("vueListe");
+    $("rsAnn").onclick = function () { ficheRH(p.nom); };
+    $("rsEnv").onclick = function () {
+      var m = parseFloat(String($("rsM").value).replace(/\s/g, "").replace(",", ".")), mo = $("rsD").value;
+      if (!(m > 0) || !mo) { $("rsMsg").textContent = "⛔ Montant et mois."; return; }
+      if (!confirm(p.nom + " : " + m.toLocaleString("fr-FR") + " " + p.devise + " à partir de " + cleLib(mo) + " ?")) return;
+      envoyerRH("salaire", { personnel: p.nom, montant: m, mois: mo, commentaire: $("rsC").value.trim() }, "Salaire " + p.nom, function () { ficheRH(p.nom); });
+    };
+  }
+  function formulaireDepartRH(p) {
+    $("titre").textContent = "Départ de " + p.nom;
+    $("vueListe").innerHTML = "<div class='carte'><h3>🚪 Départ · " + esc(p.nom) + "</h3><label>Dernier mois de salaire</label><input id='rdD' type='month' value='" + moisCourant() + "'>" +
+      "<label>Commentaire (motif)</label><input id='rdC'><div class='info'>Le salaire passe à 0 le mois suivant : plus de demande de salaire, l'agent sort des listes. Le dernier mois reste à payer normalement.</div>" +
+      "<button class='bouton' id='rdEnv' style='background:var(--rouge)'>Enregistrer le départ</button><button class='bouton second' id='rdAnn'>Retour</button></div>";
+    montrer("vueListe");
+    $("rdAnn").onclick = function () { ficheRH(p.nom); };
+    $("rdEnv").onclick = function () {
+      var mo = $("rdD").value; if (!mo) return;
+      if (!confirm("Départ de " + p.nom + " : dernier mois payé " + cleLib(mo) + " ?")) return;
+      envoyerRH("depart", { personnel: p.nom, mois: mo, commentaire: $("rdC").value.trim() }, "Départ " + p.nom, function () { ficheRH(p.nom); });
+    };
+  }
+  function formulaireNouvelRH() {
+    $("titre").textContent = "Nouvel agent";
+    $("vueListe").innerHTML = "<div class='carte'><h3>👤 Nouvel agent</h3><label>Nom (ID collaborateur, en majuscules)</label><input id='rnN' style='text-transform:uppercase'>" +
+      "<div class='ligne'><div style='flex:2'><label>Salaire de base</label><input id='rnS' inputmode='decimal'></div><div><label>Devise</label><select id='rnD'><option>GNF</option><option>USD</option><option>EURO</option><option>TND</option></select></div></div>" +
+      "<label>À partir de</label><input id='rnM' type='month' value='" + moisCourant() + "'>" +
+      "<label>RIB / compte (virement, facultatif)</label><input id='rnR'><label>Titulaire du compte (facultatif)</label><input id='rnI'><label>Commentaire</label><input id='rnC'>" +
+      "<button class='bouton' id='rnEnv'>Enregistrer</button><div class='info' id='rnMsg'></div></div>";
+    montrer("vueListe");
+    $("rnEnv").onclick = function () {
+      var n = $("rnN").value.trim().toUpperCase(), s = parseFloat(String($("rnS").value).replace(/\s/g, "").replace(",", ".")), mo = $("rnM").value;
+      if (!n || !(s > 0) || !mo) { $("rnMsg").textContent = "⛔ Nom, salaire et mois."; return; }
+      if (S.rh.personnel.some(function (p) { return nomRH(p.nom) === n; })) { $("rnMsg").textContent = "⛔ " + n + " existe déjà."; return; }
+      if (!confirm("Nouvel agent " + n + " : " + s.toLocaleString("fr-FR") + " " + $("rnD").value + " à partir de " + cleLib(mo) + " ?")) return;
+      envoyerRH("nouvel", { nom: n, salaire: s, devise: $("rnD").value, mois: mo, rib: $("rnR").value.trim(), intitule: $("rnI").value.trim(), commentaire: $("rnC").value.trim() }, "Nouvel agent " + n,
+        function () { if (S.rh.personnel.some(function (p) { return nomRH(p.nom) === n; })) ficheRH(n); else afficherRH(); });
+    };
+  }
+
+  /* Paie du mois : Journal RH + demandes de salaire ; direction : générer, valider en une fois. */
+  function afficherPaieRH(C) {
+    var R = S.rh, moisL = [], vu = {};
+    R.journal.forEach(function (j) { if (!vu[j.mois]) { vu[j.mois] = 1; moisL.push(j.mois); } });
+    moisL.sort().reverse();
+    var prec = cleMois(new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1).getTime());
+    var m = RHV.mois && vu[RHV.mois] ? RHV.mois : vu[prec] ? prec : moisL[0] || prec;
+    var J = R.journal.filter(function (j) { return j.mois === m; }).sort(function (a, b) { return a.nom.localeCompare(b.nom); });
+    var D = R.paie.filter(function (d) { return d.motif === "SALAIRE (RH)" && d.dateEffet && cleMois(d.dateEffet) === m && ["Refusée", "Annulée"].indexOf(d.statut) < 0; });
+    var aValider = R.role ? D.filter(function (d) { return d.statut === "En attente " + R.role && !finAttente(d.no).length; }) : [];
+    var tot = {};
+    var h = "<div class='carte'><div class='ligne'><div><label>Mois</label><select id='rpM'>" + moisL.map(function (x) { return "<option value='" + x + "'" + (x === m ? " selected" : "") + ">" + cleLib(x) + "</option>"; }).join("") + "</select></div></div>" +
+      (R.direction ? "<button class='bouton second' id='rpGen'>⚙️ Générer / mettre à jour les demandes de salaire " + cleLib(m) + "</button>" : "") +
+      (aValider.length && droitFin() ? "<button class='bouton' id='rpVal' style='background:var(--vert)'>✅ Valider les " + aValider.length + " salaire(s) en attente (" + esc(R.role) + ")</button>" : "") +
+      "<div class='info'>Les demandes sont créées automatiquement le 1er du mois (8 h) pour le mois écoulé : Walid puis DG valident, puis le paiement se clôture avec la preuve dans 💰 Finances.</div></div>";
+    h += J.map(function (j) {
+      var d = D.filter(function (x) { return nomRH(x.personnel) === nomRH(j.nom); })[0], net = j.v[12], dev = j.v[13];
+      if (typeof net === "number") tot[dev] = (tot[dev] || 0) + net;
+      var paye = String(j.v[16]).indexOf("PAY") === 0;
+      return "<div class='carte' data-n='" + esc(j.nom) + "' style='cursor:pointer'><div class='ligne' style='justify-content:space-between'><b>" + esc(j.nom) + "</b><b style='flex:0;white-space:nowrap'>" + nombre(net) + " " + esc(dev) + "</b></div>" +
+        "<div class='info'>Base " + nombre(j.v[0]) + (j.v[6] ? " · avance " + nombre(j.v[6]) : "") + (j.v[7] ? " · " + nombre(j.v[7]) + " h sup" : "") + (j.v[8] ? " · " + nombre(j.v[8]) + " h abs." : "") + (j.v[9] ? " · prélèv. " + nombre(j.v[9]) : "") + (j.v[10] ? " · prime " + nombre(j.v[10]) : "") + "</div>" +
+        "<div style='font-weight:700;font-size:14px;color:" + (paye ? "#2e7d32" : d ? (COUL_ST[d.statut] || "#999") : typeof net === "number" ? "#e65100" : "#c62828") + "'>" +
+        (paye ? "✅ Payé" + (j.v[17] ? " (" + nombre(j.v[17]) + ")" : "") : d ? esc(d.no) + " · " + esc(d.statut) : typeof net === "number" ? "Pas encore de demande" : "⚠️ Net à compléter (équivalent manquant dans Base)") + "</div></div>";
+    }).join("") || "<p class='info' style='padding:0 4px'>Aucune ligne au Journal RH pour ce mois.</p>";
+    if (Object.keys(tot).length) h += "<div class='carte'><b>Total net : " + Object.keys(tot).map(function (k) { return nombre(Math.round(tot[k] * 100) / 100) + " " + esc(k); }).join(" · ") + "</b></div>";
+    C.innerHTML = h;
+    $("rpM").onchange = function () { RHV.mois = this.value; afficherRH(); };
+    Array.prototype.forEach.call(C.querySelectorAll("[data-n]"), function (el) { el.onclick = function () { ficheRH(el.getAttribute("data-n"), m); }; });
+    if ($("rpGen")) $("rpGen").onclick = function () {
+      if (!confirm("Générer les demandes de salaire " + cleLib(m) + " (une par personne, net du Journal RH) ?")) return;
+      envoyerRH("genererPaie", { mois: m }, "Paie " + cleLib(m), function () { rafraichirFin().catch(function () {}); RHV.onglet = "paie"; afficherRH(); });
+    };
+    if ($("rpVal")) $("rpVal").onclick = function () {
+      if (!confirm("Valider " + aValider.length + " salaire(s) " + cleLib(m) + " :\n" + aValider.map(function (d) { return d.personnel + " " + nombre(d.montant) + " " + d.devise; }).join("\n") + " ?")) return;
+      aValider.forEach(function (d) {
+        S.file.push({ type: "fin", op: "decider", jeton: nouveauJeton(), horodatage: Date.now(), agent: S.agent.nom, code: S.agent.code,
+          donnees: { no: d.no, version: d.version, decision: "valider", commentaire: "" }, titre: "Validation " + d.no + " · salaire " + d.personnel, resume: "Finances", essais: 0 });
+      });
+      var avant = S.aCorriger.length;
+      $("rpVal").disabled = true; $("rpVal").textContent = "Envoi…";
+      sauver().then(function () { majEtat(); return lancerEnvoi(); }).then(function () {
+        return Promise.all([rafraichirRH().catch(function () {}), rafraichirFin().catch(function () {})]);
+      }).then(function () {
+        var reste = S.file.filter(function (x) { return x.type === "fin"; }).length, ko = S.aCorriger.length - avant;
+        alert((ko > 0 ? "⛔ " + ko + " refusée(s) : voir « À corriger ».\n" : "") + (reste ? "📥 " + reste + " en attente de réseau." : "✅ Validations envoyées."));
+        RHV.onglet = "paie"; afficherRH();
+      });
+    };
+  }
+
   function ouvrirDepuisNotif(d) {
     synchroniser(true).catch(function () {}).then(function () {
       if (d.vue === "finances" && typeof afficherFinances === "function") afficherFinances(d.id);
+      else if (d.vue === "rh" && droitRH()) afficherRH(d.id);
       else montrer("vueAccueil");
     });
   }
@@ -1891,8 +2232,8 @@
   }
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function () {});
 
-  Promise.all(["url", "donnees", "gabarit", "gv", "file", "envoyes", "aCorriger", "recents", "derniereSync", "agent", "formulaires", "planif", "planifLocal", "affichage", "fin"].map(lire)).then(function (v) {
-    S.fin = v[14] || null;
+  Promise.all(["url", "donnees", "gabarit", "gv", "file", "envoyes", "aCorriger", "recents", "derniereSync", "agent", "formulaires", "planif", "planifLocal", "affichage", "fin", "rh"].map(lire)).then(function (v) {
+    S.fin = v[14] || null; S.rh = v[15] || null;
     S.agent = v[9] || null; S.formulaires = v[10] || null; S.planif = v[11] || null; S.planifLocal = v[12] || {}; S.affichage = v[13] || "auto";
     $("choixAffichage").value = S.affichage;
     S.url = v[0] || (typeof URL_SERVEUR === "string" ? URL_SERVEUR : "") || "";
