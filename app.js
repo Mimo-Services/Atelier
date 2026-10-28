@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-10-29 GK";
+  var VERSION_APP = "2026-10-30 GL";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -288,6 +288,10 @@
       var nR = rhNbATraiter();
       tuile("rh", "👥", "Ressources humaines", S.rh && S.rh.direction ? "Personnel, validation" : "Personnel, événements", nR ? { badge: nR, bcls: "rouge", cls: "large" } : { cls: "large" });
     }
+    if (droitCom()) {
+      var nC = comRetards().length;
+      tuile("commercial", "🤝", "Commercial", "Contrats, BL, factures", nC ? { badge: "⏰" + nC, bcls: "rouge", cls: "large" } : { cls: "large" });
+    }
     if (!S.agent && S.url) tuile("connexion", "🔐", "Saisies", "Se connecter");
     tuile("attente", "⏳", "En attente", S.file.length ? "à envoyer" : "rien", S.file.length ? { badge: S.file.length, bcls: "orange" } : {});
     tuile("corriger", "⛔", "À corriger", S.aCorriger.length ? "refusés" : "rien", S.aCorriger.length ? { badge: S.aCorriger.length, bcls: "rouge" } : {});
@@ -303,6 +307,7 @@
         else if (id === "connexion") pageConnexion();
         else if (id === "finances") afficherFinances();
         else if (id === "rh") afficherRH();
+        else if (id === "commercial") afficherCom();
         else if (id === "planif") { if (modePC()) afficherPlanifPC(); else afficherPlanif(); }
         else if (id === "attente") afficherListe("attente");
         else if (id === "corriger") afficherListe("corriger");
@@ -317,7 +322,7 @@
     if ($("btnConnexion")) $("btnConnexion").onclick = pageConnexion;
     if ($("btnDeconnexion")) $("btnDeconnexion").onclick = function () {
       if (S.file.some(function (x) { return x.type === "form"; }) && !confirm("Des saisies sont en attente d'envoi : elles partiront quand même. Changer d'agent ?")) return;
-      S.agent = null; S.formulaires = null; S.planif = null; S.fin = null; S.rh = null; ecrire("agent", null); ecrire("formulaires", null); ecrire("planif", null); ecrire("fin", null); ecrire("rh", null); montrer("vueAccueil");
+      S.agent = null; S.formulaires = null; S.planif = null; S.fin = null; S.rh = null; S.com = null; ecrire("com", null); ecrire("agent", null); ecrire("formulaires", null); ecrire("planif", null); ecrire("fin", null); ecrire("rh", null); montrer("vueAccueil");
     };
 
     var d = S.donnees;
@@ -363,6 +368,7 @@
   }
   /* Résumé lisible d'un élément de la file (déclaration atelier ou saisie de formulaire). */
   function descriptionItem(x) {
+    if (x.type === "com") return "<b>🤝 " + esc(x.titre || "Commercial") + "</b><br><small>" + esc(x.agent) + " · " + dateCourte(x.horodatage) + "</small>";
     if (x.type === "rh") return "<b>👥 " + esc(x.titre || "RH") + "</b><br><small>" + esc(x.agent) + " · " + dateCourte(x.horodatage) + "</small>";
     if (x.type === "fin") return "<b>💰 " + esc(x.titre || "Finances") + "</b><br><small>" + esc(x.agent) + " · " + dateCourte(x.horodatage) + "</small>";
     if (x.type === "planif") return "<b>🗂️ " + esc(x.titre || "Planification") + "</b><br>" + esc(x.resume || "") + "<br><small>" + esc(x.agent) + " · " + dateCourte(x.horodatage) + "</small>";
@@ -518,7 +524,7 @@
       majEtat();
       var envoi = envoiP ? envoiP.then(lancerEnvoi) : lancerEnvoi();
       envoi.then(function () { if (attenteJetons[it.jeton]) attenteJetons[it.jeton](resultats[it.jeton] || null); });
-      return attendre(reponse, (it.type === "planif" || it.type === "rh" ? DELAI_PLANIF : DELAI_ENVOI) + 5000).catch(function () { return null; }).then(function (r) {
+      return attendre(reponse, (it.type === "planif" || it.type === "rh" || it.type === "com" ? DELAI_PLANIF : DELAI_ENVOI) + 5000).catch(function () { return null; }).then(function (r) {
         delete attenteJetons[it.jeton];
         synchroniser(false);
         if (!r) return enAttente();
@@ -552,7 +558,9 @@
       var p4 = (S.url && droitFin() && (forcerDonnees || n > 0 || ageFi > 5 * 60000)) ? rafraichirFin().catch(function () {}) : null;
       var ageRh = S.rh ? Date.now() - S.rh.recu : Infinity;
       var p5 = (S.url && droitRH() && (forcerDonnees || n > 0 || ageRh > 5 * 60000)) ? rafraichirRH().catch(function () {}) : null;
-      return Promise.all([p1, p2, p3, p4, p5]);
+      var ageCo = S.com ? Date.now() - S.com.recu : Infinity;
+      var p6 = (S.url && droitCom() && (forcerDonnees || n > 0 || ageCo > 5 * 60000)) ? rafraichirCom().catch(function () {}) : null;
+      return Promise.all([p1, p2, p3, p4, p5, p6]);
     }).catch(function () {}).then(function () { majEtat(); if ($("vueAccueil").style.display !== "none") majAccueil(); });
   }
   function erreurPassagere(r) {
@@ -566,19 +574,20 @@
       var it = S.file[0];
       it.essais = (it.essais || 0) + 1;
       var corps;
-      if (it.type === "rh") corps = { api: "rhEnvoyer", agent: it.agent, code: it.code, op: it.op, jeton: it.jeton, horodatage: String(it.horodatage), donnees: it.donnees };
+      if (it.type === "com") corps = { api: "comEnvoyer", agent: it.agent, code: it.code, op: it.op, jeton: it.jeton, horodatage: String(it.horodatage), donnees: it.donnees };
+      else if (it.type === "rh") corps = { api: "rhEnvoyer", agent: it.agent, code: it.code, op: it.op, jeton: it.jeton, horodatage: String(it.horodatage), donnees: it.donnees };
       else if (it.type === "fin") corps = { api: "finEnvoyer", agent: it.agent, code: it.code, op: it.op, jeton: it.jeton, horodatage: String(it.horodatage), donnees: it.donnees };
       else if (it.type === "planif") corps = { api: "planifEnvoyer", agent: it.agent, code: it.code, op: it.op, jeton: it.jeton, horodatage: String(it.horodatage), donnees: it.donnees };
       else if (it.type === "form") corps = { api: "repondre", agent: it.agent, code: it.code, formulaire: it.form, jeton: it.jeton, horodatage: String(it.horodatage), reponses: it.reponses };
       else { corps = { api: "declarer" }; for (var k in it.o) corps[k] = it.o[k]; }
-      return requete(S.url, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(corps), redirect: "follow" }, it.type === "planif" || it.type === "fin" || it.type === "rh" ? DELAI_PLANIF : DELAI_ENVOI)
+      return requete(S.url, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(corps), redirect: "follow" }, it.type === "planif" || it.type === "fin" || it.type === "rh" || it.type === "com" ? DELAI_PLANIF : DELAI_ENVOI)
         .then(function (r) {
           S.derniereSync = Date.now(); ecrire("derniereSync", S.derniereSync);
           if (erreurPassagere(r) && it.essais < 6) { it.erreur = r.message; return sauver().then(function () { return n; }); }
           S.file.shift();
           resultats[it.jeton] = r;
           if (attenteJetons[it.jeton]) attenteJetons[it.jeton](r);
-          if (r.ok) { if (it.o) { S.envoyes.push({ jeton: it.jeton, o: it.o, recuA: Date.now() }); n++; } else if (it.type === "planif" || it.type === "fin" || it.type === "rh") n++; }
+          if (r.ok) { if (it.o) { S.envoyes.push({ jeton: it.jeton, o: it.o, recuA: Date.now() }); n++; } else if (it.type === "planif" || it.type === "fin" || it.type === "rh" || it.type === "com") n++; }
           else { var c = JSON.parse(JSON.stringify(it)); c.r = r; delete c.code; S.aCorriger.push(c); }
           return sauver().then(function () { majEtat(); return suivant(); });
         }, function (e) {
@@ -1738,10 +1747,347 @@
     };
   }
 
+  /* ---------- 🤝 Commercial : contrats, BDC, BL / factures (PDF), encaissements, retards, relances ---------- */
+  function droitCom() { var d = S.agent && S.formulaires && S.formulaires.droits; return !!(d && (d.commercial || d.validation || d.comptable)); }
+  var rafCom = null;
+  function rafraichirCom() {
+    if (!S.url || !droitCom()) return Promise.resolve();
+    if (rafCom) return rafCom;
+    rafCom = api({ api: "commercial" }).then(function (r) { r.recu = Date.now(); S.com = r; return ecrire("com", r); })
+      .then(function () { rafCom = null; }, function (e) { rafCom = null; throw e; });
+    return rafCom;
+  }
+  function comRetards() { var now = Date.now(); return S.com ? S.com.factures.filter(function (f) { return !f.paye && f.echeance && f.echeance < now; }) : []; }
+  function comAttente(id) { return S.file.filter(function (x) { return x.type === "com" && x.donnees && (x.donnees.facture === id || x.donnees.contrat === id); }); }
+  function jours(t) { return Math.floor((Date.now() - t) / 86400000); }
+  function dateISO(t) { var d = new Date(t); return d.getFullYear() + "-" + z2(d.getMonth() + 1) + "-" + z2(d.getDate()); }
+  function envoyerCom(op, donnees, titre, suite) {
+    var it = { type: "com", op: op, jeton: nouveauJeton(), horodatage: Date.now(), agent: S.agent.nom, code: S.agent.code, donnees: donnees, titre: titre, resume: "Commercial", essais: 0 };
+    soumettre(it).then(function (r) {
+      var fin = function () { if (suite) suite(r); else afficherCom(); };
+      if (r.ok && !r.enAttente) return rafraichirCom().catch(function () {}).then(function () { alert("✅ " + r.titre + (r.message ? "\n" + r.message : "")); fin(); });
+      alert((r.enAttente ? "📥 " : "⛔ ") + (r.titre || "") + "\n" + (r.message || "")); fin();
+    });
+  }
+  // PDF d'un BL / d'une facture : gardé sur l'appareil après le 1er téléchargement.
+  function pdfCom(id) {
+    return lire("pdfc:" + id).then(function (c) {
+      if (c) return c;
+      return api({ api: "comPdf", id: id }, 120000).then(function (r) {
+        var o = { nom: r.nom, blob: base64Blob(r.pdf) };
+        return ecrire("pdfc:" + id, o).then(function () { return o; });
+      });
+    });
+  }
+  function ouvrirPdfCom(id, partager) {
+    pdfCom(id).then(function (o) {
+      var f = new File([o.blob], o.nom, { type: "application/pdf" });
+      if (partager && navigator.canShare && navigator.canShare({ files: [f] })) { navigator.share({ files: [f], title: o.nom }).catch(function () {}); return; }
+      var u = URL.createObjectURL(o.blob), w = window.open(u, "_blank");
+      if (!w) { var a = document.createElement("a"); a.href = u; a.download = o.nom; document.body.appendChild(a); a.click(); a.remove(); }
+    }, function (e) { alert("⛔ PDF : " + e.message + (navigator.onLine ? "" : " (réseau nécessaire la 1re fois)")); });
+  }
+  function barre(v, tot, coul) { var p = tot > 0 ? Math.min(100, Math.round(v / tot * 100)) : 0; return "<div style='height:6px;background:var(--bord);border-radius:3px;margin:2px 0 6px'><div style='height:6px;width:" + p + "%;background:" + coul + ";border-radius:3px'></div></div>"; }
+  function htmlFacture(f) {
+    var ret = !f.paye && f.echeance && f.echeance < Date.now(), att = comAttente(f.id).length;
+    return "<div class='carte" + (att ? " att" : "") + "' data-fa='" + esc(f.id) + "' style='cursor:pointer'><div class='ligne' style='justify-content:space-between'><b>" + esc(f.id) + "</b><b style='flex:0;white-space:nowrap'>" + gnf(f.montant) + " " + esc(f.devise) + "</b></div>" +
+      "<div class='info'>" + esc(f.client) + " · " + esc(f.projet) + " · du " + jourLib(f.date) + "</div>" +
+      "<div style='font-weight:700;font-size:14px;color:" + (f.paye ? "#2e7d32" : ret ? "#c62828" : "#e65100") + "'>" + (f.paye ? "✅ Encaissée le " + jourLib(f.encaisse) : ret ? "⏰ En retard de " + jours(f.echeance) + " j (échéance " + jourLib(f.echeance) + ")" : "À encaisser · échéance " + jourLib(f.echeance)) +
+      (att ? " · ⏳ en attente d'envoi" : "") + "</div></div>";
+  }
+
+  var COMV = { onglet: "contrats", filtre: "nonpayees" };
+  function afficherCom(id) {
+    $("titre").textContent = "Commercial";
+    var K = S.com;
+    if (!K) {
+      $("vueListe").innerHTML = "<div class='carte'><h3>🤝 Commercial</h3><p class='info'>Aucune donnée sur cet appareil : réseau puis ⟳.</p></div>"; montrer("vueListe");
+      rafraichirCom().then(function () { if (S.com) afficherCom(id); }).catch(function () {});
+      return;
+    }
+    if (id === "retards") { COMV.onglet = "factures"; COMV.filtre = "retard"; }
+    else if (id && K.factures.some(function (f) { return f.id === id; })) { ficheFactureCom(id); return; }
+    else if (id && K.contrats.some(function (c) { return c.id === id; })) { ficheContratCom(id); return; }
+    var nR = comRetards().length, envoi = S.file.filter(function (x) { return x.type === "com"; }).length;
+    var h = "<div class='carte'><h3>🤝 Commercial</h3><div class='info'>" + esc(K.agent) + (K.ecriture ? "" : " · lecture seule") + " · données du " + dateCourte(K.recu || K.genere) + "</div>" +
+      (K.ecriture ? "<div class='ligne'><button class='bouton' id='cmBL'>📦 BL</button><button class='bouton' id='cmFa'>🧾 Facture</button></div>" +
+        "<div class='ligne'><button class='bouton second' id='cmEnc'>💵 Encaissement</button><button class='bouton second' id='cmCt'>📄 Contrat</button><button class='bouton second' id='cmBdc'>🛒 BDC</button></div>" : "") +
+      "<div class='onglets' style='margin-top:10px'>" + [["contrats", "Contrats"], ["factures", "Factures" + (nR ? " (⏰ " + nR + ")" : "")], ["clients", "Clients"], ["production", "BDC & production"]]
+        .map(function (o) { return "<button data-o='" + o[0] + "' class='" + (COMV.onglet === o[0] ? "actif" : "") + "' style='border-radius:10px;border-bottom:1px solid var(--bord)'>" + o[1] + "</button>"; }).join("") + "</div></div>" +
+      (envoi ? "<div class='carte att'>⏳ " + envoi + " opération(s) commerciale(s) en attente d'envoi.</div>" : "") + "<div id='cmCorps'></div>";
+    $("vueListe").innerHTML = h; montrer("vueListe");
+    Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-o]"), function (b) { b.onclick = function () { COMV.onglet = b.getAttribute("data-o"); afficherCom(); }; });
+    if ($("cmBL")) { $("cmBL").onclick = function () { formulaireDocCom("bl"); }; $("cmFa").onclick = function () { formulaireDocCom("facture"); };
+      $("cmEnc").onclick = function () { formulaireEncCom(""); }; $("cmCt").onclick = formulaireContratCom; $("cmBdc").onclick = function () { formulaireBdcCom(""); }; }
+    var C = $("cmCorps");
+    if (COMV.onglet === "contrats") {
+      C.innerHTML = "<div class='carte'><input id='cmQ' placeholder='Rechercher (client, projet, n°)'><label style='font-weight:400'><input type='checkbox' id='cmClos' style='width:auto'> afficher les contrats clos</label></div><div id='cmL'></div>";
+      var liste = function () {
+        var q = $("cmQ").value.trim().toLowerCase(), clos = $("cmClos").checked;
+        $("cmL").innerHTML = K.contrats.filter(function (c) { return (clos || !/clos/i.test(c.statut)) && (!q || (c.id + " " + c.client + " " + c.projet + " " + c.designation + " " + c.immat).toLowerCase().indexOf(q) >= 0); })
+          .map(function (c) {
+            var du = c.facture - c.recouvre;
+            return "<div class='carte' data-ct='" + esc(c.id) + "' style='cursor:pointer" + (/clos/i.test(c.statut) ? ";opacity:.6" : "") + "'><div class='ligne' style='justify-content:space-between'><b>" + esc(c.designation) + "</b><span class='info' style='flex:0;white-space:nowrap'>" + esc(c.entreprise) + " · " + esc(c.statut) + "</span></div>" +
+              "<div class='info'>" + esc(c.id) + " · " + esc(c.client) + " · " + esc(c.type) + "</div>" +
+              "<div class='info'>Commandé " + gnf(c.commande) + " · livré " + gnf(c.livre) + "</div>" + barre(c.livre, c.commande, "#1565c0") +
+              "<div class='info'>Facturé " + gnf(c.facture) + " · encaissé " + gnf(c.recouvre) + (du > 0 ? " · <b style='color:#c62828'>dû " + gnf(du) + " " + esc(c.devise) + "</b>" : "") + "</div>" + barre(c.recouvre, c.facture, "#2e7d32") + "</div>";
+          }).join("") || "<p class='info' style='padding:0 4px'>Aucun contrat.</p>";
+        Array.prototype.forEach.call($("cmL").querySelectorAll("[data-ct]"), function (el) { el.onclick = function () { ficheContratCom(el.getAttribute("data-ct")); }; });
+      };
+      $("cmQ").oninput = liste; $("cmClos").onchange = liste; liste();
+    } else if (COMV.onglet === "factures") {
+      var now = Date.now(), FL = { retard: "⏰ En retard", nonpayees: "À encaisser", toutes: "Toutes" };
+      C.innerHTML = "<div class='carte'><div class='onglets'>" + Object.keys(FL).map(function (k) { return "<button data-fl='" + k + "' class='" + (COMV.filtre === k ? "actif" : "") + "' style='border-radius:10px;border-bottom:1px solid var(--bord)'>" + FL[k] + "</button>"; }).join("") + "</div></div><div id='cmL'></div>";
+      var L = K.factures.filter(function (f) { return COMV.filtre === "toutes" || (!f.paye && (COMV.filtre === "nonpayees" || (f.echeance && f.echeance < now))); })
+        .sort(function (a, b) { return COMV.filtre === "toutes" ? b.date - a.date : a.echeance - b.echeance; });
+      var tot = {}; L.forEach(function (f) { if (!f.paye) tot[f.devise] = (tot[f.devise] || 0) + f.montant; });
+      $("cmL").innerHTML = (Object.keys(tot).length ? "<div class='carte'><b>Reste à encaisser : " + Object.keys(tot).map(function (k) { return gnf(tot[k]) + " " + esc(k); }).join(" · ") + "</b></div>" : "") +
+        (L.map(htmlFacture).join("") || "<p class='info' style='padding:0 4px'>Rien ici.</p>");
+      Array.prototype.forEach.call(C.querySelectorAll("[data-fl]"), function (b) { b.onclick = function () { COMV.filtre = b.getAttribute("data-fl"); afficherCom(); }; });
+      Array.prototype.forEach.call(C.querySelectorAll("[data-fa]"), function (el) { el.onclick = function () { ficheFactureCom(el.getAttribute("data-fa")); }; });
+    } else if (COMV.onglet === "clients") {
+      C.innerHTML = K.clients.map(function (cl) {
+        var Ct = K.contrats.filter(function (c) { return c.client === cl.nom; }), F = K.factures.filter(function (f) { return f.client === cl.nom; });
+        var du = F.filter(function (f) { return !f.paye; }).reduce(function (t, f) { return t + f.montant; }, 0), ret = F.filter(function (f) { return !f.paye && f.echeance < Date.now(); }).length;
+        return "<div class='carte' data-cl='" + esc(cl.nom) + "' style='cursor:pointer'><div class='ligne' style='justify-content:space-between'><b>" + esc(cl.nom) + "</b><span class='info' style='flex:0;white-space:nowrap'>" + esc(cl.regime) + "</span></div>" +
+          "<div class='info'>" + Ct.length + " contrat(s) · " + F.length + " facture(s)" + (du ? " · <b style='color:#c62828'>dû " + gnf(du) + "</b>" : "") + (ret ? " · ⏰ " + ret + " en retard" : "") + "</div></div>";
+      }).join("");
+      Array.prototype.forEach.call(C.querySelectorAll("[data-cl]"), function (el) { el.onclick = function () { ficheClientCom(el.getAttribute("data-cl")); }; });
+    } else {
+      var B = K.bdcs.filter(function (b) { return !/livré$/i.test(b.statut || "") || (b.lignes || []).length; }).sort(function (a, b) { return b.date - a.date; });
+      C.innerHTML = B.map(htmlBdcCom).join("") || "<p class='info' style='padding:0 4px'>Aucun BDC.</p>";
+    }
+  }
+  function lotsBdc(id) { return ((S.donnees && S.donnees.lots) || []).filter(function (l) { return String(l.bdc).toUpperCase().indexOf(String(id).toUpperCase()) >= 0; }); }
+  function htmlBdcCom(b) {
+    var lots = lotsBdc(b.id), L = b.lignes || [];
+    var tq = 0, tl = 0, tf = 0; L.forEach(function (l) { tq += l.qte || 0; tl += l.livre || 0; tf += l.facture || 0; });
+    return "<div class='carte'><div class='ligne' style='justify-content:space-between'><b>🛒 " + esc(b.id) + "</b><b style='flex:0;white-space:nowrap'>" + gnf(b.montant) + " " + esc(b.devise || "GNF") + "</b></div>" +
+      "<div class='info'>" + esc(b.client) + " · " + esc(b.projet) + " · <b>" + esc(b.statut || "—") + "</b>" + (lots.length ? " · 🏭 " + lots.length + " lot(s) en atelier" : "") + "</div>" +
+      (L.length ? "<details><summary class='info'>" + L.length + " article(s) · livré " + gnf(tl) + " / " + gnf(tq) + " · facturé " + gnf(tf) + " (DuoCore)</summary><table>" +
+        "<tr><td><b>Article</b></td><td class='v'><b>Cmd</b></td><td class='v'><b>Livré</b></td><td class='v'><b>Fact.</b></td></tr>" +
+        L.map(function (l) { return "<tr><td>" + esc(l.abr || l.designation) + "</td><td class='v'>" + gnf(l.qte) + "</td><td class='v'>" + gnf(l.livre || 0) + "</td><td class='v'>" + gnf(l.facture || 0) + "</td></tr>"; }).join("") + "</table></details>" : "<div class='info'>Articles : à saisir dans 🗂️ Planification.</div>") +
+      (lots.length ? "<details><summary class='info'>Avancement des lots</summary>" + lots.slice(0, 40).map(function (l) { return "<div class='info'>" + esc(l.cle) + " · " + esc(l.designation) + (l.resume ? " — " + esc(String(l.resume).replace(/<[^>]+>/g, " ").slice(0, 90)) : "") + "</div>"; }).join("") + "</details>" : "") + "</div>";
+  }
+  function ficheContratCom(id) {
+    var K = S.com, c = K.contrats.filter(function (x) { return x.id === id; })[0];
+    if (!c) { afficherCom(); return; }
+    $("titre").textContent = c.id;
+    var F = K.factures.filter(function (f) { return f.contrat === c.id; }).sort(function (a, b) { return b.date - a.date; });
+    var BL = K.bls.filter(function (b) { return b.contrat === c.id; }).sort(function (a, b) { return b.date - a.date; });
+    var BD = K.bdcs.filter(function (b) { return b.contrat === c.id; });
+    function tr(l, v) { return "<tr><td>" + l + "</td><td class='v' style='white-space:normal'>" + v + "</td></tr>"; }
+    var h = "<div class='carte'><h3>" + esc(c.designation) + "</h3><table>" + tr("Contrat", esc(c.id) + (c.immat ? " · " + esc(c.immat) : "")) + tr("Client", esc(c.client) + " · " + esc(c.regime)) +
+      tr("Société / compte", esc(c.entreprise) + " · " + esc(c.benef)) + tr("Type", esc(c.type) + " · " + esc(c.statut)) +
+      tr("Commandé", "<b>" + gnf(c.commande) + " " + esc(c.devise) + "</b>") + tr("Livré", gnf(c.livre) + " · reste " + gnf(c.commande - c.livre)) +
+      tr("Facturé", gnf(c.facture)) + tr("Encaissé", gnf(c.recouvre)) + tr("Dû", "<b>" + gnf(c.facture - c.recouvre) + "</b>") + "</table>" +
+      (S.com.ecriture && !/clos/i.test(c.statut) ? "<div class='ligne'><button class='bouton' id='ctBL'>📦 BL</button><button class='bouton' id='ctFa'>🧾 Facture</button>" + (/avec bdc/i.test(c.type) ? "<button class='bouton second' id='ctBdc'>🛒 BDC</button>" : "") + "</div>" : "") + "</div>" +
+      BD.map(htmlBdcCom).join("") +
+      "<div class='carte'><h3>🧾 Factures</h3></div>" + (F.map(htmlFacture).join("") || "<p class='info' style='padding:0 4px'>Aucune.</p>") +
+      "<div class='carte'><h3>📦 Bons de livraison</h3>" + (BL.map(function (b) {
+        return "<div class='ligne' style='justify-content:space-between'><div class='info'><b>" + esc(b.id) + "</b> · " + jourLib(b.date) + " · " + gnf(b.montant) + (b.reference ? " · " + esc(b.reference) : "") + "</div>" +
+          (b.pdf ? "<button class='bouton second' data-pdf='" + esc(b.id) + "' style='flex:0;width:auto;padding:6px 10px'>📄</button>" : "") + "</div>";
+      }).join("") || "<div class='info'>Aucun.</div>") + "</div>";
+    $("vueListe").innerHTML = h; montrer("vueListe");
+    if ($("ctBL")) { $("ctBL").onclick = function () { formulaireDocCom("bl", c.id); }; $("ctFa").onclick = function () { formulaireDocCom("facture", c.id); }; }
+    if ($("ctBdc")) $("ctBdc").onclick = function () { formulaireBdcCom(c.id); };
+    Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-fa]"), function (el) { el.onclick = function () { ficheFactureCom(el.getAttribute("data-fa")); }; });
+    Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-pdf]"), function (el) { el.onclick = function () { ouvrirPdfCom(el.getAttribute("data-pdf")); }; });
+  }
+  function ficheFactureCom(id) {
+    var K = S.com, f = K.factures.filter(function (x) { return x.id === id; })[0];
+    if (!f) { afficherCom(); return; }
+    $("titre").textContent = f.id;
+    var R = K.relances.filter(function (r) { return r.facture === f.id; }).sort(function (a, b) { return b.date - a.date; });
+    var h = htmlFacture(f).replace("cursor:pointer", "") + "<div class='carte'><table><tr><td>Contrat</td><td class='v'>" + esc(f.contrat) + "</td></tr><tr><td>Compte</td><td class='v'>" + esc(f.benef) + "</td></tr>" +
+      (f.bdc ? "<tr><td>BDC</td><td class='v'>" + esc(f.bdc) + "</td></tr>" : "") + "<tr><td>Saisie</td><td class='v'>" + esc(f.editeur) + "</td></tr></table>" +
+      (f.pdf ? "<div class='ligne'><button class='bouton second' id='faPdf'>📄 Ouvrir le PDF</button><button class='bouton second' id='faPart'>📤 Partager</button></div>" : "<div class='info'>Facture saisie avant DuoCore : pas de PDF.</div>") +
+      (K.ecriture && !f.paye ? "<button class='bouton' id='faEnc' style='background:var(--vert)'>💵 Encaissée</button><button class='bouton second' id='faRel'>📞 Noter une relance</button>" : "") + "</div>" +
+      "<div class='carte'><h3>Relances</h3>" + (R.map(function (r) { return "<div class='info'>" + jourLib(r.date) + " · " + esc(r.agent) + " · <b>" + esc(r.mode) + "</b>" + (r.com ? " — " + esc(r.com) : "") + (r.prochaine ? " · prochaine " + jourLib(r.prochaine) : "") + "</div>"; }).join("") || "<div class='info'>Aucune.</div>") + "</div>" +
+      "<button class='bouton second' id='faCt'>Contrat " + esc(f.contrat) + "</button>";
+    $("vueListe").innerHTML = h; montrer("vueListe");
+    if ($("faPdf")) { $("faPdf").onclick = function () { ouvrirPdfCom(f.id); }; $("faPart").onclick = function () { ouvrirPdfCom(f.id, true); }; }
+    if ($("faEnc")) { $("faEnc").onclick = function () { formulaireEncCom(f.id); }; $("faRel").onclick = function () { formulaireRelanceCom(f); }; }
+    $("faCt").onclick = function () { ficheContratCom(f.contrat); };
+  }
+  function ficheClientCom(nom) {
+    var K = S.com, cl = K.clients.filter(function (c) { return c.nom === nom; })[0];
+    if (!cl) { afficherCom(); return; }
+    $("titre").textContent = cl.nom;
+    var Ct = K.contrats.filter(function (c) { return c.client === nom; }), F = K.factures.filter(function (f) { return f.client === nom; }).sort(function (a, b) { return b.date - a.date; });
+    var fa = 0, en = 0; F.forEach(function (f) { fa += f.montant; if (f.paye) en += f.montant; });
+    var h = "<div class='carte'><h3>" + esc(cl.nom) + " <small class='info'>" + esc(cl.code) + "</small></h3><table><tr><td>Facturé</td><td class='v'>" + gnf(fa) + "</td></tr><tr><td>Encaissé</td><td class='v'>" + gnf(en) + "</td></tr>" +
+      "<tr><td>Dû</td><td class='v'><b>" + gnf(fa - en) + "</b></td></tr></table>" +
+      "<label>Régime des factures</label><select id='clReg'" + (K.ecriture ? "" : " disabled") + ">" + K.regimes.map(function (r) { return "<option" + (r === cl.regime ? " selected" : "") + ">" + r + "</option>"; }).join("") + "</select>" +
+      "<div class='info'>Administration : prix TTC, précompte 50 % de la TVA, ARMP 0,6 %. Privé : HT + TVA 18 % = TTC.</div></div>" +
+      "<div class='carte'><h3>Contrats</h3>" + Ct.map(function (c) { return "<div class='info' data-ct='" + esc(c.id) + "' style='cursor:pointer'><b>" + esc(c.designation) + "</b> · " + esc(c.id) + " · " + esc(c.statut) + "</div>"; }).join("") + "</div>" +
+      F.map(htmlFacture).join("");
+    $("vueListe").innerHTML = h; montrer("vueListe");
+    $("clReg").onchange = function () { var v = this.value; if (confirm(cl.nom + " : régime « " + v + " » pour les prochaines factures ?")) envoyerCom("client", { nom: cl.nom, regime: v }, "Régime " + cl.nom, function () { ficheClientCom(nom); }); };
+    Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-ct]"), function (el) { el.onclick = function () { ficheContratCom(el.getAttribute("data-ct")); }; });
+    Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-fa]"), function (el) { el.onclick = function () { ficheFactureCom(el.getAttribute("data-fa")); }; });
+  }
+
+  function optsCom(L, v, vide, val, lib) { return (vide ? "<option value=''>" + vide + "</option>" : "") + L.map(function (x) { var k = val ? val(x) : x; return "<option value='" + esc(k) + "'" + (k === v ? " selected" : "") + ">" + esc(lib ? lib(x) : x) + "</option>"; }).join(""); }
+  function nbCom(x) { x = String(x || "").replace(/[\s  ]/g, "").replace(",", "."); return parseFloat(x) || 0; }
+  function blocPrix(p) {
+    return "<label>Prix</label><select id='" + p + "PU'><option value='non'>Montant global</option><option value='oui'>Prix unitaire unique × quantité</option></select>" +
+      "<div id='" + p + "MtB'><label>Montant net à payer</label><input id='" + p + "Mt' inputmode='decimal'></div>" +
+      "<div id='" + p + "PuB' class='ligne' style='display:none'><div><label>Net unitaire</label><input id='" + p + "Pu' inputmode='decimal'></div><div><label>Quantité globale</label><input id='" + p + "Q' inputmode='decimal'></div></div>" +
+      "<label>Devise</label><select id='" + p + "Dev'><option>GNF</option><option>EURO</option><option>USD</option><option>TND</option></select>";
+  }
+  function lierPrix(p) { $(p + "PU").onchange = function () { var u = this.value === "oui"; $(p + "MtB").style.display = u ? "none" : ""; $(p + "PuB").style.display = u ? "" : "none"; }; }
+  function lirePrix(p) {
+    var u = $(p + "PU").value === "oui";
+    return { prixUnique: u, montant: nbCom($(p + "Mt").value), pu: nbCom($(p + "Pu").value), qte: nbCom($(p + "Q").value), devise: $(p + "Dev").value };
+  }
+  function formulaireContratCom() {
+    var K = S.com; $("titre").textContent = "Nouveau contrat";
+    $("vueListe").innerHTML = "<div class='carte'><h3>📄 Nouveau contrat</h3>" +
+      "<label>Client</label><select id='ncCl'>" + optsCom(K.clients.map(function (c) { return c.nom; }), "", "— choisir —") + "<option value='+'>➕ Nouveau client</option></select>" +
+      "<div id='ncNC' style='display:none'><div class='ligne'><div style='flex:2'><label>Nom du client</label><input id='ncNCn'></div><div><label>Code (ID)</label><input id='ncNCc' style='text-transform:uppercase'></div></div>" +
+      "<label>Régime</label><select id='ncReg'>" + optsCom(K.regimes, "Administration") + "</select></div>" +
+      "<label>Projet</label><select id='ncPr'>" + optsCom(K.projets.map(function (p) { return p.nom; }), "", "— choisir —") + "<option value='+'>➕ Nouveau projet</option></select>" +
+      "<div id='ncNP' style='display:none' class='ligne'><div style='flex:2'><label>Nom du projet</label><input id='ncNPn'></div><div><label>Code produit</label><input id='ncNPc' style='text-transform:uppercase'></div></div>" +
+      "<label>Immatriculation (facultatif)</label><input id='ncIm'><label>Compte bénéficiaire</label><select id='ncBen'>" + optsCom(K.beneficiaires, "", "— choisir —") + "</select>" +
+      "<label>Le contrat recevra-t-il des BDC ?</label><select id='ncBdc'><option value='non'>Non : le contrat est la commande</option><option value='oui'>Oui : on déclare ici le 1er BDC</option></select>" +
+      blocPrix("nc") + "<label>Date</label><input id='ncD' type='date' value='" + dateISO(Date.now()) + "'>" +
+      "<button class='bouton' id='ncEnv'>📤 Enregistrer</button><div class='info' id='ncM'></div></div>";
+    montrer("vueListe"); lierPrix("nc");
+    $("ncCl").onchange = function () { $("ncNC").style.display = this.value === "+" ? "" : "none"; };
+    $("ncPr").onchange = function () { $("ncNP").style.display = this.value === "+" ? "" : "none"; };
+    $("ncEnv").onclick = function () {
+      var d = lirePrix("nc"), cl = $("ncCl").value, pr = $("ncPr").value;
+      d.nouveauClient = cl === "+"; d.client = d.nouveauClient ? "" : cl; d.nomClient = $("ncNCn").value.trim(); d.codeClient = $("ncNCc").value.trim().toUpperCase(); d.regime = $("ncReg").value;
+      d.nouveauProjet = pr === "+"; d.projet = d.nouveauProjet ? "" : pr; d.nomProjet = $("ncNPn").value.trim(); d.codeProduit = $("ncNPc").value.trim().toUpperCase();
+      d.immat = $("ncIm").value.trim(); d.benef = $("ncBen").value; d.avecBdc = $("ncBdc").value === "oui"; d.date = $("ncD").value;
+      var err = !cl ? "client" : d.nouveauClient && !d.nomClient ? "nom du client" : !pr ? "projet" : d.nouveauProjet && !d.nomProjet ? "nom du projet" : !d.benef ? "compte bénéficiaire" :
+        d.prixUnique ? (!(d.pu > 0) || !(d.qte > 0) ? "prix unitaire et quantité" : "") : !(d.montant > 0) ? "montant" : "";
+      if (err) { $("ncM").textContent = "⛔ Indiquez : " + err + "."; return; }
+      var mt = d.prixUnique ? d.pu * d.qte : d.montant;
+      if (!confirm("Nouveau contrat : " + (d.client || d.nomClient) + " · " + (d.projet || d.nomProjet) + " · " + gnf(mt) + " " + d.devise + " ?")) return;
+      envoyerCom("contrat", d, "Contrat " + (d.client || d.nomClient));
+    };
+  }
+  function formulaireBdcCom(idC) {
+    var K = S.com, CT = K.contrats.filter(function (c) { return /avec bdc/i.test(c.type) && !/clos/i.test(c.statut); });
+    $("titre").textContent = "Nouveau BDC";
+    $("vueListe").innerHTML = "<div class='carte'><h3>🛒 Nouveau BDC</h3><label>Contrat</label><select id='nbC'>" + optsCom(CT, idC, "— choisir —", function (c) { return c.id; }, function (c) { return c.designation + " · " + c.id; }) + "</select>" +
+      blocPrix("nb") + "<label>Date</label><input id='nbD' type='date' value='" + dateISO(Date.now()) + "'><div class='info'>Les articles du BDC se saisissent ensuite dans 🗂️ Planification (Saisi BDC).</div>" +
+      "<button class='bouton' id='nbEnv'>📤 Enregistrer</button><div class='info' id='nbM'></div></div>";
+    montrer("vueListe"); lierPrix("nb");
+    $("nbEnv").onclick = function () {
+      var d = lirePrix("nb"); d.contrat = $("nbC").value; d.date = $("nbD").value;
+      var err = !d.contrat ? "contrat" : d.prixUnique ? (!(d.pu > 0) || !(d.qte > 0) ? "prix unitaire et quantité" : "") : !(d.montant > 0) ? "montant" : "";
+      if (err) { $("nbM").textContent = "⛔ Indiquez : " + err + "."; return; }
+      if (!confirm("Nouveau BDC sur " + d.contrat + " · " + gnf(d.prixUnique ? d.pu * d.qte : d.montant) + " " + d.devise + " ?")) return;
+      envoyerCom("bdc", d, "BDC " + d.contrat, function () { ficheContratCom(d.contrat); });
+    };
+  }
+  /* BL / facture : lignes du BDC (Prix BDC), quantités proposées = reste, tout modifiable ; aperçu des montants. */
+  function formulaireDocCom(type, idC) {
+    var K = S.com, fact = type === "facture", CT = K.contrats.filter(function (c) { return !/clos/i.test(c.statut); });
+    $("titre").textContent = fact ? "Nouvelle facture" : "Nouveau BL";
+    $("vueListe").innerHTML = "<div class='carte'><h3>" + (fact ? "🧾 Nouvelle facture" : "📦 Nouveau bon de livraison") + "</h3>" +
+      "<label>Contrat</label><select id='dcC'>" + optsCom(CT, idC || "", "— choisir —", function (c) { return c.id; }, function (c) { return c.designation + " · " + c.id; }) + "</select>" +
+      "<div id='dcBB'><label>Bon de commande</label><select id='dcB'></select></div><div class='info' id='dcI'></div>" +
+      "<div id='dcL'></div><button class='bouton second' id='dcAj'>➕ Ligne libre</button>" +
+      "<div class='ligne'><div><label>Date</label><input id='dcD' type='date' value='" + dateISO(Date.now()) + "'></div>" + (fact ? "<div><label>Échéance</label><input id='dcE' type='date'></div>" : "") + "</div>" +
+      "<label>" + (fact ? "Référence (BL, bon d'engagement… facultatif)" : "Livré à (lieu, réceptionnaire)") + "</label><input id='dcR'>" +
+      "<div class='carte' id='dcT' style='margin-top:10px'></div><button class='bouton' id='dcEnv'>📤 " + (fact ? "Émettre la facture (PDF)" : "Émettre le BL (PDF)") + "</button><div class='info' id='dcM' style='white-space:pre-line'></div></div>";
+    montrer("vueListe");
+    var lignes = [];
+    function contrat() { return K.contrats.filter(function (c) { return c.id === $("dcC").value; })[0]; }
+    function soc() { var c = contrat(); return (K.societes || {})[c ? String(c.entreprise).toUpperCase() : "AB"] || { tva: 18, precompte: 50, armp: 0.6, delai: 30 }; }
+    function dessinerLignes() {
+      $("dcL").innerHTML = lignes.length ? (fact && $("dcB").value ? "<button class='bouton second' id='dcRes'>↺ Quantités = commandé − déjà facturé</button>" : "") + lignes.map(function (l, i) {
+        return "<div style='border-top:1px solid var(--bord);padding:6px 0" + (l.qte > 0 ? "" : ";opacity:.75") + "'><div class='ligne'><input class='dcN' data-i='" + i + "' value='" + esc(l.designation) + "' style='padding:6px;flex:1' placeholder='Désignation'>" +
+          "<button class='bouton second' data-x='" + i + "' style='padding:4px 8px;width:auto;flex:0'>✕</button></div>" + (l.info ? "<div class='info' style='font-size:11px'>" + esc((l.abr ? l.abr + " · " : "") + l.info) + "</div>" : "") +
+          "<div class='ligne'><div><small>Quantité</small><input class='dcQ' data-i='" + i + "' inputmode='decimal' value='" + (l.qte || "") + "' style='padding:6px'></div>" +
+          "<div><small>Net unitaire</small><input class='dcP' data-i='" + i + "' inputmode='decimal' value='" + (l.pu || "") + "' style='padding:6px'></div></div></div>";
+      }).join("") : "<div class='info'>Aucune ligne : choisissez le BDC ou ajoutez une ligne libre.</div>";
+      if ($("dcRes")) $("dcRes").onclick = function () { lignes.forEach(function (l) { if (l.cmd !== undefined) l.qte = Math.max(0, l.cmd - (l.fac || 0)); }); dessinerLignes(); };
+      Array.prototype.forEach.call(document.querySelectorAll(".dcN,.dcQ,.dcP"), function (inp) {
+        inp.oninput = function () { var l = lignes[+inp.getAttribute("data-i")]; if (inp.className === "dcN") l.designation = inp.value; else if (inp.className === "dcQ") l.qte = nbCom(inp.value); else l.pu = nbCom(inp.value); totaux(); };
+      });
+      Array.prototype.forEach.call(document.querySelectorAll("[data-x]"), function (b) { b.onclick = function () { lignes.splice(+b.getAttribute("data-x"), 1); dessinerLignes(); }; });
+      totaux();
+    }
+    function totaux() {
+      var c = contrat(), s = soc(), reg = c ? c.regime : "Administration", t = s.tva / 100, net = 0, q = 0;
+      lignes.forEach(function (l) { if (l.qte > 0) { net += l.qte * (l.pu || 0); q += l.qte; } });
+      var h = "<b>" + lignes.filter(function (l) { return l.qte > 0; }).length + " ligne(s) · " + gnf(q) + " unités</b><br>Net à payer : <b>" + gnf(net) + " " + esc(c ? c.devise : "GNF") + "</b>";
+      if (fact && net) {
+        if (reg === "Privé") h += "<br><small>Privé : HT " + gnf(net / (1 + t)) + " + TVA " + s.tva + " % = TTC " + gnf(net) + "</small>";
+        else { var k = 1 + t - t * s.precompte / 100 - s.armp / 100, ht = net / k; h += "<br><small>Administration : HT " + gnf(ht) + " · TTC " + gnf(ht * (1 + t)) + " − précompte " + gnf(ht * t * s.precompte / 100) + " − ARMP " + gnf(ht * s.armp / 100) + "</small>"; }
+      }
+      $("dcT").innerHTML = h;
+    }
+    function chargerBdc() {
+      var b = K.bdcs.filter(function (x) { return x.id === $("dcB").value; })[0];
+      lignes = b ? (b.lignes || []).map(function (l) {
+        var reste = fact ? (l.livre || 0) - (l.facture || 0) : l.qte - (l.livre || 0);
+        return { designation: l.designation, abr: l.abr, qte: Math.max(0, reste), pu: l.pu, cmd: l.qte, fac: l.facture || 0, info: "Cmd " + gnf(l.qte) + " · livré " + gnf(l.livre || 0) + " · facturé " + gnf(l.facture || 0) };
+      }) : [];
+      $("dcI").textContent = b ? (b.lignes.length ? "Quantités proposées : " + (fact ? "livré non facturé (BL DuoCore)" : "reste à livrer") + ". Modifiez librement ; une ligne à 0 est ignorée." : "Aucun article saisi pour ce BDC (Planification) : ajoutez des lignes libres.") : "";
+      dessinerLignes();
+    }
+    function majContrat() {
+      var c = contrat(), B = c ? K.bdcs.filter(function (b) { return b.contrat === c.id; }) : [];
+      $("dcB").innerHTML = optsCom(B, B.length === 1 ? B[0].id : "", B.length > 1 ? "— choisir —" : "", function (b) { return b.id; }, function (b) { return b.id + " · " + (b.statut || "") + " · " + gnf(b.montant); });
+      $("dcBB").style.display = B.length ? "" : "none";
+      if (fact && $("dcE")) { var d0 = new Date($("dcD").value + "T00:00:00").getTime() || Date.now(); $("dcE").value = dateISO(d0 + soc().delai * 86400000); }
+      chargerBdc();
+    }
+    $("dcC").onchange = majContrat; $("dcB").onchange = chargerBdc;
+    $("dcAj").onclick = function () { lignes.push({ designation: "", qte: 0, pu: 0 }); dessinerLignes(); };
+    majContrat();
+    $("dcEnv").onclick = function () {
+      var c = contrat(), L = lignes.filter(function (l) { return String(l.designation).trim() && l.qte > 0; });
+      if (!c) { $("dcM").textContent = "⛔ Choisissez le contrat."; return; }
+      if (!L.length) { $("dcM").textContent = "⛔ Au moins une ligne avec une quantité."; return; }
+      if (fact && L.some(function (l) { return !(l.pu > 0); })) { $("dcM").textContent = "⛔ Prix unitaire manquant sur une ligne."; return; }
+      var net = L.reduce(function (t, l) { return t + l.qte * (l.pu || 0); }, 0);
+      if (!confirm((fact ? "Émettre la facture" : "Émettre le BL") + " · " + c.client + " · " + L.length + " ligne(s)" + (net ? " · net " + gnf(net) + " " + c.devise : "") + " ?\nLe n° est attribué par le serveur (réseau nécessaire pour le PDF).")) return;
+      var d = { contrat: c.id, bdc: $("dcB").value, lignes: L.map(function (l) { return { designation: String(l.designation).trim(), abr: l.abr || "", qte: l.qte, pu: l.pu || 0 }; }),
+        date: $("dcD").value, echeance: fact ? $("dcE").value : "", reference: $("dcR").value.trim(), devise: c.devise || "GNF" };
+      envoyerCom(type, d, (fact ? "Facture " : "BL ") + c.client, function (r) {
+        if (r && r.ok && r.id && r.pdf) { ficheContratCom(c.id); if (confirm("Ouvrir le PDF " + r.id + " ?")) ouvrirPdfCom(r.id); } else ficheContratCom(c.id);
+      });
+    };
+  }
+  function formulaireEncCom(idF) {
+    var K = S.com, F = K.factures.filter(function (f) { return !f.paye && !comAttente(f.id).length; }).sort(function (a, b) { return a.echeance - b.echeance; });
+    $("titre").textContent = "Encaissement";
+    $("vueListe").innerHTML = "<div class='carte'><h3>💵 Encaissement d'une facture</h3><label>Facture (payée en entier)</label><select id='enF'>" +
+      optsCom(F, idF, "— choisir —", function (f) { return f.id; }, function (f) { return f.id + " · " + f.client + " · " + gnf(f.montant) + " " + f.devise; }) + "</select>" +
+      "<div class='info' id='enI'></div><label>Date réelle d'encaissement (relevé bancaire)</label><input id='enD' type='date' value='" + dateISO(Date.now()) + "'>" +
+      "<button class='bouton' id='enEnv' style='background:var(--vert)'>💵 Enregistrer l'encaissement</button><div class='info' id='enM'></div></div>";
+    montrer("vueListe");
+    function info() { var f = F.filter(function (x) { return x.id === $("enF").value; })[0]; $("enI").textContent = f ? "Crédité sur " + f.benef + " (compte du contrat)." : ""; }
+    $("enF").onchange = info; info();
+    $("enEnv").onclick = function () {
+      var f = F.filter(function (x) { return x.id === $("enF").value; })[0], dt = $("enD").value;
+      if (!f || !dt) { $("enM").textContent = "⛔ Facture et date."; return; }
+      if (!confirm("Encaissement " + f.id + " : " + gnf(f.montant) + " " + f.devise + " le " + dt.split("-").reverse().join("/") + " sur " + f.benef + " ?")) return;
+      envoyerCom("recouvrement", { facture: f.id, date: dt }, "Encaissement " + f.id, function () { ficheFactureCom(f.id); });
+    };
+  }
+  function formulaireRelanceCom(f) {
+    $("titre").textContent = "Relance";
+    $("vueListe").innerHTML = "<div class='carte'><h3>📞 Relance · " + esc(f.id) + "</h3><div class='info'>" + esc(f.client) + " · " + gnf(f.montant) + " " + esc(f.devise) + "</div>" +
+      "<label>Mode</label><select id='rlM'><option>Appel</option><option>Visite</option><option>Courrier</option><option>E-mail</option><option>WhatsApp</option></select>" +
+      "<label>Compte rendu</label><textarea id='rlC' rows='3'></textarea><label>Prochaine relance</label><input id='rlP' type='date' value='" + dateISO(Date.now() + 7 * 86400000) + "'>" +
+      "<button class='bouton' id='rlEnv'>Enregistrer</button></div>";
+    montrer("vueListe");
+    $("rlEnv").onclick = function () { envoyerCom("relance", { facture: f.id, client: f.client, mode: $("rlM").value, commentaire: $("rlC").value.trim(), prochaine: $("rlP").value }, "Relance " + f.id, function () { ficheFactureCom(f.id); }); };
+  }
+
   function ouvrirDepuisNotif(d) {
     synchroniser(true).catch(function () {}).then(function () {
       if (d.vue === "finances" && typeof afficherFinances === "function") afficherFinances(d.id);
       else if (d.vue === "rh" && droitRH()) afficherRH(d.id);
+      else if (d.vue === "commercial" && droitCom()) afficherCom(d.id);
       else montrer("vueAccueil");
     });
   }
@@ -2232,8 +2578,8 @@
   }
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function () {});
 
-  Promise.all(["url", "donnees", "gabarit", "gv", "file", "envoyes", "aCorriger", "recents", "derniereSync", "agent", "formulaires", "planif", "planifLocal", "affichage", "fin", "rh"].map(lire)).then(function (v) {
-    S.fin = v[14] || null; S.rh = v[15] || null;
+  Promise.all(["url", "donnees", "gabarit", "gv", "file", "envoyes", "aCorriger", "recents", "derniereSync", "agent", "formulaires", "planif", "planifLocal", "affichage", "fin", "rh", "com"].map(lire)).then(function (v) {
+    S.fin = v[14] || null; S.rh = v[15] || null; S.com = v[16] || null;
     S.agent = v[9] || null; S.formulaires = v[10] || null; S.planif = v[11] || null; S.planifLocal = v[12] || {}; S.affichage = v[13] || "auto";
     $("choixAffichage").value = S.affichage;
     S.url = v[0] || (typeof URL_SERVEUR === "string" ? URL_SERVEUR : "") || "";
