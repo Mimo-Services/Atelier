@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-10-28 GH";
+  var VERSION_APP = "2026-10-28 GI";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -913,7 +913,7 @@
   function finNbATraiter() { return S.fin ? S.fin.demandes.filter(finATraiter).length : 0; }
   var COUL_ST = { "En attente Walid": "#e65100", "En attente DG": "#e65100", "À corriger": "#b26a00", "Refusée": "#c62828", "Validée": "#2e7d32", "À exécuter": "#1565c0", "Exécutée": "#2e7d32", "Annulée": "#777" };
   function statutFin(d) { return d.solde && d.statut === "Validée" ? (d.solde.reste <= 0 ? "Soldée" : d.solde.regle > 0 ? "Partiellement payée" : "Validée — à payer") : d.statut; }
-  function libelleFin(d) { return d.type === "Mouvement de trésorerie" ? d.op : d.type; }
+  function libelleFin(d) { return d.type === "Mouvement de trésorerie" || d.type === "Opération constatée" ? d.op : d.type === "Paiement RH" ? "Paie RH · " + d.personnel : d.type; }
   var FIN = { filtre: "traiter" };
   function afficherFinances(no) {
     $("titre").textContent = "Finances";
@@ -927,6 +927,7 @@
     var nouv = S.file.filter(function (x) { return x.type === "fin" && x.op === "creer"; });
     var h = "<div class='carte'><h3>💰 Finances</h3><div class='info'>" + esc(F.agent) + (F.role ? " · valideur " + esc(F.role) : F.comptable ? " · comptable (lecture)" : "") + " · données du " + dateCourte(F.recu || F.genere) + "</div>" +
       "<button class='bouton' id='fnNouv'>➕ Nouvelle demande</button>" +
+      (F.suiviAchat || F.comptable ? "<button class='bouton second' id='fnAch'>📦 Suivi des achats (" + ((F.achat && F.achat.ouverts) || []).length + ")</button>" : "") +
       "<div class='onglets' style='margin-top:10px'>" + [["traiter", "À traiter (" + finNbATraiter() + ")"], ["miennes", "Mes demandes"]].concat(F.role || F.comptable ? [["toutes", "Toutes"]] : [])
         .map(function (o) { return "<button data-f='" + o[0] + "' class='" + (FIN.filtre === o[0] ? "actif" : "") + "' style='border-radius:10px;border-bottom:1px solid var(--bord)'>" + o[1] + "</button>"; }).join("") + "</div>" +
       "<input id='fnCherche' placeholder='Rechercher (n°, fournisseur, objet…)' style='margin-top:8px'></div>" +
@@ -953,6 +954,7 @@
     Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-f]"), function (b) { b.onclick = function () { FIN.filtre = b.getAttribute("data-f"); afficherFinances(); }; });
     $("fnCherche").oninput = liste; liste();
     $("fnNouv").onclick = function () { formulaireFin(null); };
+    if ($("fnAch")) $("fnAch").onclick = function () { afficherSuiviAchats(); };
   }
 
   // Pièce : image affichée, PDF ouvert ; gardée en mémoire le temps de la session.
@@ -989,6 +991,8 @@
       "<table>" + ligne("Montant", "<b>" + gnf(d.montant) + " " + esc(d.devise) + "</b>" + (d.devise !== "GNF" ? "<br><small>taux " + gnf(d.taux) + " → " + gnf(d.gnf) + " GNF</small>" : "")) +
       ligne("Fournisseur", esc(d.fournisseur)) + ligne("Facture", d.facture ? esc(d.facture) : d.refFacture ? "Réf. " + esc(d.refFacture) : "") +
       ligne("Objet", esc(d.objet)) + ligne("Mode", esc(d.mode)) + ligne("Compte", esc(d.compte) + (d.contrepartie ? " → " + esc(d.contrepartie) : "")) +
+      ligne("Personnel", esc(d.personnel) + (d.motifRH ? " · " + esc(d.motifRH) : "")) +
+      ligne("Achat", d.achat ? esc(d.achat.nature + " · " + (d.achat.article || d.achat.designation || (d.achat.articles || []).join(", ")) + (d.achat.quantite ? " · qté " + d.achat.quantite : "")) + (d.achatId ? " [" + esc(d.achatId) + "]" : "") : "") +
       ligne("Bénéficiaire", esc(d.beneficiaire)) + ligne("Catégorie", esc(d.categorie)) + ligne("Reçu", d.recu ? gnf(d.recu) + " " + esc(d.deviseRecue) : "") +
       ligne("Base", d.ligneBase ? "ligne " + esc(d.ligneBase) : "") + ligne("Société", esc(d.societe)) + ligne("Échéance", d.echeance ? dateCourte(d.echeance).split(" ")[0] : "") +
       ligne("Demandeur", esc(d.demandeur) + " · " + dateCourte(d.date)) +
@@ -1080,46 +1084,71 @@
   // Nouvelle demande (ou correction d'une demande « À corriger »).
   function formulaireFin(src) {
     var F = S.fin; src = src || {};
+    var A0 = src.achat || {}, AC = F.achat || { categories: [], articles: {}, ouverts: [], typesFrais: [] };
     $("titre").textContent = src.no ? "Corriger " + src.no : "Nouvelle demande";
     function opts(L, v, vide) { return (vide ? "<option value=''>" + vide + "</option>" : "") + L.map(function (x) { return "<option" + (x === v ? " selected" : "") + ">" + esc(x) + "</option>"; }).join(""); }
-    var cpts = F.comptes.map(function (c) { return c.nom; });
-    var h = "<div class='carte'><label>Type</label><select id='ffType'>" + opts(F.types, src.type || "Règlement fournisseur") + "</select>" +
-      "<div id='ffOpB'><label>Mouvement</label><select id='ffOp'>" + opts(F.opsBanque, src.op, "— choisir —") + "</select></div>" +
+    var types = F.types.filter(function (t) { return t !== "Opération constatée" || F.role || F.comptable; });
+    var h = "<div class='carte'><label>Type</label><select id='ffType'>" + opts(types, src.type || "Règlement fournisseur") + "</select>" +
+      "<div id='ffOpB'><label>Mouvement</label><select id='ffOp'>" + opts(F.opsBanque, src.type === "Mouvement de trésorerie" ? src.op : "", "— choisir —") + "</select></div>" +
+      "<div id='ffOcB'><label>Opération constatée (sans validation)</label><select id='ffOc'>" + opts(F.opsConstatees || [], src.type === "Opération constatée" ? src.op : "", "— choisir —") + "</select></div>" +
       "<label>Société</label><select id='ffSoc'>" + opts(["AB", "M2S"], src.societe || "AB") + "</select>" +
+      "<div id='ffRhB'><div class='ligne'><div><label>Personnel</label><select id='ffPers'>" + opts(F.personnel || [], src.personnel, "— choisir —") + "</select></div>" +
+      "<div><label>Motif</label><select id='ffMotRH'>" + opts(F.motifsRH || [], src.motifRH, "— choisir —") + "</select></div></div></div>" +
       "<div id='ffFourB'><label>Fournisseur</label><input id='ffFour' list='ffFourL' value='" + esc(src.fournisseur || "") + "' placeholder='Nom (nouveau : ajouté à la liste)'>" +
       "<datalist id='ffFourL'>" + F.fournisseurs.map(function (f) { return "<option value='" + esc(f.nom) + "'>"; }).join("") + "</datalist>" +
       "<div id='ffNouvF' style='display:none'><div class='ligne'><div><label>Téléphone</label><input id='ffTel'></div><div><label>NIF</label><input id='ffNif'></div></div><label>RIB / compte</label><input id='ffRib'></div></div>" +
       "<div id='ffFactB'><label>Facture à régler</label><select id='ffFact'></select><div id='ffFactI' class='info'></div></div>" +
       "<div id='ffRefB'><label>Réf. de la facture</label><input id='ffRef' value='" + esc(src.refFacture || "") + "'><label>Échéance</label><input id='ffEch' type='date' value='" + (src.echeance ? new Date(src.echeance).toISOString().slice(0, 10) : "") + "'></div>" +
       "<label>Objet</label><input id='ffObj' value='" + esc(src.objet || "") + "'>" +
+      "<div id='ffModeB'><label>Mode de paiement</label><select id='ffMode'></select></div>" +
+      "<div class='ligne' id='ffCptB'><div><label id='ffCptL'>Compte</label><select id='ffCpt'></select></div><div id='ffCtpB'><label id='ffCtpL'>Vers</label><select id='ffCtp'></select></div></div>" +
       "<div class='ligne'><div style='flex:2'><label>Montant</label><input id='ffMt' inputmode='decimal' value='" + esc(src.montant || "") + "'></div><div><label>Devise</label><select id='ffDev'>" + opts(["GNF", "USD", "EURO", "TND"], src.devise || "GNF") + "</select></div></div>" +
       "<div id='ffTauxB'><label>Taux (1 unité = … GNF)</label><input id='ffTaux' inputmode='decimal' value='" + esc(src.taux && src.devise !== "GNF" ? src.taux : "") + "'></div>" +
       "<div id='ffGnf' class='info'></div>" +
-      "<div id='ffModeB'><label>Mode de paiement</label><select id='ffMode'>" + opts(["Espèces", "Chèque", "Virement"], src.mode, "— choisir —") + "</select></div>" +
-      "<div class='ligne' id='ffCptB'><div><label id='ffCptL'>Compte</label><select id='ffCpt'></select></div><div id='ffCtpB'><label id='ffCtpL'>Vers</label><select id='ffCtp'></select></div></div>" +
-      "<div id='ffChqI' class='info'>Chèque client (recouvrement) : à déclarer en Saisie BASE › COMMERCIAL › Recouvrement, pas ici.</div>" +
+      "<div id='ffChqI' class='info'>Chèque client (recouvrement) : à déclarer en COMMERCIAL › Recouvrement, pas ici.</div>" +
       "<div id='ffRecuB'><label id='ffRecuL'>Montant reçu</label><input id='ffRecu' inputmode='decimal' value='" + esc(src.recu || "") + "'></div>" +
       "<div id='ffCatB'><label>Catégorie (trésorerie)</label><select id='ffCat'>" + opts(F.categories || [], src.categorie, "— choisir —") + "</select></div>" +
+      // Achat d'article (Fourniture Locale / Importée) → Suivi Achats
+      "<div id='ffAchB' class='carte' style='margin-top:10px'><h3>📦 Achat (Suivi Achats)</h3>" +
+      "<label>Nature</label><select id='ffAN'>" + opts(["Article existant", "Nouvel article", "Frais"], A0.nature, "— choisir —") + "</select>" +
+      "<div id='ffAEx'><div class='ligne'><div><label>Catégorie d'article</label><select id='ffACat'>" + opts(AC.categories, A0.categorie, "— choisir —") + "</select></div>" +
+      "<div style='flex:2'><label>Article</label><select id='ffAArt'></select></div></div></div>" +
+      "<div id='ffANv'><label>Désignation du nouvel article</label><input id='ffADes' value='" + esc(A0.designation || "") + "'>" +
+      "<label>Catégorie du nouvel article</label><select id='ffACatN'>" + opts(AC.categories, A0.catNouvel, "— choisir —") + "</select>" +
+      "<div id='ffAPap' class='ligne'><div><label>Format Y (mm)</label><input id='ffAY' inputmode='numeric' value='" + esc((A0.carac || {}).y || "") + "'></div><div><label>Format X (mm)</label><input id='ffAX' inputmode='numeric' value='" + esc((A0.carac || {}).x || "") + "'></div></div>" +
+      "<div id='ffAEnc'><label>Kg par boîte</label><input id='ffAKg' value='" + esc((A0.carac || {}).kg || "") + "'></div>" +
+      "<div id='ffAPla' class='ligne'><div><label>Unités / rouleau</label><input id='ffAU' value='" + esc((A0.carac || {}).unites || "") + "'></div><div><label>Mètres / rouleau</label><input id='ffAM' value='" + esc((A0.carac || {}).metres || "") + "'></div></div></div>" +
+      "<div id='ffAQt' class='ligne'><div><label>Quantité commandée</label><input id='ffAQ' inputmode='decimal' value='" + esc(A0.quantite || "") + "'></div><div><label>Expéditeur</label><input id='ffAExp' value='" + esc(A0.expediteur || "") + "'></div></div>" +
+      "<div id='ffAFr'><label>Type de frais</label><select id='ffATF'>" + opts(AC.typesFrais || [], A0.typeFrais, "— choisir —") + "</select>" +
+      "<label>Articles concernés (le frais est réparti au prorata)</label><div id='ffAOuv'>" + (AC.ouverts.length ? AC.ouverts.map(function (o, i) {
+        return "<label style='font-weight:400'><input type='checkbox' class='ffAO' value='" + esc(o.libelle) + "' style='width:auto'" + ((A0.articles || []).indexOf(o.libelle) >= 0 ? " checked" : "") + "> " + esc(o.libelle) + "</label>"; }).join("") : "<div class='info'>Aucun achat ouvert.</div>") + "</div></div>" +
+      "<div id='ffAFact' class='info'></div></div>" +
       "<div id='ffBenB'><label>Bénéficiaire du chèque / virement</label><input id='ffBen' value='" + esc(src.beneficiaire || "") + "'></div>" +
       champFichiers("ffP") + (src.pieces && src.pieces.length ? "<div class='info'>Déjà jointes : " + src.pieces.length + " pièce(s).</div>" : "") +
       "<div id='ffRegle' class='carte' style='margin-top:10px'></div>" +
       "<label>Commentaire</label><input id='ffCom'>" +
-      "<button class='bouton' id='ffEnv'>📤 Envoyer la demande</button><div id='ffMsg' class='info' style='white-space:pre-line'></div></div>";
+      "<button class='bouton' id='ffEnv'>📤 Envoyer</button><div id='ffMsg' class='info' style='white-space:pre-line'></div></div>";
     $("vueListe").innerHTML = h; montrer("vueListe"); lierFichiers("ffP");
     function v(id) { return $(id).value.trim(); }
     function nb(x) { x = String(x || "").replace(/[\s  ]/g, "").replace(",", "."); return parseFloat(x) || 0; }
+    function vis(id, ok) { $(id).style.display = ok ? "" : "none"; }
+    function on(id) { return $(id).style.display !== "none"; }
+    var modePrec = src.mode;
     function maj() {
-      var t = v("ffType"), op = v("ffOp"), dev = v("ffDev");
-      $("ffOpB").style.display = t === "Mouvement de trésorerie" ? "" : "none";
-      $("ffFourB").style.display = t === "Facture d'achat" || t === "Règlement fournisseur" ? "" : "none";
-      $("ffFactB").style.display = t === "Règlement fournisseur" ? "" : "none";
-      $("ffRefB").style.display = t === "Facture d'achat" ? "" : "none";
-      $("ffModeB").style.display = t === "Règlement fournisseur" ? "" : "none";
-      // Comptes possibles selon l'opération : source (débitée) → destination (créditée) ; devise = celle du compte.
-      var CA = F.comptes.filter(function (c) { return c.type === "Caisse"; }), BA = F.comptes.filter(function (c) { return c.type === "Banque"; }), CH = [{ nom: F.chequeRecu || "Chèque reçu", type: "Chèque" }];
+      var t = v("ffType"), op = t === "Mouvement de trésorerie" ? v("ffOp") : t === "Opération constatée" ? v("ffOc") : "", dev = v("ffDev");
+      vis("ffOpB", t === "Mouvement de trésorerie"); vis("ffOcB", t === "Opération constatée"); vis("ffRhB", t === "Paiement RH");
+      vis("ffFourB", t === "Facture d'achat" || t === "Règlement fournisseur");
+      vis("ffFactB", t === "Règlement fournisseur"); vis("ffRefB", t === "Facture d'achat");
+      // Modes de paiement selon le type.
+      var modes = t === "Règlement fournisseur" ? ["Espèces", "Chèque", "Virement"] : t === "Paiement RH" ? ["Espèces", "Virement"] : [];
+      vis("ffModeB", modes.length);
+      var curM = $("ffMode").value || modePrec || ""; $("ffMode").innerHTML = opts(modes, curM, "— choisir —"); modePrec = "";
+      var mode = v("ffMode");
+      // Comptes possibles : source (débitée) → destination (créditée) ; devise = celle du compte.
+      var CA = F.comptes.filter(function (c) { return c.type === "Caisse"; }), BA = F.comptes.filter(function (c) { return c.type === "Banque"; });
       var srcL = CA.concat(BA), dstL = null, lS = "Compte", lD = "Vers";
-      if (t === "Dépense de caisse" || (t === "Règlement fournisseur" && v("ffMode") === "Espèces")) { srcL = CA; lS = "Caisse"; }
-      else if (t === "Règlement fournisseur") { srcL = BA; lS = "Compte bancaire"; }
+      if (t === "Dépense de caisse" || ((t === "Règlement fournisseur" || t === "Paiement RH") && mode === "Espèces")) { srcL = CA; lS = "Caisse"; }
+      else if (t === "Règlement fournisseur" || t === "Paiement RH" || t === "Opération constatée") { srcL = BA; lS = "Compte bancaire"; }
       else if (t === "Mouvement de trésorerie") {
         if (op === "Retrait") { srcL = BA; dstL = CA; lS = "Compte du chèque"; lD = "Vers la caisse"; }
         else if (op === "Versement") { srcL = CA; dstL = BA; lS = "Depuis la caisse"; lD = "Vers le compte bancaire"; }
@@ -1130,52 +1159,114 @@
       function remplir(id, L, val, vide) { var cur = $(id).value || val || ""; $(id).innerHTML = (vide ? "<option value=''>" + vide + "</option>" : "") + L.map(function (c) { return "<option" + (c.nom === cur ? " selected" : "") + ">" + esc(c.nom) + "</option>"; }).join(""); }
       remplir("ffCpt", srcL, src.compte, "— choisir —"); remplir("ffCtp", dstL || [], src.contrepartie, op === "Virement" ? "— bénéficiaire externe —" : "— choisir —");
       $("ffCptL").textContent = lS; $("ffCtpL").textContent = lD;
-      $("ffCptB").style.display = t === "Facture d'achat" ? "none" : "";
-      $("ffCtpB").style.display = dstL ? "" : "none";
-      var cpt = F.comptes.filter(function (c) { return c.nom === v("ffCpt"); })[0];
+      vis("ffCptB", t !== "Facture d'achat"); vis("ffCtpB", !!dstL);
+      var cpt = F.comptes.filter(function (c) { return c.nom === v("ffCpt"); })[0], dst = F.comptes.filter(function (c) { return c.nom === v("ffCtp"); })[0];
       if (cpt && cpt.devise) { $("ffDev").value = cpt.devise; $("ffDev").disabled = true; dev = cpt.devise; } else $("ffDev").disabled = false;
       var devR = dst && dst.devise && dst.devise !== dev ? dst.devise : "";
-      $("ffChqI").style.display = t === "Mouvement de trésorerie" && op === "Dépôt de chèque" ? "" : "none";
-      $("ffRecuB").style.display = devR ? "" : "none"; $("ffRecuL").textContent = "Montant reçu sur " + (dst ? dst.nom : "") + " (" + devR + ")";
-      $("ffBenB").style.display = (t === "Règlement fournisseur" && v("ffMode") !== "Espèces") || (t === "Mouvement de trésorerie" && op === "Virement" && !v("ffCtp")) ? "" : "none";
-      // Catégorie : imposée (« Alimentation ») pour les mouvements internes, à choisir sinon.
-      var catAuto = t === "Mouvement de trésorerie" && !(op === "Virement" && !v("ffCtp"));
-      $("ffCatB").style.display = t === "Facture d'achat" || catAuto ? "none" : "";
-      var dst = F.comptes.filter(function (c) { return c.nom === v("ffCtp"); })[0];
-      $("ffTauxB").style.display = dev === "GNF" ? "none" : "";
+      vis("ffChqI", t === "Mouvement de trésorerie" && op === "Dépôt de chèque");
+      vis("ffRecuB", !!devR); $("ffRecuL").textContent = "Montant reçu sur " + (dst ? dst.nom : "") + " (" + devR + ")";
+      vis("ffBenB", (t === "Règlement fournisseur" && mode && mode !== "Espèces") || (t === "Mouvement de trésorerie" && op === "Virement" && !v("ffCtp")));
+      vis("ffTauxB", dev !== "GNF");
       var four = v("ffFour"), connu = F.fournisseurs.some(function (f) { return f.nom.toLowerCase() === four.toLowerCase(); });
-      $("ffNouvF").style.display = four && !connu ? "" : "none";
+      vis("ffNouvF", on("ffFourB") && four && !connu);
+      var fa = null;
       if (t === "Règlement fournisseur") {
         var Fa = F.factures.filter(function (f) { return !four || f.fournisseur.toLowerCase() === four.toLowerCase(); }), cur = $("ffFact").value || src.facture || "";
         $("ffFact").innerHTML = "<option value=''>Sans facture (avance)</option>" + Fa.map(function (f) { return "<option value='" + esc(f.no) + "'" + (f.no === cur ? " selected" : "") + ">" + esc(f.no + " · " + f.fournisseur + (f.ref ? " · " + f.ref : "") + " · reste " + gnf(f.reste - f.engage) + " GNF") + "</option>"; }).join("");
-        var fa = Fa.filter(function (f) { return f.no === $("ffFact").value; })[0];
-        $("ffFactI").textContent = fa ? "Total " + gnf(fa.total) + " GNF · déjà réglé " + gnf(fa.total - fa.reste) + " · en cours " + gnf(fa.engage) + " · disponible " + gnf(fa.reste - fa.engage) + " GNF (règlement par tranches possible)" : "";
+        fa = Fa.filter(function (f) { return f.no === $("ffFact").value; })[0] || null;
+        $("ffFactI").textContent = fa ? "Total " + gnf(fa.total) + " GNF · déjà réglé " + gnf(fa.total - fa.reste) + " · en cours " + gnf(fa.engage) + " · disponible " + gnf(fa.reste - fa.engage) + " GNF (règlement par tranches possible)" +
+          (fa.categorie ? " · catégorie " + fa.categorie + (fa.achat ? " (achat d'article de la facture)" : "") : "") : "";
+      }
+      // Catégorie : imposée pour les mouvements internes et la paie ; reprise de la facture réglée.
+      var catAuto = (t === "Mouvement de trésorerie" && !(op === "Virement" && !v("ffCtp"))) || t === "Paiement RH" || (t === "Opération constatée" && op === "Credit bancaire") || (fa && fa.categorie);
+      vis("ffCatB", !catAuto);
+      var cat = on("ffCatB") ? v("ffCat") : fa ? fa.categorie : "";
+      // Bloc achat : catégorie Fourniture (sauf règlement d'une facture qui porte déjà l'achat).
+      vis("ffAchB", on("ffCatB") && (cat === "Fourniture Locale" || cat === "Fourniture Importee") && t !== "Opération constatée");
+      if (on("ffAchB")) {
+        var n = v("ffAN"); vis("ffAEx", n === "Article existant"); vis("ffANv", n === "Nouvel article"); vis("ffAQt", n === "Article existant" || n === "Nouvel article"); vis("ffAFr", n === "Frais");
+        var ca = v("ffACat"), artCur = $("ffAArt").value || A0.article || "";
+        $("ffAArt").innerHTML = opts((AC.articles || {})[ca] || [], artCur, "— choisir —");
+        var cn = v("ffACatN"); vis("ffAPap", cn === "PAPIER"); vis("ffAEnc", /ENCRE/.test(cn)); vis("ffAPla", cn === "PLATINE");
+        $("ffAFact").textContent = t === "Facture d'achat" ? "Les détails de l'article servent au 1er règlement de cette facture ; les tranches suivantes s'ajoutent à son coût." : "";
       }
       var g = nb(v("ffMt")) * (dev === "GNF" ? 1 : nb(v("ffTaux")));
       $("ffGnf").textContent = dev !== "GNF" && g ? "= " + gnf(g) + " GNF" : "";
       // Règle de validation (aperçu ; le serveur décide).
-      var gros = g >= (F.seuil || 5000000), deux = t === "Facture d'achat" || (t === "Dépense de caisse" && gros) || (t === "Règlement fournisseur" && !((v("ffMode") === "Espèces" || v("ffMode") === "Chèque") && !gros)) || (t === "Mouvement de trésorerie" && !((op === "Dépôt de chèque" || op === "Transfert entre caisses") && !gros));
-      var photo = t === "Facture d'achat" ? "photo de la facture obligatoire" : (t === "Règlement fournisseur" && v("ffMode") === "Chèque") || (t === "Mouvement de trésorerie" && (op === "Dépôt de chèque" || op === "Retrait")) ? "photo du chèque obligatoire" : "pièces facultatives";
-      $("ffRegle").innerHTML = "🔐 Validation : <b>" + (deux ? "Walid puis DG" : "Walid") + "</b> · 📷 " + photo + (t !== "Facture d'achat" ? " · preuve du paiement à joindre après validation" + (t === "Dépense de caisse" ? " (facultative)" : "") : "");
+      var gros = g >= (F.seuil || 5000000), regle;
+      if (t === "Opération constatée") regle = "aucune (constatée, inscrite directement)";
+      else regle = t === "Facture d'achat" || (t === "Dépense de caisse" && gros) || (t === "Règlement fournisseur" && !((mode === "Espèces" || mode === "Chèque") && !gros)) ||
+        (t === "Paiement RH" && !(mode === "Espèces" && !gros)) || (t === "Mouvement de trésorerie" && !((op === "Dépôt de chèque" || op === "Transfert entre caisses") && !gros)) ? "Walid puis DG" : "Walid";
+      var photo = t === "Facture d'achat" ? "photo de la facture obligatoire" : (t === "Règlement fournisseur" && mode === "Chèque") || (t === "Mouvement de trésorerie" && (op === "Dépôt de chèque" || op === "Retrait")) ? "photo du chèque obligatoire" : "pièces facultatives";
+      $("ffRegle").innerHTML = "🔐 Validation : <b>" + regle + "</b> · 📷 " + photo + (t !== "Facture d'achat" && t !== "Opération constatée" ? " · preuve du paiement à joindre après validation" + (t === "Dépense de caisse" ? " (facultative)" : "") : "");
+      $("ffEnv").textContent = t === "Opération constatée" ? "📒 Enregistrer" : "📤 Envoyer la demande";
     }
-    ["ffType", "ffOp", "ffDev", "ffMode", "ffFact", "ffCpt", "ffCtp"].forEach(function (id) { $(id).onchange = maj; });
+    ["ffType", "ffOp", "ffOc", "ffDev", "ffMode", "ffFact", "ffCpt", "ffCtp", "ffCat", "ffAN", "ffACat", "ffACatN"].forEach(function (id) { $(id).onchange = maj; });
     ["ffMt", "ffTaux", "ffFour"].forEach(function (id) { $(id).oninput = maj; });
     maj();
     $("ffEnv").onclick = function () {
-      var t = v("ffType"), m = $("ffMsg");
-      var s = { no: src.no, type: t, op: v("ffOp"), societe: v("ffSoc"), fournisseur: $("ffFourB").style.display === "none" ? "" : v("ffFour"), facture: t === "Règlement fournisseur" ? v("ffFact") : "",
+      var t = v("ffType"), m = $("ffMsg"), op = t === "Mouvement de trésorerie" ? v("ffOp") : t === "Opération constatée" ? v("ffOc") : "";
+      var s = { no: src.no, type: t, op: op, societe: v("ffSoc"), fournisseur: on("ffFourB") ? v("ffFour") : "", facture: t === "Règlement fournisseur" ? v("ffFact") : "",
         refFacture: t === "Facture d'achat" ? v("ffRef") : "", echeance: t === "Facture d'achat" ? v("ffEch") : "", objet: v("ffObj"), montant: nb(v("ffMt")), devise: v("ffDev"), taux: nb(v("ffTaux")),
-        mode: t === "Règlement fournisseur" ? v("ffMode") : t === "Dépense de caisse" ? "Espèces" : "", compte: v("ffCpt"), contrepartie: $("ffCtpB").style.display === "none" ? "" : v("ffCtp"),
-        beneficiaire: $("ffBenB").style.display === "none" ? "" : v("ffBen"), commentaire: v("ffCom"),
-        categorie: $("ffCatB").style.display === "none" ? "" : v("ffCat"), recu: $("ffRecuB").style.display === "none" ? 0 : nb(v("ffRecu")), fourTel: v("ffTel"), fourNif: v("ffNif"), fourRib: v("ffRib") };
-      if (t === "Facture d'achat") { s.compte = ""; s.contrepartie = ""; }
-      var err = !s.compte && t !== "Facture d'achat" ? "compte" : $("ffCatB").style.display !== "none" && !s.categorie ? "catégorie" : $("ffRecuB").style.display !== "none" && !(s.recu > 0) ? "montant reçu" : $("ffCtpB").style.display !== "none" && !s.contrepartie && !(s.op === "Virement" && s.beneficiaire) ? "compte de destination" : !(s.montant > 0) ? "montant" : s.devise !== "GNF" && !(s.taux > 0) ? "taux de change" : t === "Mouvement de trésorerie" && !s.op ? "mouvement" :
-        (t === "Facture d'achat" || t === "Règlement fournisseur") && !s.fournisseur ? "fournisseur" : t === "Règlement fournisseur" && !s.mode ? "mode de paiement" : "";
-      if (err) { m.textContent = "⛔ Indiquez le " + err + "."; return; }
+        mode: on("ffModeB") ? v("ffMode") : t === "Dépense de caisse" ? "Espèces" : "", compte: t === "Facture d'achat" ? "" : v("ffCpt"), contrepartie: on("ffCtpB") ? v("ffCtp") : "",
+        beneficiaire: on("ffBenB") ? v("ffBen") : "", commentaire: v("ffCom"), personnel: t === "Paiement RH" ? v("ffPers") : "", motifRH: t === "Paiement RH" ? v("ffMotRH") : "",
+        categorie: on("ffCatB") ? v("ffCat") : "", recu: on("ffRecuB") ? nb(v("ffRecu")) : 0, fourTel: v("ffTel"), fourNif: v("ffNif"), fourRib: v("ffRib") };
+      if (on("ffAchB")) s.achat = { nature: v("ffAN"), categorie: v("ffACat"), article: v("ffAArt"), designation: v("ffADes"), catNouvel: v("ffACatN"),
+        carac: { y: v("ffAY"), x: v("ffAX"), kg: v("ffAKg"), unites: v("ffAU"), metres: v("ffAM") }, quantite: nb(v("ffAQ")), expediteur: v("ffAExp"), typeFrais: v("ffATF"),
+        articles: Array.prototype.filter.call(document.querySelectorAll(".ffAO"), function (c) { return c.checked; }).map(function (c) { return c.value; }) };
+      var A = s.achat;
+      var err = t === "Paiement RH" && !s.personnel ? "personnel" : t === "Paiement RH" && !s.motifRH ? "motif RH" : on("ffModeB") && !s.mode ? "mode de paiement" :
+        !s.compte && t !== "Facture d'achat" ? "compte" : on("ffCatB") && !s.categorie && t !== "Facture d'achat" ? "catégorie" : on("ffRecuB") && !(s.recu > 0) ? "montant reçu" :
+        on("ffCtpB") && !s.contrepartie && !(op === "Virement" && s.beneficiaire) ? "compte de destination" : !(s.montant > 0) ? "montant" : s.devise !== "GNF" && !(s.taux > 0) ? "taux de change" :
+        (t === "Mouvement de trésorerie" || t === "Opération constatée") && !op ? "opération" : (t === "Facture d'achat" || t === "Règlement fournisseur") && !s.fournisseur ? "fournisseur" :
+        A && !A.nature ? "nature de l'achat" : A && A.nature === "Article existant" && !A.article ? "article acheté" : A && A.nature === "Nouvel article" && !(A.designation && A.catNouvel) ? "nouvel article (désignation et catégorie)" :
+        A && A.nature !== "Frais" && !(A.quantite > 0) ? "quantité commandée" : A && A.nature === "Frais" && !A.articles.length ? "article concerné par le frais" : "";
+      if (err) { m.textContent = "⛔ Indiquez : " + err + "."; return; }
       var nbP = (FICH.ffP || []).length + ((src.pieces || []).length);
       if (/obligatoire/.test($("ffRegle").textContent) && !nbP) { m.textContent = "⛔ Photo obligatoire (voir ci-dessus)."; return; }
-      if (!confirm("Envoyer la demande : " + (t === "Mouvement de trésorerie" ? s.op : t) + " · " + gnf(s.montant) + " " + s.devise + " ?")) return;
-      envoyerFin(src.no ? "modifier" : "creer", src.no ? { demande: s, version: src.version, fichiers: FICH.ffP } : { demande: s, fichiers: FICH.ffP }, (src.no ? "Correction " + src.no : "Demande " + (t === "Mouvement de trésorerie" ? s.op : t)) + " · " + gnf(s.montant) + " " + s.devise, src.no);
+      var lib = (op || t) + (t === "Paiement RH" ? " · " + s.personnel : "");
+      if (!confirm((t === "Opération constatée" ? "Enregistrer : " : "Envoyer la demande : ") + lib + " · " + gnf(s.montant) + " " + s.devise + " ?")) return;
+      envoyerFin(src.no ? "modifier" : "creer", src.no ? { demande: s, version: src.version, fichiers: FICH.ffP } : { demande: s, fichiers: FICH.ffP }, (src.no ? "Correction " + src.no : lib) + " · " + gnf(s.montant) + " " + s.devise, src.no);
+    };
+  }
+
+  // Suivi des achats (DG / WALID) : tracking, livraison, statut, entrée en stock → ligne SUIVI ACHAT dans Base.
+  function afficherSuiviAchats() {
+    var F = S.fin, AC = F.achat || { ouverts: [] };
+    $("titre").textContent = "Suivi des achats";
+    $("vueListe").innerHTML = "<div class='carte'><h3>📦 Achats en cours</h3><div class='info'>" + AC.ouverts.length + " achat(s) non clôturé(s) · Suivi Achats de BASE.</div></div>" +
+      AC.ouverts.map(function (o, i) {
+        return "<div class='carte' data-a='" + i + "' style='cursor:pointer'><b>" + esc(o.desig) + "</b> <small>[" + esc(o.id) + "]</small>" +
+          "<div class='info'>Qté " + esc(o.qte) + (o.qteLivree ? " · livrée " + esc(o.qteLivree) : "") + (o.tracking ? " · " + esc(o.tracking) : "") + (o.revient ? " · revient " + gnf(o.revient) + " GNF" : "") + "</div>" +
+          "<div style='font-weight:700;color:#e65100'>" + esc(o.statut || "Payé") + "</div></div>";
+      }).join("");
+    montrer("vueListe");
+    Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-a]"), function (el) { el.onclick = function () { majAchat(AC.ouverts[+el.getAttribute("data-a")]); }; });
+  }
+  function majAchat(o) {
+    var F = S.fin, AC = F.achat;
+    $("titre").textContent = o.id;
+    function opts(L, v, vide) { return (vide ? "<option value=''>" + vide + "</option>" : "") + L.map(function (x) { return "<option" + (x === v ? " selected" : "") + ">" + esc(x) + "</option>"; }).join(""); }
+    $("vueListe").innerHTML = "<div class='carte'><h3>" + esc(o.desig) + "</h3><div class='info'>Ne remplir que ce qui change.</div>" +
+      "<label>Tracking</label><input id='saTr' placeholder='" + esc(o.tracking) + "'>" +
+      "<div class='ligne'><div><label>Date de livraison</label><input id='saDl' type='date'></div><div><label>Qté livrée</label><input id='saQl' inputmode='decimal'></div></div>" +
+      "<label>Statut</label><select id='saSt'>" + opts(AC.statuts || [], "", "— inchangé (" + (o.statut || "Payé") + ") —") + "</select>" +
+      "<div id='saStk' style='display:none'><label>Entrée en stock ?</label><select id='saES'>" + opts(["Oui", "Non"], "", "— choisir —") + "</select><label>Quantité entrée en stock (vide = livrée)</label><input id='saQS' inputmode='decimal'></div>" +
+      "<label>Commentaire</label><textarea id='saCo' rows='2'></textarea>" +
+      "<button class='bouton' id='saOk'>💾 Enregistrer</button><div id='saMsg' class='info'></div></div>";
+    montrer("vueListe");
+    $("saSt").onchange = function () { $("saStk").style.display = this.value === "Clôturé" ? "" : "none"; };
+    $("saOk").onclick = function () {
+      var d = { id: o.id, tracking: $("saTr").value.trim(), livraison: $("saDl").value, qteLivree: $("saQl").value.replace(",", "."), statut: $("saSt").value, commentaire: $("saCo").value.trim(),
+                stock: $("saSt").value === "Clôturé" ? $("saES").value : "", qteStock: $("saQS").value.replace(",", ".") };
+      if (d.statut === "Clôturé" && !d.stock) { $("saMsg").textContent = "⛔ Entrée en stock : Oui ou Non."; return; }
+      if (!d.tracking && !d.livraison && !d.qteLivree && !d.statut && !d.commentaire) { $("saMsg").textContent = "⛔ Rien à enregistrer."; return; }
+      var it = { type: "fin", op: "suiviAchat", jeton: nouveauJeton(), horodatage: Date.now(), agent: S.agent.nom, code: S.agent.code, donnees: d, titre: "Suivi achat " + o.id, resume: "Finances", essais: 0 };
+      d.jeton = it.jeton;
+      soumettre(it).then(function (r) {
+        alert((r.enAttente ? "📥 " : r.ok ? "✅ " : "⛔ ") + (r.titre || "") + "\n" + (r.message || ""));
+        if (r.ok && !r.enAttente) rafraichirFin().catch(function () {}).then(afficherSuiviAchats); else afficherSuiviAchats();
+      });
     };
   }
 
