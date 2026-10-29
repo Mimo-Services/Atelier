@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-05 HB";
+  var VERSION_APP = "2026-11-05 HD";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -280,9 +280,10 @@
     tuile("scan", "📷", "Scanner une fiche", "Atelier", { cls: "principale" });
     tuile("manuel", "🔢", "Lot sans QR", S.recents.length ? "Derniers lots" : "");
     Object.keys(fs).forEach(function (k) {
-      tuile("form:" + k, k === "stock" ? "📦" : "🧾", fs[k].nom || fs[k].titre || k, fs[k].erreur ? "indisponible" : "");
+      if (k === "stock" && droitStockVal()) return;   // fusionnée : tuile « Sortie de stock » = saisie + liste des demandes
+      tuile("form:" + k, k === "stock" ? "📦" : "🧾", k === "stock" ? "Sortie de stock" : fs[k].nom || fs[k].titre || k, fs[k].erreur ? "indisponible" : k === "stock" ? "Nouvelle saisie" : "");
     });
-    if (droitStockVal()) { var nS = stockNbAttente(); tuile("stockval", "📤", "Sorties de stock", S.stockv && S.stockv.direction ? "À valider" : "Suivi", nS ? { badge: nS, bcls: S.stockv && S.stockv.direction ? "rouge" : "orange" } : {}); }
+    if (droitStockVal()) { var nS = stockNbAttente(); tuile("stockval", "📦", "Sortie de stock", S.stockv && S.stockv.direction ? "Saisie, à valider" : "Saisie, mes demandes", nS ? { badge: nS, bcls: S.stockv && S.stockv.direction ? "rouge" : "orange" } : {}); }
     if (droitPlanif() || droitFin() || droitRH() || droitCom() || droitTreso() || droitMis()) section("Gestion");
     if (droitPlanif()) {
       var nPl = S.file.filter(function (x) { return x.type === "planif"; }).length;
@@ -2679,10 +2680,13 @@
   }
   function stockNbAttente() { return S.stockv ? S.stockv.sorties.filter(function (x) { return x.statut === "En attente"; }).length : 0; }
   function afficherStockVal(id) {
-    $("titre").textContent = "Sorties de stock";
+    $("titre").textContent = "Sortie de stock";
     function dessiner(msg) {
       var K = S.stockv, L = K ? K.sorties : [], C = { "En attente": "#e65100", "Validée": "#2e7d32", "Refusée": "#c62828" };
-      var h = "<div class='carte pleine'><h3>📦 Sorties de stock hors production</h3><div class='info'>" + (K && K.direction ? "Validation : WALID ou DG (un seul suffit). " : "Vos sorties : elles n'entrent dans le stock qu'après validation par WALID ou le DG. ") +
+      var fsS = S.formulaires && S.formulaires.formulaires && S.formulaires.formulaires.stock;
+      var h = "<div class='carte pleine'><h3>📦 Sortie de stock (hors production)</h3>" +
+        (fsS ? "<button class='bouton' id='skNouv'" + (fsS.erreur ? " disabled" : "") + ">➕ Nouvelle sortie de stock</button>" : "") +
+        "<h3 style='margin-top:14px'>📋 Liste des demandes</h3><div class='info'>" + (K && K.direction ? "Validation : WALID ou DG (un seul suffit) ; vos propres saisies sont validées d'office. " : "Vos sorties : elles n'entrent dans le stock qu'après validation par WALID ou le DG. ") +
         (K ? "Données du " + dateCourte(K.recu || K.genere) : "") + (msg ? " · " + esc(msg) : "") + "</div></div>";
       h += L.map(function (x, i) {
         return "<div class='carte'" + (x.no === id ? " style='border-color:var(--cuivre)'" : "") + "><div class='ligne' style='justify-content:space-between'><b>" + esc(x.no) + " · " + esc(x.agent) + "</b>" +
@@ -2691,6 +2695,7 @@
           (K.direction && x.statut === "En attente" ? "<input data-m='" + i + "' placeholder='Motif (obligatoire pour refuser)'><div class='ligne'><button class='bouton' data-v='" + i + "' style='background:var(--vert)'>✅ Valider</button><button class='bouton' data-r='" + i + "' style='background:var(--rouge)'>⛔ Refuser</button></div>" : "") + "</div>";
       }).join("") || "<p class='info' style='padding:0 4px'>Aucune sortie de stock.</p>";
       $("vueListe").innerHTML = h; montrer("vueListe");
+      if ($("skNouv")) $("skNouv").onclick = function () { ouvrirFormulaire("stock"); };
       function decider(i, dec) {
         var x = L[i], m = (document.querySelector("[data-m='" + i + "']") || {}).value || "";
         if (dec === "refuser" && !m.trim()) { alert("⛔ Indiquez le motif du refus."); return; }
