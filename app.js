@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-03 GW";
+  var VERSION_APP = "2026-11-04 GY";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -68,6 +68,7 @@
     return Promise.race([p, new Promise(function (ok, ko) { setTimeout(function () { ko(new Error("délai")); }, ms); })]);
   }
   function requete(url, options, ms) {
+    url = avecAppareil(url, options);
     var ctl = window.AbortController ? new AbortController() : null;
     if (ctl) options.signal = ctl.signal;
     var t = setTimeout(function () { if (ctl) ctl.abort(); }, ms);
@@ -76,8 +77,11 @@
       if (!r.ok) throw new Error("HTTP " + r.status);
       return r.text();
     }).then(function (txt) {
-      try { return JSON.parse(txt); }
+      var j;
+      try { j = JSON.parse(txt); }
       catch (e) { throw new Error("Réponse illisible du serveur (déploiement à jour ? accès « Tout le monde » ?)"); }
+      surReponseSecurite(j);
+      return j;
     }, function (e) { clearTimeout(t); throw e; });
   }
 
@@ -594,6 +598,7 @@
       return requete(S.url, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(corps), redirect: "follow" }, it.type === "planif" || it.type === "fin" || it.type === "rh" || it.type === "com" || it.type === "mis" ? DELAI_PLANIF : DELAI_ENVOI)
         .then(function (r) {
           S.derniereSync = Date.now(); ecrire("derniereSync", S.derniereSync);
+          if (r && r.appareilRefus) { it.essais--; it.erreur = "en attente du code de connexion (DG)"; return sauver().then(function () { return n; }); }   // gardé : repart après le code
           if (erreurPassagere(r) && it.essais < 6) { it.erreur = r.message; return sauver().then(function () { return n; }); }
           S.file.shift();
           resultats[it.jeton] = r;
@@ -2541,6 +2546,96 @@
     charger();
   }
 
+  /* ---------- 🔐 Sécurité : utilisateur + PIN ; nouvelle combinaison agent + appareil → code (OTP) envoyé au DG ---------- */
+  var SEC = { refus: "", ouvert: false };
+  function hexAleatoire(n) { var a = new Uint8Array(n); (window.crypto || window.msCrypto).getRandomValues(a); return Array.prototype.map.call(a, function (b) { return ("0" + b.toString(16)).slice(-2); }).join(""); }
+  function lireAppareil() {
+    var d = null; try { d = JSON.parse(localStorage.getItem("duocoreAppareil") || "null"); } catch (e) {}
+    if (!d || !d.id || !d.secret) { d = { id: hexAleatoire(8), secret: hexAleatoire(20), approuve: false }; }
+    S.dev = d; sauverAppareil(); return d;
+  }
+  function sauverAppareil() { try { localStorage.setItem("duocoreAppareil", JSON.stringify(S.dev)); } catch (e) {} ecrire("appareil", S.dev); }
+  function libelleAppareil() {
+    var u = navigator.userAgent, os = /Android/i.test(u) ? "Android" : /iPhone|iPad/i.test(u) ? "iPhone/iPad" : /Windows/i.test(u) ? "Windows" : /Mac/i.test(u) ? "Mac" : /Linux/i.test(u) ? "Linux" : "Appareil";
+    var nav = /Edg\//.test(u) ? "Edge" : /SamsungBrowser/.test(u) ? "Samsung" : /Chrome\//.test(u) ? "Chrome" : /Safari\//.test(u) ? "Safari" : /Firefox/.test(u) ? "Firefox" : "";
+    return os + (nav ? " · " + nav : "") + (modePC() ? " · PC/tablette" : " · téléphone") + " · " + screen.width + "×" + screen.height;
+  }
+  /* Ajoute l'identité de l'appareil à toute demande au serveur ; détecte un refus d'appareil. */
+  function avecAppareil(url, options) {
+    if (!S.dev || !S.url || String(url).indexOf(S.url) !== 0) return url;
+    if (options && typeof options.body === "string" && options.body.charAt(0) === "{") {
+      try { var c = JSON.parse(options.body); c.appareil = S.dev.id; c.secret = S.dev.secret; options.body = JSON.stringify(c); } catch (e) {}
+      return url;
+    }
+    return url + (url.indexOf("?") < 0 ? "?" : "&") + "appareil=" + encodeURIComponent(S.dev.id) + "&secret=" + encodeURIComponent(S.dev.secret);
+  }
+  function surReponseSecurite(r) {
+    if (!r || !r.appareilRefus) return;
+    SEC.refus = r.appareilRefus;
+    // Agent connecté mais pas (ou plus) autorisé sur cet appareil : code au DG.
+    if (S.agent && !SEC.ouvert) setTimeout(function () { ecranSecurite("agent", { nom: S.agent.nom, code: S.agent.code }); }, 0);
+  }
+  function apiLibre(corps) {
+    corps.appareil = S.dev.id; corps.secret = S.dev.secret;
+    return requete(S.url, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, redirect: "follow", body: JSON.stringify(corps) }, DELAI_DONNEES);
+  }
+  /* Écran plein (au-dessus de tout) : 1re connexion d'un agent sur cet appareil (code envoyé au DG). */
+  function ecranSecurite(mode, pre) {
+    pre = pre || {};
+    var o = $("ecranSec");
+    if (!o) { o = document.createElement("div"); o.id = "ecranSec"; document.body.appendChild(o); }
+    o.style.display = "block";
+    SEC.ouvert = true;
+    function fermer() { o.style.display = "none"; o.innerHTML = ""; SEC.ouvert = false; }
+    var tete = "<div class='secBoite'><div style='text-align:center'><img src='icone-192.png' style='width:64px;height:64px;border-radius:14px'><h2 style='margin:8px 0 2px'>DuoCore</h2></div>";
+    // Autorisation : utilisateur + PIN, puis code envoyé au DG.
+    var titre = "Première connexion sur cet appareil";
+    o.innerHTML = tete + "<h3 style='margin-top:6px'>🔐 " + titre + "</h3><p class='info'>Connexion en deux étapes : votre nom + votre PIN, puis le code à 6 chiffres envoyé au DG (à lui demander).</p>" +
+      "<div id='secEt1'><label>Utilisateur</label><select id='secNom'><option value=''>— chargement… —</option></select>" +
+      "<label>PIN</label><input id='secPin' type='password' inputmode='numeric' autocomplete='off' value='" + esc(pre.code || "") + "'>" +
+      "<button class='bouton' id='secDem'>📧 Demander le code au DG</button></div>" +
+      "<div id='secEt2' style='display:none'><label>Code reçu par le DG (6 chiffres)</label><input id='secOtp' inputmode='numeric' maxlength='6' autocomplete='one-time-code' style='font-size:22px;letter-spacing:6px;text-align:center'>" +
+      "<button class='bouton' id='secVal'>✅ Valider</button><button class='bouton second' id='secRe'>Renvoyer un code</button></div>" +
+      "<button class='bouton second' id='secAnn'>Annuler</button>" +
+      "<div id='secMsg' class='info' style='margin-top:8px;white-space:pre-line'></div><div class='info' style='margin-top:12px;font-size:12px'>Appareil : " + esc(libelleAppareil()) + " · " + esc(S.dev.id.substring(0, 8)) + "</div></div>";
+    function nomsCharges(noms) { $("secNom").innerHTML = "<option value=''>— choisir —</option>" + noms.map(function (n) { return "<option" + (n === pre.nom ? " selected" : "") + ">" + esc(n) + "</option>"; }).join(""); }
+    if (!S.url) { $("secMsg").textContent = "⛔ Adresse du serveur inconnue (config.js)."; return; }
+    apiLibre({ api: "agentsListe" }).then(function (r) { nomsCharges((r && r.agents) || []); }, function (e) { nomsCharges(pre.nom ? [pre.nom] : []); $("secMsg").textContent = "⛔ " + e.message + " (réseau nécessaire)"; });
+    $("secAnn").onclick = function () { if (S.agent && SEC.refus) deconnecterAgent(); fermer(); montrer("vueAccueil"); };
+    function demander() {
+      var nom = $("secNom").value, pin = $("secPin").value.trim();
+      if (!nom || !pin) { $("secMsg").textContent = "⛔ Utilisateur et PIN."; return; }
+      $("secMsg").textContent = "⏳ Envoi…";
+      apiLibre({ api: "otpDemander", agent: nom, code: pin, libelle: libelleAppareil() }).then(function (r) {
+        if (!r.ok) { $("secMsg").textContent = "⛔ " + r.titre + " : " + r.message; return; }
+        pre.nom = nom; pre.code = pin;
+        if (r.dejaAutorise) return terminer();
+        $("secEt1").style.display = "none"; $("secEt2").style.display = ""; $("secMsg").textContent = "📧 " + r.message; try { $("secOtp").focus(); } catch (e) {}
+      }, function (e) { $("secMsg").textContent = "⛔ " + e.message; });
+    }
+    function terminer() {
+      S.dev.approuve = true; sauverAppareil(); SEC.refus = "";
+      $("secMsg").textContent = "✅ Appareil autorisé. Chargement…";
+      rafraichirFormulaires({ nom: pre.nom, code: pre.code }).then(function () { fermer(); montrer("vueAccueil"); synchroniser(true); },
+        function (e) { $("secMsg").textContent = "⛔ " + e.message; });
+    }
+    $("secDem").onclick = demander; $("secRe").onclick = function () { $("secEt2").style.display = "none"; $("secEt1").style.display = ""; demander(); };
+    $("secVal").onclick = function () {
+      var c = $("secOtp").value.replace(/\D/g, "");
+      if (c.length !== 6) { $("secMsg").textContent = "⛔ 6 chiffres."; return; }
+      $("secMsg").textContent = "⏳ Vérification…";
+      apiLibre({ api: "otpValider", agent: pre.nom, code: pre.code, otp: c }).then(function (r) {
+        if (!r.ok) { $("secMsg").textContent = "⛔ " + r.titre + " : " + r.message; return; }
+        terminer();
+      }, function (e) { $("secMsg").textContent = "⛔ " + e.message; });
+    };
+  }
+  function deconnecterAgent() {
+    S.agent = null; S.formulaires = null; S.planif = null; S.fin = null; S.rh = null; S.com = null; S.mis = null; S.treso = null;
+    ["agent", "formulaires", "planif", "fin", "rh", "com", "mis", "treso", "four"].forEach(function (k) { ecrire(k, null); });
+    montrer("vueAccueil");
+  }
+  function initSecurite() { lireAppareil(); return true; }
   function ouvrirDepuisNotif(d) {
     synchroniser(true).catch(function () {}).then(function () {
       if (d.vue === "finances" && typeof afficherFinances === "function") afficherFinances(d.id);
@@ -2766,12 +2861,15 @@
       "<div id='cxMsg' class='info' style='margin-top:8px'></div>" +
       "<button class='bouton' id='cxOk'>Se connecter</button></div>";
     montrer("vueListe");
+    $("cxCode").setAttribute("placeholder", "PIN");
     $("cxOk").onclick = function () {
       var a = { nom: $("cxNom").value, code: $("cxCode").value.trim() };
       if (!a.nom || !a.code) { $("cxMsg").textContent = "Nom et code obligatoires."; return; }
       $("cxOk").disabled = true; $("cxMsg").textContent = "Vérification…";
+      SEC.refus = "";
       rafraichirFormulaires(a).then(function () { if (droitPlanif()) rafraichirPlanif().catch(function () {}).then(majAccueil); montrer("vueAccueil"); }, function (e) {
         $("cxOk").disabled = false; $("cxMsg").textContent = "⛔ " + e.message;
+        if (SEC.refus) ecranSecurite("agent", { nom: a.nom, code: a.code });
       });
     };
   }
@@ -3046,6 +3144,7 @@
     S.donnees = v[1] || null; S.gabarit = v[2] || ""; S.gv = v[3] || "";
     S.file = v[4] || []; S.envoyes = v[5] || []; S.aCorriger = v[6] || []; S.recents = v[7] || []; S.derniereSync = v[8] || 0;
     if (!S.gabarit) S.gv = "";
+    initSecurite();
     var q = new URLSearchParams(location.search), bdc = q.get("bdc"), cle = q.get("cle");
     if (q.get("notif")) { history.replaceState(null, "", location.pathname); setTimeout(function () { ouvrirDepuisNotif({ vue: q.get("notif"), id: q.get("id") }); }, 300); }
     setTimeout(verifierNotifications, 4000);
