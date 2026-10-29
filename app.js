@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-10-31 GP";
+  var VERSION_APP = "2026-11-01 GQ";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -327,7 +327,7 @@
     if ($("btnConnexion")) $("btnConnexion").onclick = pageConnexion;
     if ($("btnDeconnexion")) $("btnDeconnexion").onclick = function () {
       if (S.file.some(function (x) { return x.type === "form"; }) && !confirm("Des saisies sont en attente d'envoi : elles partiront quand même. Changer d'agent ?")) return;
-      S.agent = null; S.formulaires = null; S.planif = null; S.fin = null; S.rh = null; S.com = null; S.mis = null; ecrire("com", null); ecrire("mis", null); ecrire("agent", null); ecrire("formulaires", null); ecrire("planif", null); ecrire("fin", null); ecrire("rh", null); montrer("vueAccueil");
+      S.agent = null; S.formulaires = null; S.planif = null; S.fin = null; S.rh = null; S.com = null; S.mis = null; FOUR.liste = null; FOUR.fiches = {}; ecrire("four", null); ecrire("com", null); ecrire("mis", null); ecrire("agent", null); ecrire("formulaires", null); ecrire("planif", null); ecrire("fin", null); ecrire("rh", null); montrer("vueAccueil");
     };
 
     var d = S.donnees;
@@ -954,7 +954,7 @@
     if (no) { ouvrirDemandeFin(no); return; }
     var nouv = S.file.filter(function (x) { return x.type === "fin" && x.op === "creer"; });
     var h = "<div class='carte'><h3>💰 Finances</h3><div class='info'>" + esc(F.agent) + (F.role ? " · valideur " + esc(F.role) : F.comptable ? " · comptable (lecture)" : "") + " · données du " + dateCourte(F.recu || F.genere) + "</div>" +
-      "<button class='bouton' id='fnNouv'>➕ Nouvelle demande</button>" +
+      "<div class='ligne'><button class='bouton' id='fnNouv'>➕ Nouvelle demande</button><button class='bouton second' id='fnFour'>🏭 Fournisseurs</button></div>" +
       (F.role || F.comptable ? "<div class='ligne'><button class='bouton second' id='fnSol'>📊 Soldes</button><button class='bouton second' id='fnExp'>📤 Export du mois</button></div>" : "") +
       (F.suiviAchat || F.comptable ? "<button class='bouton second' id='fnAch'>📦 Suivi des achats (" + ((F.achat && F.achat.ouverts) || []).length + ")</button>" : "") +
       "<div class='onglets' style='margin-top:10px'>" + [["traiter", "À traiter (" + finNbATraiter() + ")"], ["miennes", "Mes demandes"]].concat(F.role || F.comptable ? [["toutes", "Toutes"]] : [])
@@ -983,6 +983,7 @@
     Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-f]"), function (b) { b.onclick = function () { FIN.filtre = b.getAttribute("data-f"); afficherFinances(); }; });
     $("fnCherche").oninput = liste; liste();
     $("fnNouv").onclick = function () { formulaireFin(null); };
+    $("fnFour").onclick = afficherFournisseurs;
     if ($("fnAch")) $("fnAch").onclick = function () { afficherSuiviAchats(); };
     if ($("fnSol")) $("fnSol").onclick = function () { afficherSoldes("fournisseurs"); };
     if ($("fnExp")) $("fnExp").onclick = exporterFin;
@@ -1197,7 +1198,8 @@
     function maj() {
       var t = v("ffType"), op = t === "Mouvement de trésorerie" ? v("ffOp") : t === "Opération constatée" ? v("ffOc") : "", dev = v("ffDev");
       vis("ffOpB", t === "Mouvement de trésorerie"); vis("ffOcB", t === "Opération constatée"); vis("ffRhB", t === "Paiement RH");
-      vis("ffFourB", t === "Facture d'achat" || t === "Règlement fournisseur");
+      vis("ffFourB", t === "Facture d'achat" || t === "Règlement fournisseur" || t === "Dépense de caisse");
+      $("ffFourB").querySelector("label").textContent = t === "Dépense de caisse" ? "Fournisseur / prestataire (facultatif, pour son compte)" : "Fournisseur";
       vis("ffFactB", t === "Règlement fournisseur"); vis("ffRefB", t === "Facture d'achat");
       // Modes de paiement selon le type.
       var modes = t === "Règlement fournisseur" ? ["Espèces", "Chèque", "Virement"] : t === "Paiement RH" ? ["Espèces", "Virement"] : [];
@@ -2244,6 +2246,80 @@
       if (src) { d.id = s.id; d.version = s.version; d.commentaire = $("mfC").value.trim(); envoyerMis("modifier", d, "Modification " + s.id, function () { ficheMis(s.id); }); }
       else envoyerMis("creer", d, "Mission " + d.titre, function (r) { if (r && r.id) ficheMis(r.id); else afficherMis(); });
     };
+  }
+
+  /* ---------- 🏭 Comptes fournisseurs / prestataires (tous les agents Finances) ---------- */
+  var FOUR = { liste: null, fiches: {}, q: "" };
+  function afficherFournisseurs() {
+    $("titre").textContent = "Fournisseurs";
+    var dessiner = function (msg) {
+      var L = (FOUR.liste && FOUR.liste.fournisseurs) || [];
+      $("vueListe").innerHTML = "<div class='carte'><h3>🏭 Fournisseurs et prestataires</h3><div class='info'>" + (FOUR.liste ? "Données du " + dateCourte(FOUR.liste.recu) : "") + (msg ? " · " + esc(msg) : "") + "</div>" +
+        "<input id='foQ' placeholder='Rechercher' value='" + esc(FOUR.q) + "'><div class='info'>Solde = facturé − payé (positif : reste dû ; négatif : avance).</div></div><div id='foL'></div>";
+      montrer("vueListe");
+      var liste = function () {
+        FOUR.q = $("foQ").value; var q = FOUR.q.trim().toLowerCase();
+        $("foL").innerHTML = L.filter(function (f) { return !q || f.nom.toLowerCase().indexOf(q) >= 0; }).map(function (f) {
+          return "<div class='carte' data-fo='" + esc(f.nom) + "' style='cursor:pointer'><div class='ligne' style='justify-content:space-between'><b>" + esc(f.nom) + "</b>" +
+            "<b style='flex:0;white-space:nowrap;color:" + (f.solde > 0 ? "#c62828" : f.solde < 0 ? "#1565c0" : "inherit") + "'>" + gnf(f.solde) + " GNF</b></div>" +
+            "<div class='info'>Facturé " + gnf(f.facture) + " · payé " + gnf(f.paye) + (f.cours ? " · en cours " + gnf(f.cours) : "") + (f.echu ? " · <b style='color:#c62828'>échu " + gnf(f.echu) + "</b>" : "") +
+            (f.dernier ? " · dernier mouvement " + jourLib(f.dernier) : "") + "</div></div>";
+        }).join("") || "<p class='info' style='padding:0 4px'>" + (FOUR.liste ? "Aucun fournisseur." : "Réseau nécessaire la 1re fois.") + "</p>";
+        Array.prototype.forEach.call($("foL").querySelectorAll("[data-fo]"), function (el) { el.onclick = function () { ficheFournisseur(el.getAttribute("data-fo")); }; });
+      };
+      $("foQ").oninput = liste; liste();
+    };
+    dessiner(FOUR.liste ? "mise à jour…" : "chargement…");
+    api({ api: "finFour" }).then(function (r) { r.recu = Date.now(); FOUR.liste = r; ecrire("four", r); if ($("foL")) dessiner(""); },
+      function (e) { if ($("foL")) dessiner("⛔ " + e.message + " (dernière copie affichée)"); });
+  }
+  var FOURF = { soc: "", du: "", au: "" };
+  function ficheFournisseur(nom) {
+    $("titre").textContent = nom;
+    var dessiner = function (msg) {
+      var R = FOUR.fiches[nom], f = R ? R.fournisseur : { nom: nom }, M = R ? R.mouvements : [], C = R ? R.cours : [];
+      var du = FOURF.du ? new Date(FOURF.du + "T00:00:00").getTime() : 0, au = FOURF.au ? new Date(FOURF.au + "T23:59:59").getTime() : Infinity;
+      var Ms = M.filter(function (m) { return !FOURF.soc || !m.societe || m.societe === FOURF.soc; }), report = 0, solde, tf = 0, tp = 0;
+      Ms.forEach(function (m) { if (m.date < du) report += m.facture - m.paye; });
+      solde = report;
+      var lignes = Ms.filter(function (m) { return m.date >= du && m.date <= au; }).map(function (m) {
+        solde += m.facture - m.paye; tf += m.facture; tp += m.paye;
+        return "<tr data-no='" + esc(m.no) + "' style='cursor:pointer'><td>" + jourLib(m.date).substring(0, 5) + "</td><td style='white-space:normal'>" + esc(m.op) + "<div class='info' style='font-size:11px'>" + esc(m.no) + (m.societe ? " · " + esc(m.societe) : "") +
+          (m.devise !== "GNF" ? " · " + gnf(m.montant) + " " + esc(m.devise) : "") + (m.reste > 0 && m.echeance ? " · éch. " + jourLib(m.echeance) : "") + "</div></td>" +
+          "<td class='v'>" + (m.facture ? gnf(m.facture) : "") + "</td><td class='v'>" + (m.paye ? gnf(m.paye) : "") + "</td><td class='v'><b>" + gnf(solde) + "</b></td></tr>";
+      }).join("");
+      var h = "<div class='carte'><h3>🏭 " + esc(f.nom) + "</h3>" + (msg ? "<div class='info'>" + esc(msg) + "</div>" : "") +
+        "<div class='ligne'><div><label>Téléphone</label><input id='ftT' value='" + esc(f.tel || "") + "'></div><div><label>NIF</label><input id='ftN' value='" + esc(f.nif || "") + "'></div></div>" +
+        "<label>RIB / compte</label><input id='ftR' value='" + esc(f.rib || "") + "'><button class='bouton second' id='ftEnr'>💾 Enregistrer les coordonnées</button></div>" +
+        "<div class='carte'><label>Société</label><select id='ftS'><option value=''>AB + M2S</option><option" + (FOURF.soc === "AB" ? " selected" : "") + ">AB</option><option" + (FOURF.soc === "M2S" ? " selected" : "") + ">M2S</option></select>" +
+        "<div class='ligne'><div><label>Du</label><input id='ftDu' type='date' value='" + FOURF.du + "'></div><div><label>Au</label><input id='ftAu' type='date' value='" + FOURF.au + "'></div></div>" +
+        "<table><tr><td>Solde au début</td><td class='v'>" + gnf(report) + "</td></tr><tr><td>Facturé (période)</td><td class='v'>" + gnf(tf) + "</td></tr><tr><td>Payé (période)</td><td class='v'>" + gnf(tp) + "</td></tr>" +
+        "<tr><td><b>" + (solde >= 0 ? "Reste dû" : "Avance chez lui") + "</b></td><td class='v'><b style='color:" + (solde > 0 ? "#c62828" : "#1565c0") + "'>" + gnf(Math.abs(solde)) + " GNF</b></td></tr>" +
+        (R && R.echu ? "<tr><td>Échu (toutes sociétés)</td><td class='v' style='color:#c62828'><b>" + gnf(R.echu) + "</b></td></tr>" : "") + "</table>" +
+        "<div class='ligne'><button class='bouton' id='ftPdf'>📄 Relevé PDF</button><button class='bouton second' id='ftDem'>➕ Demande</button></div></div>" +
+        "<div class='carte'><h3>Relevé de compte</h3>" + (lignes ? "<table><tr><td><b>Date</b></td><td><b>Opération</b></td><td class='v'><b>Facturé</b></td><td class='v'><b>Payé</b></td><td class='v'><b>Solde</b></td></tr>" + lignes + "</table>" : "<div class='info'>Aucune opération sur la période.</div>") + "</div>" +
+        (C.length ? "<div class='carte'><h3>En cours (" + C.length + ")</h3>" + C.map(function (c) { return "<div class='info' data-no='" + esc(c.no) + "' style='cursor:pointer'>" + jourLib(c.date) + " · " + esc(c.op) + " · <b>" + gnf(c.gnf) + " GNF</b> · " + esc(c.statut) + " · " + esc(c.no) + "</div>"; }).join("") + "</div>" : "");
+      $("vueListe").innerHTML = h; montrer("vueListe");
+      ["ftS", "ftDu", "ftAu"].forEach(function (id) { $(id).onchange = function () { FOURF.soc = $("ftS").value; FOURF.du = $("ftDu").value; FOURF.au = $("ftAu").value; dessiner(""); }; });
+      $("ftEnr").onclick = function () { envoyerFin("fournisseur", { nom: f.nom, tel: $("ftT").value, nif: $("ftN").value, rib: $("ftR").value }, "Coordonnées " + f.nom, null); };
+      $("ftDem").onclick = function () { formulaireFin({ type: "Règlement fournisseur", fournisseur: f.nom }); };
+      $("ftPdf").onclick = function () {
+        var soc = FOURF.soc || prompt("Relevé pour quelle société ? (AB ou M2S)", "AB");
+        soc = String(soc || "").trim().toUpperCase(); if (soc !== "AB" && soc !== "M2S") return;
+        $("ftPdf").disabled = true; $("ftPdf").textContent = "⏳ PDF…";
+        api({ api: "finReleve", nom: f.nom, societe: soc, du: FOURF.du, au: FOURF.au }, 120000).then(function (r) {
+          var blob = base64Blob(r.pdf), fi = new File([blob], r.nom, { type: "application/pdf" });
+          if (navigator.canShare && navigator.canShare({ files: [fi] }) && confirm("Partager le relevé ? (Annuler = l'ouvrir)")) navigator.share({ files: [fi], title: r.nom }).catch(function () {});
+          else { var u = URL.createObjectURL(blob); if (!window.open(u, "_blank")) { var a = document.createElement("a"); a.href = u; a.download = r.nom; document.body.appendChild(a); a.click(); a.remove(); } }
+          dessiner("");
+        }, function (e) { alert("⛔ Relevé : " + e.message + " (réseau nécessaire)"); dessiner(""); });
+      };
+      Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-no]"), function (el) {
+        el.onclick = function () { var no = el.getAttribute("data-no"); if (S.fin && S.fin.demandes.some(function (x) { return x.no === no; })) ouvrirDemandeFin(no); };
+      });
+    };
+    dessiner(FOUR.fiches[nom] ? "mise à jour…" : "chargement…");
+    api({ api: "finFour", nom: nom }).then(function (r) { FOUR.fiches[nom] = r; if ($("ftS")) dessiner(""); }, function (e) { if ($("ftS")) dessiner("⛔ " + e.message + (FOUR.fiches[nom] ? " (dernière copie)" : "")); });
   }
 
   function ouvrirDepuisNotif(d) {
