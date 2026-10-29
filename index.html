@@ -108,7 +108,7 @@
   /* Formulaires : colonne centrée confortable */
   body.pc #vueListe.formulaire { max-width: 860px; }
   /* Fiches : deux colonnes, l'en-tête sur toute la largeur */
-  body.pc #vueListe.fiche { display: grid !important; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
+  body.pc #vueListe.fiche:not([style*="none"]) { display: grid !important; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
   body.pc #vueListe.fiche > * { margin-top: 0; }
   body.pc #vueListe.fiche > :first-child, body.pc #vueListe.fiche > .carte:has(> h3:only-child), body.pc #vueListe.fiche > :not(.carte):not(div),
   body.pc #vueListe.fiche > div:empty { grid-column: 1 / -1; }

@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-05 GZ";
+  var VERSION_APP = "2026-11-05 HA";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -282,6 +282,7 @@
     Object.keys(fs).forEach(function (k) {
       tuile("form:" + k, k === "stock" ? "📦" : "🧾", fs[k].nom || fs[k].titre || k, fs[k].erreur ? "indisponible" : "");
     });
+    if (droitStockVal()) { var nS = stockNbAttente(); tuile("stockval", "📤", "Sorties de stock", S.stockv && S.stockv.direction ? "À valider" : "Suivi", nS ? { badge: nS, bcls: S.stockv && S.stockv.direction ? "rouge" : "orange" } : {}); }
     if (droitPlanif() || droitFin() || droitRH() || droitCom() || droitTreso() || droitMis()) section("Gestion");
     if (droitPlanif()) {
       var nPl = S.file.filter(function (x) { return x.type === "planif"; }).length;
@@ -323,6 +324,7 @@
         else if (id === "commercial") afficherCom();
         else if (id === "missions") afficherMis();
         else if (id === "treso") afficherTreso();
+        else if (id === "stockval") afficherStockVal();
         else if (id === "planif") { if (modePC()) afficherPlanifPC(); else afficherPlanif(); }
         else if (id === "attente") afficherListe("attente");
         else if (id === "corriger") afficherListe("corriger");
@@ -337,7 +339,7 @@
     if ($("btnConnexion")) $("btnConnexion").onclick = pageConnexion;
     if ($("btnDeconnexion")) $("btnDeconnexion").onclick = function () {
       if (S.file.some(function (x) { return x.type === "form"; }) && !confirm("Des saisies sont en attente d'envoi : elles partiront quand même. Changer d'agent ?")) return;
-      S.agent = null; S.formulaires = null; S.planif = null; S.fin = null; S.rh = null; S.com = null; S.mis = null; S.treso = null; TRV.releves = {}; ecrire("treso", null); FOUR.liste = null; FOUR.fiches = {}; ecrire("four", null); ecrire("com", null); ecrire("mis", null); ecrire("agent", null); ecrire("formulaires", null); ecrire("planif", null); ecrire("fin", null); ecrire("rh", null); montrer("vueAccueil");
+      S.agent = null; S.formulaires = null; S.planif = null; S.fin = null; S.rh = null; S.com = null; S.mis = null; S.treso = null; S.stockv = null; ecrire("stockv", null); TRV.releves = {}; ecrire("treso", null); FOUR.liste = null; FOUR.fiches = {}; ecrire("four", null); ecrire("com", null); ecrire("mis", null); ecrire("agent", null); ecrire("formulaires", null); ecrire("planif", null); ecrire("fin", null); ecrire("rh", null); montrer("vueAccueil");
     };
 
     var d = S.donnees;
@@ -578,7 +580,9 @@
       var p6 = (S.url && droitCom() && (forcerDonnees || n > 0 || ageCo > 5 * 60000)) ? rafraichirCom().catch(function () {}) : null;
       var ageMi = S.mis ? Date.now() - S.mis.recu : Infinity;
       var p7 = (S.url && droitMis() && (forcerDonnees || n > 0 || ageMi > 5 * 60000)) ? rafraichirMis().catch(function () {}) : null;
-      return Promise.all([p1, p2, p3, p4, p5, p6, p7]);
+      var ageSt = S.stockv ? Date.now() - S.stockv.recu : Infinity;
+      var p8 = (S.url && droitStockVal() && (forcerDonnees || n > 0 || ageSt > 5 * 60000)) ? rafraichirStockVal().catch(function () {}) : null;
+      return Promise.all([p1, p2, p3, p4, p5, p6, p7, p8]);
     }).catch(function () {}).then(function () { majEtat(); if ($("vueAccueil").style.display !== "none") majAccueil(); });
   }
   function erreurPassagere(r) {
@@ -2636,16 +2640,57 @@
   }
   function deconnecterAgent() {
     S.agent = null; S.formulaires = null; S.planif = null; S.fin = null; S.rh = null; S.com = null; S.mis = null; S.treso = null;
-    ["agent", "formulaires", "planif", "fin", "rh", "com", "mis", "treso", "four"].forEach(function (k) { ecrire(k, null); });
+    S.stockv = null;
+    ["agent", "formulaires", "planif", "fin", "rh", "com", "mis", "treso", "four", "stockv"].forEach(function (k) { ecrire(k, null); });
     montrer("vueAccueil");
   }
   function initSecurite() { lireAppareil(); return true; }
+  /* ---------- 📦 Sorties de stock hors production : validation WALID ou DG ---------- */
+  function droitStockVal() { var d = S.agent && S.formulaires && S.formulaires.droits; return !!(d && (d.stock || ["DG", "WALID"].indexOf(String(S.agent.nom).toUpperCase()) >= 0)); }
+  var rafStk = null;
+  function rafraichirStockVal() {
+    if (!S.url || !droitStockVal()) return Promise.resolve();
+    if (rafStk) return rafStk;
+    rafStk = api({ api: "stockAValider" }).then(function (r) { r.recu = Date.now(); S.stockv = r; return ecrire("stockv", r); })
+      .then(function () { rafStk = null; }, function (e) { rafStk = null; throw e; });
+    return rafStk;
+  }
+  function stockNbAttente() { return S.stockv ? S.stockv.sorties.filter(function (x) { return x.statut === "En attente"; }).length : 0; }
+  function afficherStockVal(id) {
+    $("titre").textContent = "Sorties de stock";
+    function dessiner(msg) {
+      var K = S.stockv, L = K ? K.sorties : [], C = { "En attente": "#e65100", "Validée": "#2e7d32", "Refusée": "#c62828" };
+      var h = "<div class='carte pleine'><h3>📦 Sorties de stock hors production</h3><div class='info'>" + (K && K.direction ? "Validation : WALID ou DG (un seul suffit). " : "Vos sorties : elles n'entrent dans le stock qu'après validation par WALID ou le DG. ") +
+        (K ? "Données du " + dateCourte(K.recu || K.genere) : "") + (msg ? " · " + esc(msg) : "") + "</div></div>";
+      h += L.map(function (x, i) {
+        return "<div class='carte'" + (x.no === id ? " style='border-color:var(--cuivre)'" : "") + "><div class='ligne' style='justify-content:space-between'><b>" + esc(x.no) + " · " + esc(x.agent) + "</b>" +
+          "<span style='flex:0;white-space:nowrap;font-weight:700;color:" + (C[x.statut] || "#999") + "'>" + esc(x.statut) + "</span></div><div>" + esc(x.resume) + "</div>" +
+          "<div class='info'>Saisie le " + dateCourte(x.saisi) + (x.par ? " · " + esc(x.statut.toLowerCase()) + " par " + esc(x.par) + " le " + dateCourte(x.le) : "") + (x.motif ? " — " + esc(x.motif) : "") + "</div>" +
+          (K.direction && x.statut === "En attente" ? "<input data-m='" + i + "' placeholder='Motif (obligatoire pour refuser)'><div class='ligne'><button class='bouton' data-v='" + i + "' style='background:var(--vert)'>✅ Valider</button><button class='bouton' data-r='" + i + "' style='background:var(--rouge)'>⛔ Refuser</button></div>" : "") + "</div>";
+      }).join("") || "<p class='info' style='padding:0 4px'>Aucune sortie de stock.</p>";
+      $("vueListe").innerHTML = h; montrer("vueListe");
+      function decider(i, dec) {
+        var x = L[i], m = (document.querySelector("[data-m='" + i + "']") || {}).value || "";
+        if (dec === "refuser" && !m.trim()) { alert("⛔ Indiquez le motif du refus."); return; }
+        if (!confirm((dec === "valider" ? "Valider " : "Refuser ") + x.no + " : " + x.resume + " ?")) return;
+        dessiner("⏳ envoi…");
+        api({ api: "stockAValider", no: x.no, decision: dec, motif: m.trim() }).then(function (r) { alert("✅ " + r.titre + "\n" + (r.message || "")); return rafraichirStockVal(); },
+          function (e) { alert("⛔ " + e.message + " (réseau nécessaire)"); }).then(function () { dessiner(""); });
+      }
+      Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-v]"), function (b) { b.onclick = function () { decider(+b.getAttribute("data-v"), "valider"); }; });
+      Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-r]"), function (b) { b.onclick = function () { decider(+b.getAttribute("data-r"), "refuser"); }; });
+    }
+    dessiner(S.stockv ? "mise à jour…" : "chargement…");
+    rafraichirStockVal().then(function () { dessiner(""); }, function (e) { dessiner("⛔ " + e.message); });
+  }
+
   function ouvrirDepuisNotif(d) {
     synchroniser(true).catch(function () {}).then(function () {
       if (d.vue === "finances" && typeof afficherFinances === "function") afficherFinances(d.id);
       else if (d.vue === "rh" && droitRH()) afficherRH(d.id);
       else if (d.vue === "commercial" && droitCom()) afficherCom(d.id);
       else if (d.vue === "missions" && droitMis()) afficherMis(d.id);
+      else if (d.vue === "stockval" && droitStockVal()) afficherStockVal(d.id);
       else montrer("vueAccueil");
     });
   }
@@ -3139,8 +3184,8 @@
   }
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function () {});
 
-  Promise.all(["url", "donnees", "gabarit", "gv", "file", "envoyes", "aCorriger", "recents", "derniereSync", "agent", "formulaires", "planif", "planifLocal", "affichage", "fin", "rh", "com", "mis", "treso"].map(lire)).then(function (v) {
-    S.treso = v[18] || null;
+  Promise.all(["url", "donnees", "gabarit", "gv", "file", "envoyes", "aCorriger", "recents", "derniereSync", "agent", "formulaires", "planif", "planifLocal", "affichage", "fin", "rh", "com", "mis", "treso", "stockv"].map(lire)).then(function (v) {
+    S.treso = v[18] || null; S.stockv = v[19] || null;
     S.fin = v[14] || null; S.rh = v[15] || null; S.com = v[16] || null; S.mis = v[17] || null;
     S.agent = v[9] || null; S.formulaires = v[10] || null; S.planif = v[11] || null; S.planifLocal = v[12] || {}; S.affichage = v[13] || "auto";
     $("choixAffichage").value = S.affichage; majClassePC();
