@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-05 HH";
+  var VERSION_APP = "2026-11-05 HI";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -1265,10 +1265,12 @@
       "<div id='ffAFact' class='info'></div></div>" +
       "<div id='ffBenB'><label>Bénéficiaire du chèque / virement</label><input id='ffBen' value='" + esc(src.beneficiaire || "") + "'></div>" +
       champFichiers("ffP") + (src.pieces && src.pieces.length ? "<div class='info'>Déjà jointes : " + src.pieces.length + " pièce(s).</div>" : "") +
+      (F.role === "DG" && !src.no ? "<div id='ffXB' class='carte' style='margin-top:10px'><h3>💳 Exécution directe (DG)</h3><div class='info'>Votre saisie est validée d'office. Joignez la preuve du paiement : elle est exécutée tout de suite (inscrite dans BASE). Sans preuve, elle reste « À exécuter ».</div>" +
+        champFichiers("ffX").replace("Photos / PDF", "Preuve du paiement") + "</div>" : "") +
       "<div id='ffRegle' class='carte' style='margin-top:10px'></div>" +
       "<label>Commentaire</label><input id='ffCom'>" +
       "<button class='bouton' id='ffEnv'>📤 Envoyer</button><div id='ffMsg' class='info' style='white-space:pre-line'></div></div>";
-    $("vueListe").innerHTML = h; montrer("vueListe"); lierFichiers("ffP");
+    $("vueListe").innerHTML = h; montrer("vueListe"); lierFichiers("ffP"); if ($("ffXB")) lierFichiers("ffX");
     function v(id) { return $(id).value.trim(); }
     function nb(x) { x = String(x || "").replace(/[\s  ]/g, "").replace(",", "."); return parseFloat(x) || 0; }
     function vis(id, ok) { $(id).style.display = ok ? "" : "none"; }
@@ -1374,7 +1376,10 @@
       else regle = t === "Facture d'achat" || (t === "Dépense de caisse" && gros) || (t === "Règlement fournisseur" && !((mode === "Espèces" || mode === "Chèque") && !gros)) ||
         (t === "Paiement RH" && !(mode === "Espèces" && !gros)) || (t === "Mouvement de trésorerie" && !((op === "Dépôt de chèque" || op === "Transfert entre caisses" || op === F.opRemb) && !gros)) ? "Walid puis DG" : "Walid";
       var photo = achat ? (avecF ? "photo de la facture obligatoire" : "photo du reçu facultative") : t === "Facture d'achat" ? "photo de la facture obligatoire" : (t === "Règlement fournisseur" && mode === "Chèque") || (t === "Mouvement de trésorerie" && (op === "Dépôt de chèque" || op === "Retrait")) ? "photo du chèque obligatoire" : "pièces facultatives";
-      $("ffRegle").innerHTML = "🔐 Validation : <b>" + regle + "</b> · 📷 " + photo + (t !== "Facture d'achat" && t !== "Opération constatée" ? " · preuve du paiement à joindre après validation" + (t === "Dépense de caisse" ? " (facultative)" : "") : "");
+      if (F.role === "DG") regle = "validée d'office (DG)" + (t === "Facture d'achat" || t === "Opération constatée" ? "" : " · exécution directe avec la preuve");
+      else if (F.role === "Walid" && t !== "Opération constatée") regle = /DG/.test(regle) ? "Walid d'office, puis DG" : "validée d'office (Walid)";
+      if ($("ffXB")) vis("ffXB", t !== "Facture d'achat" && t !== "Opération constatée");
+      $("ffRegle").innerHTML = "🔐 Validation : <b>" + regle + "</b> · 📷 " + photo + (t !== "Facture d'achat" && t !== "Opération constatée" && F.role !== "DG" ? " · preuve du paiement à joindre après validation" + (t === "Dépense de caisse" ? " (facultative)" : "") : "");
       $("ffEnv").textContent = t === "Opération constatée" ? "📒 Enregistrer" : "📤 Envoyer la demande";
     }
     ["ffType", "ffPiece", "ffPay", "ffDest", "ffOp", "ffOc", "ffDev", "ffSoc", "ffPc", "ffFourC", "ffMode", "ffFact", "ffCpt", "ffCtp", "ffCat", "ffAN", "ffACat", "ffACatN", "ffPers", "ffMotRH"].forEach(function (id) { $(id).onchange = maj; });
@@ -1404,7 +1409,7 @@
       if (/obligatoire/.test($("ffRegle").textContent) && !nbP) { m.textContent = "⛔ Photo obligatoire (voir ci-dessus)."; return; }
       var lib = achat ? "Achat " + (t === "Facture d'achat" ? "à payer" : "payé") + (avecF ? "" : " sans facture") + " · " + fourRaison(F.fournisseurs.filter(function (f) { return f.nom === s.fournisseur; })[0] || { nom: s.fournisseur }) : (op || t) + (t === "Paiement RH" ? " · " + s.personnel : "");
       if (!confirm((t === "Opération constatée" ? "Enregistrer : " : "Envoyer la demande : ") + lib + " · " + gnf(s.montant) + " " + s.devise + " ?")) return;
-      envoyerFin(src.no ? "modifier" : "creer", src.no ? { demande: s, version: src.version, fichiers: FICH.ffP } : { demande: s, fichiers: FICH.ffP }, (src.no ? "Correction " + src.no : lib) + " · " + gnf(s.montant) + " " + s.devise, src.no);
+      envoyerFin(src.no ? "modifier" : "creer", src.no ? { demande: s, version: src.version, fichiers: FICH.ffP } : { demande: s, fichiers: FICH.ffP, preuves: $("ffXB") && on("ffXB") ? FICH.ffX : [] }, (src.no ? "Correction " + src.no : lib) + " · " + gnf(s.montant) + " " + s.devise, src.no);
     };
   }
 
