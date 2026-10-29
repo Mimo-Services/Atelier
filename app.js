@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-02 GS";
+  var VERSION_APP = "2026-11-02 GT";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -1193,7 +1193,8 @@
       "<div><label>Motif</label><select id='ffMotRH'>" + opts(F.motifsRH || [], src.motifRH, "— choisir —") + "</select></div></div>" +
       "<div id='ffMoisB'><label>Mois du salaire</label><input id='ffMois' type='month' value='" + (src.dateEffet ? new Date(src.dateEffet).toISOString().slice(0, 7) : "") + "'></div></div>" +
       "<div id='ffFourB'><label>Fournisseur</label><input id='ffFour' list='ffFourL' value='" + esc(src.fournisseur || "") + "' placeholder='Nom (nouveau : ajouté à la liste)'>" +
-      "<datalist id='ffFourL'>" + F.fournisseurs.map(function (f) { return "<option value='" + esc(f.nom) + "'>"; }).join("") + "</datalist>" +
+      "<datalist id='ffFourL'>" + F.fournisseurs.filter(function (f) { return f.actif !== false; }).map(function (f) {
+        return "<option value='" + esc(f.nom) + "' label='" + esc([f.societe, f.projet ? f.projet.split(" · ")[0] : "", f.article].filter(String).join(" · ")) + "'>"; }).join("") + "</datalist><div id='ffFourI' class='info'></div>" +
       "<div id='ffNouvF' style='display:none'><div class='ligne'><div><label>Téléphone</label><input id='ffTel'></div><div><label>NIF</label><input id='ffNif'></div></div><label>RIB / compte</label><input id='ffRib'></div></div>" +
       "<div id='ffFactB'><label>Facture à régler</label><select id='ffFact'></select><div id='ffFactI' class='info'></div></div>" +
       "<div id='ffRefB'><label>Réf. de la facture</label><input id='ffRef' value='" + esc(src.refFacture || "") + "'><label>Échéance</label><input id='ffEch' type='date' value='" + (src.echeance ? new Date(src.echeance).toISOString().slice(0, 10) : "") + "'></div>" +
@@ -1272,8 +1273,12 @@
       $("ffEqL").textContent = "Équivalent en " + devSal + " (devise du salaire de " + v("ffPers") + ")";
       vis("ffBenB", (t === "Règlement fournisseur" && mode && mode !== "Espèces") || (t === "Mouvement de trésorerie" && op === "Virement" && !v("ffCtp")));
       vis("ffTauxB", dev !== "GNF");
-      var four = v("ffFour"), connu = F.fournisseurs.some(function (f) { return f.nom.toLowerCase() === four.toLowerCase(); });
+      var four = v("ffFour"), fc = F.fournisseurs.filter(function (f) { return f.nom.toLowerCase() === four.toLowerCase(); })[0], connu = !!fc;
       vis("ffNouvF", on("ffFourB") && four && !connu);
+      // Compte réservé à une société : société imposée.
+      if (fc && fc.societe && on("ffFourB")) { $("ffSoc").value = fc.societe; $("ffSoc").disabled = true; } else $("ffSoc").disabled = false;
+      $("ffFourI").textContent = fc ? [fc.raison && fc.raison !== fc.nom ? fc.raison : "", fc.societe ? "compte " + fc.societe : "", fc.projet ? "projet " + fc.projet : "", fc.article ? "article " + fc.article : ""].filter(String).join(" · ")
+        : four && on("ffFourB") ? "Nouveau compte : il sera créé (vous pourrez préciser société, projet, article dans 🏭 Fournisseurs)." : "";
       var fa = null;
       if (t === "Règlement fournisseur") {
         var Fa = F.factures.filter(function (f) { return !four || f.fournisseur.toLowerCase() === four.toLowerCase(); }), cur = $("ffFact").value || src.facture || "";
@@ -2293,25 +2298,82 @@
     var dessiner = function (msg) {
       var L = (FOUR.liste && FOUR.liste.fournisseurs) || [];
       $("vueListe").innerHTML = "<div class='carte'><h3>🏭 Fournisseurs et prestataires</h3><div class='info'>" + (FOUR.liste ? "Données du " + dateCourte(FOUR.liste.recu) : "") + (msg ? " · " + esc(msg) : "") + "</div>" +
-        "<input id='foQ' placeholder='Rechercher' value='" + esc(FOUR.q) + "'><div class='info'>Solde = facturé − payé (positif : reste dû ; négatif : avance).</div></div><div id='foL'></div>";
+        "<button class='bouton' id='foNouv'>➕ Nouveau compte fournisseur / prestataire</button>" +
+        "<div class='ligne'><input id='foQ' placeholder='Rechercher (nom, projet, article)' value='" + esc(FOUR.q) + "'><select id='foS' style='flex:0 0 130px'><option value=''>AB + M2S</option><option" + (FOUR.soc === "AB" ? " selected" : "") + ">AB</option><option" + (FOUR.soc === "M2S" ? " selected" : "") + ">M2S</option></select></div>" +
+        "<label style='font-weight:400'><input type='checkbox' id='foI' style='width:auto'" + (FOUR.inactifs ? " checked" : "") + "> afficher les comptes désactivés</label>" +
+        "<div class='info'>Un compte par société, projet ou article si besoin (soldes séparés). Solde = facturé − payé (positif : reste dû ; négatif : avance).</div></div><div id='foL'></div>";
       montrer("vueListe");
       var liste = function () {
-        FOUR.q = $("foQ").value; var q = FOUR.q.trim().toLowerCase();
-        $("foL").innerHTML = L.filter(function (f) { return !q || f.nom.toLowerCase().indexOf(q) >= 0; }).map(function (f) {
-          return "<div class='carte' data-fo='" + esc(f.nom) + "' style='cursor:pointer'><div class='ligne' style='justify-content:space-between'><b>" + esc(f.nom) + "</b>" +
+        FOUR.q = $("foQ").value; FOUR.soc = $("foS").value; FOUR.inactifs = $("foI").checked; var q = FOUR.q.trim().toLowerCase();
+        $("foL").innerHTML = L.filter(function (f) { return (FOUR.inactifs || f.actif !== false) && (!FOUR.soc || !f.societe || f.societe === FOUR.soc) &&
+            (!q || (f.nom + " " + (f.raison || "") + " " + (f.projet || "") + " " + (f.article || "")).toLowerCase().indexOf(q) >= 0); }).map(function (f) {
+          var tags = [f.type === "Prestataire" ? "🛠️ Prestataire" : "🏭 Fournisseur", f.societe, f.projet ? "📁 " + f.projet.split(" · ")[0] : "", f.article ? "📦 " + f.article : "", f.actif === false ? "désactivé" : ""].filter(String);
+          return "<div class='carte' data-fo='" + esc(f.nom) + "' style='cursor:pointer" + (f.actif === false ? ";opacity:.55" : "") + "'><div class='ligne' style='justify-content:space-between'><b>" + esc(f.nom) + "</b>" +
             "<b style='flex:0;white-space:nowrap;color:" + (f.solde > 0 ? "#c62828" : f.solde < 0 ? "#1565c0" : "inherit") + "'>" + gnf(f.solde) + " GNF</b></div>" +
             "<div class='info'>Facturé " + gnf(f.facture) + " · payé " + gnf(f.paye) + (f.cours ? " · en cours " + gnf(f.cours) : "") + (f.echu ? " · <b style='color:#c62828'>échu " + gnf(f.echu) + "</b>" : "") +
-            (f.dernier ? " · dernier mouvement " + jourLib(f.dernier) : "") + "</div></div>";
+            (f.dernier ? " · dernier mouvement " + jourLib(f.dernier) : "") + "</div>" +
+            "<div class='info' style='font-size:12.5px'>" + (f.raison && f.raison !== f.nom ? esc(f.raison) + " · " : "") + tags.map(esc).join(" · ") + "</div></div>";
         }).join("") || "<p class='info' style='padding:0 4px'>" + (FOUR.liste ? "Aucun fournisseur." : "Réseau nécessaire la 1re fois.") + "</p>";
         Array.prototype.forEach.call($("foL").querySelectorAll("[data-fo]"), function (el) { el.onclick = function () { ficheFournisseur(el.getAttribute("data-fo")); }; });
       };
-      $("foQ").oninput = liste; liste();
+      $("foQ").oninput = liste; $("foS").onchange = liste; $("foI").onchange = liste; liste();
+      $("foNouv").onclick = function () { formulaireCompteFour(null); };
     };
     dessiner(FOUR.liste ? "mise à jour…" : "chargement…");
     api({ api: "finFour" }).then(function (r) { r.recu = Date.now(); FOUR.liste = r; ecrire("four", r); if ($("foL")) dessiner(""); },
       function (e) { if ($("foL")) dessiner("⛔ " + e.message + " (dernière copie affichée)"); });
   }
   var FOURF = { soc: "", du: "", au: "" };
+  /* Création / modification d'un compte (une fiche par société, projet ou article si besoin). */
+  function formulaireCompteFour(f) {
+    var F = S.fin || {}, nouveau = !f || f.copie, src = f || {}, P = F.projets || [], R0 = (FOUR.fiches[src.nom] || {}).categories || (F.achat && F.achat.categories) || [];
+    var raisons = []; (F.fournisseurs || []).forEach(function (x) { if (raisons.indexOf(x.raison || x.nom) < 0) raisons.push(x.raison || x.nom); });
+    $("titre").textContent = nouveau ? "Nouveau compte" : src.nom;
+    function opt(L, v, vide) { return (vide !== undefined ? "<option value=''>" + vide + "</option>" : "") + L.map(function (x) { return "<option" + (x === v ? " selected" : "") + ">" + esc(x) + "</option>"; }).join(""); }
+    $("vueListe").innerHTML = "<div class='carte'><h3>" + (nouveau ? "➕ Nouveau compte fournisseur / prestataire" : "✏️ " + esc(src.nom)) + "</h3>" +
+      "<label>Fournisseur / prestataire (raison sociale)</label><input id='cfR' list='cfRL' value='" + esc(src.raison || "") + "'><datalist id='cfRL'>" + raisons.map(function (x) { return "<option value='" + esc(x) + "'>"; }).join("") + "</datalist>" +
+      "<div class='ligne'><div><label>Type</label><select id='cfT'>" + opt(["Fournisseur", "Prestataire"], src.type || "Fournisseur") + "</select></div>" +
+      "<div><label>Société</label><select id='cfS'>" + opt(["AB", "M2S"], src.societe || "", "Toutes") + "</select></div></div>" +
+      "<label>Projet / contrat (facultatif)</label><select id='cfP'>" + opt(src.projet && P.indexOf(src.projet) < 0 ? P.concat([src.projet]) : P, src.projet || "", "— aucun —") + "</select>" +
+      "<label>Article / catégorie (facultatif)</label><input id='cfA' list='cfAL' value='" + esc(src.article || "") + "' placeholder='ex. PAPIER, ENCRE OFFSET, Transport'><datalist id='cfAL'>" + R0.concat(["Transport", "Prestation", "Maintenance"]).map(function (x) { return "<option value='" + esc(x) + "'>"; }).join("") + "</datalist>" +
+      "<div class='ligne'><div><label>Téléphone</label><input id='cfTe' value='" + esc(src.tel || "") + "'></div><div><label>NIF</label><input id='cfN' value='" + esc(src.nif || "") + "'></div></div>" +
+      "<label>RIB / compte bancaire</label><input id='cfRi' value='" + esc(src.rib || "") + "'>" +
+      (nouveau ? "<label>Nom du compte (unique, choisi dans les demandes)</label><input id='cfNom'><div class='info'>Proposé : raison sociale — société — projet — article. Modifiable.</div>"
+               : "<label style='font-weight:400'><input type='checkbox' id='cfAc' style='width:auto'" + (src.actif === false ? "" : " checked") + "> compte actif (proposé dans les demandes)</label>") +
+      "<button class='bouton' id='cfEnv'>" + (nouveau ? "Créer le compte" : "Enregistrer") + "</button><div class='info' id='cfM'></div></div>";
+    montrer("vueListe");
+    var nomManuel = false;
+    function proposer() {
+      if (!nouveau || nomManuel) return;
+      $("cfNom").value = [$("cfR").value.trim(), $("cfS").value, $("cfP").value ? $("cfP").value.split(" · ")[0] : "", $("cfA").value.trim()].filter(String).join(" — ");
+    }
+    if (nouveau) {
+      $("cfNom").oninput = function () { nomManuel = true; };
+      ["cfR", "cfA"].forEach(function (id) { $(id).oninput = proposer; }); ["cfS", "cfP"].forEach(function (id) { $(id).onchange = proposer; });
+      $("cfR").onchange = function () {   // coordonnées reprises d'un autre compte du même fournisseur
+        var x = (F.fournisseurs || []).filter(function (y) { return (y.raison || y.nom) === $("cfR").value; })[0];
+        if (x) { if (!$("cfTe").value) $("cfTe").value = x.tel || ""; if (!$("cfN").value) $("cfN").value = x.nif || ""; if (!$("cfRi").value) $("cfRi").value = x.rib || ""; $("cfT").value = x.type || "Fournisseur"; }
+        proposer();
+      };
+      proposer();
+    }
+    $("cfEnv").onclick = function () {
+      var d = { raison: $("cfR").value.trim(), type: $("cfT").value, societe: $("cfS").value, projet: $("cfP").value, article: $("cfA").value.trim(), tel: $("cfTe").value.trim(), nif: $("cfN").value.trim(), rib: $("cfRi").value.trim() };
+      if (!d.raison) { $("cfM").textContent = "⛔ Indiquez le fournisseur / prestataire."; return; }
+      if (nouveau) {
+        d.creer = true; d.nom = $("cfNom").value.trim();
+        if (!d.nom) { $("cfM").textContent = "⛔ Nom du compte."; return; }
+        if ((F.fournisseurs || []).some(function (x) { return x.nom.toLowerCase() === d.nom.toLowerCase(); })) { $("cfM").textContent = "⛔ Ce nom existe déjà : précisez la société, le projet ou l'article."; return; }
+      } else { d.nom = src.nom; d.actif = $("cfAc").checked; }
+      var it = { type: "fin", op: "fournisseur", jeton: nouveauJeton(), horodatage: Date.now(), agent: S.agent.nom, code: S.agent.code, donnees: d, titre: (nouveau ? "Nouveau compte " : "Compte ") + d.nom, resume: "Finances", essais: 0 };
+      soumettre(it).then(function (r) {
+        alert((r.ok ? (r.enAttente ? "📥 " : "✅ ") : "⛔ ") + (r.titre || "") + "\n" + (r.message || ""));
+        if (!r.ok) return;
+        FOUR.liste = null; delete FOUR.fiches[d.nom];
+        rafraichirFin().catch(function () {}).then(function () { if (r.enAttente) afficherFournisseurs(); else ficheFournisseur(r.nom || d.nom); });
+      });
+    };
+  }
   function ficheFournisseur(nom) {
     $("titre").textContent = nom;
     var dessiner = function (msg) {
@@ -2327,8 +2389,8 @@
           "<td class='v'>" + (m.facture ? gnf(m.facture) : "") + "</td><td class='v'>" + (m.paye ? gnf(m.paye) : "") + "</td><td class='v'><b>" + gnf(solde) + "</b></td></tr>";
       }).join("");
       var h = "<div class='carte'><h3>🏭 " + esc(f.nom) + "</h3>" + (msg ? "<div class='info'>" + esc(msg) + "</div>" : "") +
-        "<div class='ligne'><div><label>Téléphone</label><input id='ftT' value='" + esc(f.tel || "") + "'></div><div><label>NIF</label><input id='ftN' value='" + esc(f.nif || "") + "'></div></div>" +
-        "<label>RIB / compte</label><input id='ftR' value='" + esc(f.rib || "") + "'><button class='bouton second' id='ftEnr'>💾 Enregistrer les coordonnées</button></div>" +
+        "<div class='info'>" + [f.raison && f.raison !== f.nom ? f.raison : "", f.type, f.societe ? "société " + f.societe : "toutes sociétés", f.projet ? "projet " + f.projet : "", f.article ? "article " + f.article : "", f.actif === false ? "désactivé" : ""].filter(String).map(esc).join(" · ") + "</div>" +
+        "<div class='ligne'><button class='bouton second' id='ftEnr'>✏️ Modifier le compte</button><button class='bouton second' id='ftCopie'>➕ Autre compte de ce fournisseur</button></div></div>" +
         "<div class='carte'><label>Société</label><select id='ftS'><option value=''>AB + M2S</option><option" + (FOURF.soc === "AB" ? " selected" : "") + ">AB</option><option" + (FOURF.soc === "M2S" ? " selected" : "") + ">M2S</option></select>" +
         "<div class='ligne'><div><label>Du</label><input id='ftDu' type='date' value='" + FOURF.du + "'></div><div><label>Au</label><input id='ftAu' type='date' value='" + FOURF.au + "'></div></div>" +
         "<table><tr><td>Solde au début</td><td class='v'>" + gnf(report) + "</td></tr><tr><td>Facturé (période)</td><td class='v'>" + gnf(tf) + "</td></tr><tr><td>Payé (période)</td><td class='v'>" + gnf(tp) + "</td></tr>" +
@@ -2339,10 +2401,11 @@
         (C.length ? "<div class='carte'><h3>En cours (" + C.length + ")</h3>" + C.map(function (c) { return "<div class='info' data-no='" + esc(c.no) + "' style='cursor:pointer'>" + jourLib(c.date) + " · " + esc(c.op) + " · <b>" + gnf(c.gnf) + " GNF</b> · " + esc(c.statut) + " · " + esc(c.no) + "</div>"; }).join("") + "</div>" : "");
       $("vueListe").innerHTML = h; montrer("vueListe");
       ["ftS", "ftDu", "ftAu"].forEach(function (id) { $(id).onchange = function () { FOURF.soc = $("ftS").value; FOURF.du = $("ftDu").value; FOURF.au = $("ftAu").value; dessiner(""); }; });
-      $("ftEnr").onclick = function () { envoyerFin("fournisseur", { nom: f.nom, tel: $("ftT").value, nif: $("ftN").value, rib: $("ftR").value }, "Coordonnées " + f.nom, null); };
+      $("ftEnr").onclick = function () { formulaireCompteFour(f); };
+      $("ftCopie").onclick = function () { formulaireCompteFour({ copie: true, raison: f.raison || f.nom, type: f.type, tel: f.tel, nif: f.nif, rib: f.rib }); };
       $("ftDem").onclick = function () { formulaireFin({ type: "Règlement fournisseur", fournisseur: f.nom }); };
       $("ftPdf").onclick = function () {
-        var soc = FOURF.soc || prompt("Relevé pour quelle société ? (AB ou M2S)", "AB");
+        var soc = f.societe || FOURF.soc || prompt("Relevé pour quelle société ? (AB ou M2S)", "AB");
         soc = String(soc || "").trim().toUpperCase(); if (soc !== "AB" && soc !== "M2S") return;
         $("ftPdf").disabled = true; $("ftPdf").textContent = "⏳ PDF…";
         api({ api: "finReleve", nom: f.nom, societe: soc, du: FOURF.du, au: FOURF.au }, 120000).then(function (r) {
