@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-05 HJ";
+  var VERSION_APP = "2026-11-05 HK";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -1002,6 +1002,7 @@
   var COUL_ST = { "En attente Walid": "#e65100", "En attente DG": "#e65100", "À corriger": "#b26a00", "Refusée": "#c62828", "Validée": "#2e7d32", "À exécuter": "#1565c0", "Exécutée": "#2e7d32", "Annulée": "#777" };
   function statutFin(d) { return d.solde && d.statut === "Validée" ? (d.solde.reste <= 0 ? "Soldée" : d.solde.regle > 0 ? "Partiellement payée" : "Validée — à payer") : d.statut; }
   function libelleFin(d) { return d.type === "Mouvement de trésorerie" || d.type === "Opération constatée" ? d.op : d.type === "Paiement RH" ? (S.fin && d.demandeur === S.fin.auto ? "Salaire · " : "Paie RH · ") + d.personnel
+    : d.type === "Règlement fournisseur" && d.groupe ? "Règlement groupé · " + (d.refFacture || d.facture)
     : d.type === "Règlement fournisseur" && d.op === "Achat comptant" ? "Achat payé" + (d.refFacture ? "" : " sans facture") : d.type === "Facture d'achat" ? (d.op === "Sans facture" ? "Achat à payer sans facture" : "Achat à payer (facture)") : d.type; }
   var FIN = { filtre: "traiter" };
   function afficherFinances(no) {
@@ -1104,7 +1105,8 @@
     if (att.length) return;
     var A = $("fnActions"), peutValider = (d.statut === "En attente Walid" && role === "Walid") || (d.statut === "En attente DG" && role === "DG");
     if (peutValider) {
-      A.innerHTML = "<div class='carte'><h3>Votre décision</h3><label>Commentaire (obligatoire pour refuser ou faire corriger)</label><textarea id='fnCom' rows='2'></textarea>" +
+      var nG = d.groupe ? F.demandes.filter(function (x) { return x.groupe === d.groupe && x.statut === d.statut; }).length : 0;
+      A.innerHTML = "<div class='carte'><h3>Votre décision</h3>" + (nG > 1 ? "<div class='info'>🔗 Règlement groupé : la décision s'applique aux " + nG + " factures du groupe (" + esc(F.demandes.filter(function (x) { return x.groupe === d.groupe; }).map(function (x) { return x.no; }).join(", ")) + ").</div>" : "") + "<label>Commentaire (obligatoire pour refuser ou faire corriger)</label><textarea id='fnCom' rows='2'></textarea>" +
         "<button class='bouton' id='fnVal' style='background:var(--vert)'>✅ Valider</button><button class='bouton alerte' id='fnCor'>✏️ À corriger</button><button class='bouton' id='fnRef' style='background:var(--rouge)'>⛔ Refuser</button><div id='fnMsg' class='info'></div></div>";
       [["fnVal", "valider"], ["fnCor", "corriger"], ["fnRef", "refuser"]].forEach(function (x) {
         $(x[0]).onclick = function () {
@@ -1215,7 +1217,8 @@
     var srcAchat = src.type === "Achat fournisseur" || src.type === "Facture d'achat" || (src.type === "Règlement fournisseur" && src.op === "Achat comptant");
     var A1 = { piece: srcAchat && (src.op === "Sans facture" || (src.type === "Règlement fournisseur" && !src.refFacture)) ? "Sans facture (reçu ou rien)" : "Avec facture",
                pay: src.type === "Facture d'achat" ? "À payer plus tard" : "Payé maintenant",
-               dest: src.categorie && CATS_STOCK.indexOf(src.categorie) < 0 ? "💸 Charge ou prestation (passe directement)" : "📦 Stock (Suivi Achats)" };
+               dest: src.categorie && CATS_STOCK.indexOf(src.categorie) < 0 ? "💸 Charge ou prestation (passe directement)" : src.categorie === "Fourniture Importee" ? "📦 Stock · fourniture importée (Suivi Achats)" : "📦 Stock · fourniture locale (Suivi Achats)" };
+    var REG = {}; if (src.facture) REG[src.facture] = { on: true, mt: src.montant };   // règlement : factures cochées
     var fourActifs = F.fournisseurs.filter(function (f) { return f.actif !== false; }), raisonsF = [];
     fourActifs.forEach(function (f) { if (raisonsF.indexOf(fourRaison(f)) < 0) raisonsF.push(fourRaison(f)); }); raisonsF.sort();
     var fourSrc = src.fournisseur ? F.fournisseurs.filter(function (f) { return f.nom.toLowerCase() === String(src.fournisseur).toLowerCase(); })[0] : null;
@@ -1223,18 +1226,54 @@
       .sort(function (a, b) { return (a.societe || a.projet ? 1 : 0) - (b.societe || b.projet ? 1 : 0) || a.nom.localeCompare(b.nom); }); }
     function estAchat() { return v("ffType") === "Achat fournisseur"; }
     // Achat : le compte du fournisseur découle de la société bénéficiaire + projet (créé s'il n'existe pas encore).
-    function compteAchat() {
-      var r = v("ffFour").trim(), C = comptesDe(r), so = v("ffSoc"), pr = v("ffProj").replace(/\s+/g, " ").trim();
+    function compteAchat(soc) {
+      var r = v("ffFour").trim(), C = comptesDe(r), so = soc || v("ffSoc"), pr = v("ffProj").replace(/\s+/g, " ").trim();
       if (!r) return "";
       var ex = C.filter(function (c) { return (c.societe || "") === so && (c.projet || "").toLowerCase() === pr.toLowerCase(); })[0];
       return ex ? ex.nom : [C.length ? fourRaison(C[0]) : r, so, pr].filter(String).join(" — ");
     }
     function payeurAchat(t) { var c = F.comptes.filter(function (x) { return x.nom === v("ffCpt"); })[0]; return t === "Règlement fournisseur" && c && c.societe ? c.societe : v("ffSoc"); }
-    function compteChoisi() { if (estAchat()) return compteAchat(); var C = comptesDe(v("ffFour")); return C.length ? v("ffFourC") : v("ffFour").trim(); }
+    function estRegl() { return v("ffType") === "Règlement fournisseur"; }
+    function estAvance() { return estRegl() && v("ffRegM") === "Avance (sans facture)"; }
+    function facturesDe(r) { var noms = comptesDe(r).map(function (c) { return c.nom.toLowerCase(); }); return F.factures.filter(function (f) { return noms.indexOf(f.fournisseur.toLowerCase()) >= 0 || (src.facture && f.no === src.facture); }); }
+    function regCoches() { return Object.keys(REG).filter(function (k) { return REG[k].on; }).map(function (k) { return F.factures.filter(function (f) { return f.no === k; })[0]; }).filter(Boolean); }
+    function compteChoisi() {
+      if (estAchat()) return compteAchat();
+      if (estAvance()) return compteAchat(v("ffAvS"));
+      if (estRegl()) { var fc0 = regCoches()[0]; return fc0 ? fc0.fournisseur : (comptesDe(v("ffFour"))[0] || {}).nom || v("ffFour").trim(); }
+      var C = comptesDe(v("ffFour")); return C.length ? v("ffFourC") : v("ffFour").trim(); }
+    function dessinerFactures() {
+      var r = v("ffFour").trim(), Fa = facturesDe(r), PR = [];
+      Fa.forEach(function (f) { var c = F.fournisseurs.filter(function (x) { return x.nom === f.fournisseur; })[0] || {}; f._soc = c.societe || ""; f._pr = c.projet || ""; f._lib = fourLibCompte(c.nom ? c : { societe: f.societe }); if (f._pr && PR.indexOf(f._pr) < 0) PR.push(f._pr); });
+      var key = r + "|" + Fa.map(function (f) { return f.no; }).join(",");
+      if ($("ffRegP").getAttribute("data-k") !== key) { var p0 = $("ffRegP").value; $("ffRegP").innerHTML = "<option value=''>Tous projets</option>" + PR.sort().map(function (x) { return "<option" + (x === p0 ? " selected" : "") + ">" + esc(x) + "</option>"; }).join(""); $("ffRegP").setAttribute("data-k", key); }
+      var fs = v("ffRegS"), fp = v("ffRegP"), L = Fa.filter(function (f) { return (!fs || f._soc === fs) && (!fp || f._pr === fp); });
+      var cleL = key + "|" + fs + "|" + fp;
+      if ($("ffRegL").getAttribute("data-k") !== cleL) {
+        $("ffRegL").innerHTML = L.map(function (f) {
+          var dispo = f.reste - f.engage + (src.facture === f.no ? +src.montant || 0 : 0), st = REG[f.no] || {};
+          return "<div class='ligne' style='align-items:center;border-bottom:1px solid var(--bord);padding:6px 0'><label style='flex:3;font-weight:400;margin:0'><input type='checkbox' class='ffRc' data-no='" + esc(f.no) + "' style='width:auto'" + (st.on ? " checked" : "") + "> <b>" + esc(f.ref || f.no) + "</b> · " + esc(f._lib) +
+            "<div class='info'>" + esc(f.no) + " · total " + gnf(f.total) + " · reste " + gnf(dispo) + " GNF" + (f.categorie ? " · " + esc(f.categorie) : "") + "</div></label>" +
+            "<input class='ffRm' data-no='" + esc(f.no) + "' data-d='" + dispo + "' inputmode='decimal' style='flex:1;min-width:90px' placeholder='montant' value='" + esc(st.mt !== undefined ? st.mt : "") + "'></div>";
+        }).join("") || "<div class='info'>" + (r ? "Aucune facture à régler pour ce fournisseur (choisissez « Avance »)." : "Choisissez d'abord le fournisseur.") + "</div>";
+        $("ffRegL").setAttribute("data-k", cleL);
+        Array.prototype.forEach.call($("ffRegL").querySelectorAll(".ffRc"), function (c) { c.onchange = function () {
+          var no = c.getAttribute("data-no"), inp = $("ffRegL").querySelector(".ffRm[data-no='" + no + "']");
+          REG[no] = REG[no] || {}; REG[no].on = c.checked;
+          if (c.checked && !inp.value && v("ffDev") === "GNF") { inp.value = inp.getAttribute("data-d"); REG[no].mt = inp.value; }
+          maj(); }; });
+        Array.prototype.forEach.call($("ffRegL").querySelectorAll(".ffRm"), function (inp) { inp.oninput = function () {
+          var no = inp.getAttribute("data-no"); REG[no] = REG[no] || {}; REG[no].mt = inp.value; if (nb(inp.value) > 0) { REG[no].on = true; $("ffRegL").querySelector(".ffRc[data-no='" + no + "']").checked = true; } maj(); }; });
+      }
+      var C2 = regCoches(), tot = C2.reduce(function (a, f) { return a + nb((REG[f.no] || {}).mt); }, 0);
+      $("ffRegT").innerHTML = C2.length ? "<b>" + C2.length + " facture(s) · total " + gnf(tot) + " " + esc(v("ffDev")) + "</b>" : "Cochez une ou plusieurs factures.";
+      $("ffMt").value = tot ? String(tot) : "";
+      return C2;
+    }
     var h = "<div class='carte'><label>Type</label><select id='ffType'>" + opts(types, srcAchat ? "Achat fournisseur" : src.type || "Achat fournisseur") + "</select>" +
       "<div id='ffAchatB'><div class='ligne'><div><label>Pièce</label><select id='ffPiece'>" + opts(["Avec facture", "Sans facture (reçu ou rien)"], A1.piece) + "</select></div>" +
       "<div><label>Paiement</label><select id='ffPay'>" + opts(["Payé maintenant", "À payer plus tard"], A1.pay) + "</select></div></div>" +
-      "<label>Destination</label><select id='ffDest'>" + opts(["📦 Stock (Suivi Achats)", "💸 Charge ou prestation (passe directement)"], A1.dest) + "</select></div>" +
+      "<label>Destination</label><select id='ffDest'>" + opts(["📦 Stock · fourniture locale (Suivi Achats)", "📦 Stock · fourniture importée (Suivi Achats)", "💸 Charge ou prestation (passe directement)"], A1.dest) + "</select></div>" +
       "<div id='ffOpB'><label>Mouvement</label><select id='ffOp'>" + opts(F.opsBanque, src.type === "Mouvement de trésorerie" ? src.op : "", "— choisir —") + "</select></div>" +
       "<div id='ffOcB'><label>Opération constatée (sans validation)</label><select id='ffOc'>" + opts(F.opsConstatees || [], src.type === "Opération constatée" ? src.op : "", "— choisir —") + "</select></div>" +
       "<div class='ligne'><div><label id='ffSocL'>Société (payeuse)</label><select id='ffSoc'>" + opts(["AB", "M2S", "CASAFINO"], (srcAchat && (src.pourCompte || (fourSrc && fourSrc.societe))) || src.societe || "AB") + "</select></div>" +
@@ -1250,7 +1289,11 @@
       "<div id='ffNouvF' style='display:none'><div class='ligne'><div><label>Téléphone</label><input id='ffTel'></div><div><label>NIF</label><input id='ffNif'></div></div><label>RIB / compte</label><input id='ffRib'></div></div>" +
       "<div id='ffFactB'><label>Facture à régler</label><select id='ffFact'></select><div id='ffFactI' class='info'></div></div>" +
       "<div id='ffRefB'><div id='ffRefOB'><label>Réf. de la facture</label><input id='ffRef' value='" + esc(src.refFacture && src.refFacture !== "Sans facture" ? src.refFacture : "") + "'></div><div id='ffEchB'><label>Échéance (à payer avant le)</label><input id='ffEch' type='date' value='" + (src.echeance ? new Date(src.echeance).toISOString().slice(0, 10) : "") + "'></div></div>" +
-      "<label>Objet</label><input id='ffObj' value='" + esc(src.objet || "") + "'>" +
+      "<div id='ffRegB'><label>Règlement</label><select id='ffRegM'>" + opts(["Factures à régler", "Avance (sans facture)"], src.no && !src.facture ? "Avance (sans facture)" : "Factures à régler") + "</select>" +
+        "<div id='ffRegFB'><div class='ligne'><select id='ffRegS'><option value=''>Toutes sociétés bénéficiaires</option><option>AB</option><option>M2S</option><option>CASAFINO</option></select><select id='ffRegP'><option value=''>Tous projets</option></select></div>" +
+        "<div id='ffRegL'></div><div id='ffRegT' class='info'></div></div>" +
+        "<div id='ffAvB'><label>Société bénéficiaire de l'avance</label><select id='ffAvS'>" + opts(["AB", "M2S", "CASAFINO"], (fourSrc && fourSrc.societe) || "AB") + "</select></div></div>" +
+      "<div id='ffObjB'><label>Objet</label><input id='ffObj' value='" + esc(src.objet || "") + "'></div>" +
       "<div id='ffModeB'><label>Mode de paiement</label><select id='ffMode'></select></div>" +
       "<div class='ligne' id='ffCptB'><div><label id='ffCptL'>Compte</label><select id='ffCpt'></select></div><div id='ffCtpB'><label id='ffCtpL'>Vers</label><select id='ffCtp'></select></div></div>" +
       "<div class='ligne'><div style='flex:2'><label>Montant</label><input id='ffMt' inputmode='decimal' value='" + esc(src.montant || "") + "'></div><div><label>Devise</label><select id='ffDev'>" + opts(["GNF", "USD", "EURO", "TND"], src.devise || "GNF") + "</select></div></div>" +
@@ -1305,7 +1348,11 @@
       vis("ffOpB", t === "Mouvement de trésorerie"); vis("ffOcB", t === "Opération constatée"); vis("ffRhB", t === "Paiement RH");
       vis("ffFourB", t === "Facture d'achat" || t === "Règlement fournisseur" || t === "Dépense de caisse");
       $("ffFourB").querySelector("label").textContent = t === "Dépense de caisse" ? "Fournisseur / prestataire (facultatif, pour son compte)" : "Fournisseur";
-      vis("ffFactB", t === "Règlement fournisseur" && !achat); vis("ffRefB", achat); vis("ffRefOB", avecF); vis("ffEchB", t === "Facture d'achat");
+      var regl = t === "Règlement fournisseur" && !achat, avance = regl && v("ffRegM") === "Avance (sans facture)";
+      vis("ffRegB", regl); vis("ffRegFB", regl && !avance); vis("ffAvB", avance); vis("ffObjB", !regl && !achat); vis("ffProjB", achat || avance);
+      $("ffMt").readOnly = regl && !avance;
+      var regC = regl && !avance ? dessinerFactures() : [];
+      vis("ffFactB", false); vis("ffRefB", achat); vis("ffRefOB", avecF); vis("ffEchB", t === "Facture d'achat");
       // Modes de paiement selon le type.
       var modes = t === "Règlement fournisseur" ? ["Espèces", "Chèque", "Virement"] : t === "Paiement RH" ? ["Espèces", "Virement"] : [];
       vis("ffModeB", modes.length);
@@ -1345,12 +1392,12 @@
         $("ffFourC").innerHTML = Cf.map(function (c) { return "<option value='" + esc(c.nom) + "'" + (c.nom === curC ? " selected" : "") + ">" + esc(fourLibCompte(c)) + "</option>"; }).join("");
         $("ffFourC").setAttribute("data-l", Cf.map(function (c) { return c.nom; }).join("|"));
       }
-      vis("ffFourCB", on("ffFourB") && Cf.length > 0 && !achat);
+      vis("ffFourCB", on("ffFourB") && Cf.length > 0 && !achat && !regl);
       var four = compteChoisi(), fc = F.fournisseurs.filter(function (f) { return f.nom.toLowerCase() === four.toLowerCase(); })[0], connu = !!fc;
       vis("ffNouvF", on("ffFourB") && four && !connu && !(achat && comptesDe(v("ffFour")).length));
       // Société payeuse : libre (c'est le règlement qui choisit la source). Compte d'une société bénéficiaire payé par une autre → « pour le compte de » imposé (🔁 Inter-sociétés).
       $("ffSoc").disabled = false;
-      vis("ffPcB", !achat && ((t === "Règlement fournisseur" && !v("ffFact")) || t === "Dépense de caisse"));
+      vis("ffPcB", !achat && !regl && t === "Dépense de caisse");
       if (achat) { var pay0 = payeurAchat(t); $("ffPc").value = pay0 !== v("ffSoc") ? v("ffSoc") : ""; }
       else if (fc && fc.societe && on("ffFourB")) { $("ffPc").value = fc.societe === v("ffSoc") ? "" : fc.societe; $("ffPc").disabled = true; }
       else { if (v("ffPc") === v("ffSoc")) $("ffPc").value = ""; $("ffPc").disabled = false; }
@@ -1365,7 +1412,11 @@
         : four && on("ffFourB") ? "Nouveau fournisseur : il sera créé avec un compte général (comptes par société / projet dans 🏭 Fournisseurs)." : "";
       var fa = null;
       if (achat) $("ffFact").innerHTML = "<option value=''></option>";
-      if (t === "Règlement fournisseur" && !achat) {
+      if (regl && regC.length) {   // info : bénéficiaires repris des factures ; payée par une autre société → Inter-sociétés
+        var socsB = []; regC.forEach(function (f) { var b = f._soc || f.societe; if (b && socsB.indexOf(b) < 0) socsB.push(b); });
+        $("ffFourI").textContent = "Bénéficiaire(s) : " + (socsB.join(", ") || "—") + (socsB.some(function (b) { return b !== v("ffSoc"); }) ? " · payé par " + v("ffSoc") + " → dette en 🔁 Inter-sociétés pour " + socsB.filter(function (b) { return b !== v("ffSoc"); }).join(", ") : "");
+      } else if (avance) $("ffFourI").textContent = v("ffFour").trim() ? "Compte : " + fourLibCompte(fc || { societe: v("ffAvS"), projet: v("ffProj").trim() }) + (fc ? "" : " (nouveau compte, créé à l'envoi)") + (v("ffAvS") !== v("ffSoc") ? " · payé par " + v("ffSoc") + " pour " + v("ffAvS") + " → 🔁 Inter-sociétés" : "") : "";
+      if (false) {
         var nomsC = Cf.map(function (c) { return c.nom.toLowerCase(); });
         var Fa = F.factures.filter(function (f) { return !v("ffFour").trim() || (nomsC.length ? nomsC.indexOf(f.fournisseur.toLowerCase()) >= 0 : f.fournisseur.toLowerCase() === four.toLowerCase()); }), cur = $("ffFact").value || src.facture || "";
         $("ffFact").innerHTML = "<option value=''>Sans facture (avance)</option>" + Fa.map(function (f) { return "<option value='" + esc(f.no) + "'" + (f.no === cur ? " selected" : "") + ">" + esc(f.no + " · " + f.fournisseur + (f.ref ? " · " + f.ref : "") + " · reste " + gnf(f.reste - f.engage) + " GNF") + "</option>"; }).join("");
@@ -1375,11 +1426,14 @@
           (fa.categorie ? " · catégorie " + fa.categorie + (fa.achat ? " (achat d'article de la facture)" : "") : "") : "";
       }
       // Catégorie : imposée pour les mouvements internes et la paie ; reprise de la facture réglée.
-      var catAuto = (t === "Mouvement de trésorerie" && !(op === "Virement" && !v("ffCtp"))) || t === "Paiement RH" || (t === "Opération constatée" && op === "Credit bancaire") || (fa && fa.categorie);
+      var catStock = /importée/.test(v("ffDest")) ? "Fourniture Importee" : "Fourniture Locale";
+      var catAuto = (t === "Mouvement de trésorerie" && !(op === "Virement" && !v("ffCtp"))) || t === "Paiement RH" || (t === "Opération constatée" && op === "Credit bancaire") ||
+        (achat && (stock || t === "Facture d'achat")) || (regl && !avance && regC.length > 0 && regC.every(function (f) { return f.categorie; }));
       vis("ffCatB", !catAuto);
-      var cat = on("ffCatB") ? v("ffCat") : fa ? fa.categorie : "";
+      $("ffCatB").querySelector("label").textContent = regl && !avance && regC.length ? "Catégorie (factures sans catégorie)" : "Catégorie (trésorerie)";
+      var cat = achat && stock ? catStock : on("ffCatB") ? v("ffCat") : "";
       // Bloc achat : catégorie Fourniture (sauf règlement d'une facture qui porte déjà l'achat).
-      vis("ffAchB", on("ffCatB") && (cat === "Fourniture Locale" || cat === "Fourniture Importee") && t !== "Opération constatée" && !(on("ffPcB") && v("ffPc") === "CASAFINO"));
+      vis("ffAchB", (achat ? stock : on("ffCatB") && (cat === "Fourniture Locale" || cat === "Fourniture Importee")) && t !== "Opération constatée" && !(achat && v("ffSoc") === "CASAFINO") && !(on("ffPcB") && v("ffPc") === "CASAFINO"));
       if (on("ffAchB")) {
         var n = v("ffAN"); vis("ffAEx", n === "Article existant"); vis("ffANv", n === "Nouvel article"); vis("ffAQt", n === "Article existant" || n === "Nouvel article"); vis("ffAFr", n === "Frais");
         var ca = v("ffACat"), artCur = $("ffAArt").value || A0.article || "";
@@ -1401,7 +1455,7 @@
       $("ffRegle").innerHTML = "🔐 Validation : <b>" + regle + "</b> · 📷 " + photo + (t !== "Facture d'achat" && t !== "Opération constatée" && F.role !== "DG" ? " · preuve du paiement à joindre après validation" + (t === "Dépense de caisse" ? " (facultative)" : "") : "");
       $("ffEnv").textContent = t === "Opération constatée" ? "📒 Enregistrer" : "📤 Envoyer la demande";
     }
-    ["ffType", "ffPiece", "ffPay", "ffDest", "ffOp", "ffOc", "ffDev", "ffSoc", "ffPc", "ffFourC", "ffMode", "ffFact", "ffCpt", "ffCtp", "ffCat", "ffAN", "ffACat", "ffACatN", "ffPers", "ffMotRH"].forEach(function (id) { $(id).onchange = maj; });
+    ["ffType", "ffPiece", "ffPay", "ffDest", "ffRegM", "ffRegS", "ffRegP", "ffAvS", "ffOp", "ffOc", "ffDev", "ffSoc", "ffPc", "ffFourC", "ffMode", "ffFact", "ffCpt", "ffCtp", "ffCat", "ffAN", "ffACat", "ffACatN", "ffPers", "ffMotRH"].forEach(function (id) { $(id).onchange = maj; });
     ["ffMt", "ffTaux", "ffFour", "ffProj"].forEach(function (id) { $(id).oninput = maj; });
     maj();
     $("ffEnv").onclick = function () {
@@ -1409,11 +1463,22 @@
       var t = achat ? (v("ffPay") === "À payer plus tard" ? "Facture d'achat" : "Règlement fournisseur") : tU;
       var op = achat ? (t === "Règlement fournisseur" ? "Achat comptant" : avecF ? "" : "Sans facture") : t === "Mouvement de trésorerie" ? v("ffOp") : t === "Opération constatée" ? v("ffOc") : "";
       var s = { no: src.no, type: t, op: op, societe: achat ? payeurAchat(t) : v("ffSoc"), pourCompte: achat ? v("ffPc") : on("ffPcB") ? v("ffPc") : "",
-        fourRaison: achat ? (comptesDe(v("ffFour")).length ? fourRaison(comptesDe(v("ffFour"))[0]) : v("ffFour").trim()) : "", fourSociete: achat ? v("ffSoc") : "", fourProjet: achat ? v("ffProj").replace(/\s+/g, " ").trim() : "", fournisseur: on("ffFourB") ? compteChoisi() : "", facture: t === "Règlement fournisseur" && !achat ? v("ffFact") : "",
+        fourRaison: achat || estAvance() ? (comptesDe(v("ffFour")).length ? fourRaison(comptesDe(v("ffFour"))[0]) : v("ffFour").trim()) : "", fourSociete: achat ? v("ffSoc") : estAvance() ? v("ffAvS") : "", fourProjet: achat || estAvance() ? v("ffProj").replace(/\s+/g, " ").trim() : "", fournisseur: on("ffFourB") ? compteChoisi() : "", facture: t === "Règlement fournisseur" && !achat ? v("ffFact") : "",
         refFacture: achat && avecF ? v("ffRef") : "", echeance: t === "Facture d'achat" ? v("ffEch") : "", objet: v("ffObj"), montant: nb(v("ffMt")), devise: v("ffDev"), taux: nb(v("ffTaux")),
         mode: on("ffModeB") ? v("ffMode") : t === "Dépense de caisse" ? "Espèces" : "", compte: t === "Facture d'achat" ? "" : v("ffCpt"), contrepartie: on("ffCtpB") ? v("ffCtp") : "",
         beneficiaire: on("ffBenB") ? v("ffBen") : "", commentaire: v("ffCom"), personnel: t === "Paiement RH" ? v("ffPers") : "", motifRH: t === "Paiement RH" ? v("ffMotRH") : "",
-        categorie: on("ffCatB") ? v("ffCat") : "", recu: on("ffRecuB") ? nb(v("ffRecu")) : on("ffEqB") ? nb(v("ffEq")) : 0, moisEffet: on("ffMoisB") ? v("ffMois") : "", fourTel: v("ffTel"), fourNif: v("ffNif"), fourRib: v("ffRib") };
+        categorie: achat && /^📦/.test(v("ffDest")) ? (/importée/.test(v("ffDest")) ? "Fourniture Importee" : "Fourniture Locale") : on("ffCatB") ? v("ffCat") : "", recu: on("ffRecuB") ? nb(v("ffRecu")) : on("ffEqB") ? nb(v("ffEq")) : 0, moisEffet: on("ffMoisB") ? v("ffMois") : "", fourTel: v("ffTel"), fourNif: v("ffNif"), fourRib: v("ffRib") };
+      var reglF = t === "Règlement fournisseur" && !achat && !estAvance();
+      if (reglF) {
+        var RC = regCoches();
+        if (!RC.length) { m.textContent = "⛔ Cochez au moins une facture (ou choisissez « Avance »)."; return; }
+        var trop = RC.filter(function (f) { var mt = nb((REG[f.no] || {}).mt); return !(mt > 0) || (s.devise === "GNF" && mt > f.reste - f.engage + (src.facture === f.no ? +src.montant || 0 : 0) + 0.5); })[0];
+        if (trop) { m.textContent = "⛔ Montant de " + (trop.ref || trop.no) + " : vide ou supérieur au reste."; return; }
+        s.objet = "Règlement " + RC.map(function (f) { return f.ref || f.no; }).join(", ");
+        if (src.no) { s.facture = RC[0].no; s.fournisseur = RC[0].fournisseur; s.montant = nb(REG[RC[0].no].mt); }
+        else { s.reglements = RC.map(function (f) { return { facture: f.no, montant: nb(REG[f.no].mt) }; }); s.facture = RC[0].no; s.fournisseur = RC[0].fournisseur; }
+      }
+      if (estAvance()) s.facture = "";
       if (on("ffAchB")) s.achat = { nature: v("ffAN"), categorie: v("ffACat"), article: v("ffAArt"), designation: v("ffADes"), catNouvel: v("ffACatN"),
         carac: { y: v("ffAY"), x: v("ffAX"), kg: v("ffAKg"), unites: v("ffAU"), metres: v("ffAM") }, quantite: nb(v("ffAQ")), expediteur: v("ffAExp"), typeFrais: v("ffATF"),
         articles: Array.prototype.filter.call(document.querySelectorAll(".ffAO"), function (c) { return c.checked; }).map(function (c) { return c.value; }) };
@@ -1427,7 +1492,7 @@
       if (err) { m.textContent = "⛔ Indiquez : " + err + "."; return; }
       var nbP = (FICH.ffP || []).length + ((src.pieces || []).length);
       if (/obligatoire/.test($("ffRegle").textContent) && !nbP) { m.textContent = "⛔ Photo obligatoire (voir ci-dessus)."; return; }
-      var lib = achat ? "Achat " + (t === "Facture d'achat" ? "à payer" : "payé") + (avecF ? "" : " sans facture") + " · " + (s.fourRaison || s.fournisseur) + (s.fourSociete ? " · pour " + s.fourSociete : "") + (s.fourProjet ? " · " + s.fourProjet : "") : (op || t) + (t === "Paiement RH" ? " · " + s.personnel : "");
+      var lib = reglF ? "Règlement " + (s.reglements && s.reglements.length > 1 ? s.reglements.length + " factures" : "facture") + " · " + v("ffFour").trim() : estAvance() ? "Avance · " + v("ffFour").trim() : achat ? "Achat " + (t === "Facture d'achat" ? "à payer" : "payé") + (avecF ? "" : " sans facture") + " · " + (s.fourRaison || s.fournisseur) + (s.fourSociete ? " · pour " + s.fourSociete : "") + (s.fourProjet ? " · " + s.fourProjet : "") : (op || t) + (t === "Paiement RH" ? " · " + s.personnel : "");
       if (!confirm((t === "Opération constatée" ? "Enregistrer : " : "Envoyer la demande : ") + lib + " · " + gnf(s.montant) + " " + s.devise + " ?")) return;
       envoyerFin(src.no ? "modifier" : "creer", src.no ? { demande: s, version: src.version, fichiers: FICH.ffP } : { demande: s, fichiers: FICH.ffP, preuves: $("ffXB") && on("ffXB") ? FICH.ffX : [] }, (src.no ? "Correction " + src.no : lib) + " · " + gnf(s.montant) + " " + s.devise, src.no);
     };
