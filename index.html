@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1f2f45">
+<meta name="color-scheme" id="metaScheme" content="only dark">
 <title>DuoCore</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icone-192.png">
@@ -108,8 +109,9 @@
   body.pc #vueListe:not(.formulaire) .carte > .ligne { max-width: 900px; }
 
   /* ===== Mode jour (body.clair) ===== */
-  body.clair { --fond: #f3f1ed; --tuile: #ffffff; --tuile2: #f1ede7; --bord: #ddd6cc; --texte: #24211d; --doux: #6b645b; --or: #9a6b1f; color-scheme: light; }
-  body:not(.clair) { color-scheme: dark; }
+  :root { color-scheme: only dark; }
+  :root.clair { color-scheme: only light; }
+  body.clair { --fond: #f3f1ed; --tuile: #ffffff; --tuile2: #f1ede7; --bord: #ddd6cc; --texte: #24211d; --doux: #6b645b; --or: #9a6b1f; }
   body.clair .tuile { box-shadow: 0 1px 3px rgba(40,30,20,.08); }
   body.clair .carte { box-shadow: 0 1px 2px rgba(40,30,20,.06); }
   body.clair .tuile.principale { background: linear-gradient(135deg, #fbe9df, #ffffff 60%); border-color: #e6c3b0; }
@@ -165,7 +167,7 @@
 </style>
 </head>
 <body>
-<script>try { if (localStorage.getItem("duocoreTheme") === "clair") document.body.classList.add("clair"); } catch (e) {}</script>
+<script>try { if (localStorage.getItem("duocoreTheme") === "clair") { document.body.classList.add("clair"); document.documentElement.classList.add("clair"); document.getElementById("metaScheme").content = "only light"; } } catch (e) {}</script>
 <header>
   <button id="btnRetour" style="display:none" aria-label="Retour">‹</button>
   <img class="logo" src="icone-192.png" alt="">
@@ -208,6 +210,9 @@
     <label for="choixAffichage">Mode</label>
     <select id="choixAffichage"><option value="auto">Automatique (selon la taille de l'écran)</option><option value="tel">Téléphone</option><option value="pc">PC / tablette</option></select>
     <p class="info" id="infoAffichage"></p>
+    <label for="choixTheme">Thème</label>
+    <select id="choixTheme"><option value="sombre">🌙 Nuit (sombre)</option><option value="clair">☀️ Jour (clair)</option></select>
+    <p class="info">Changé uniquement à la main (ici ou avec le bouton ☀️ / 🌙 en haut) : il ne suit pas le réglage du téléphone ou du PC.</p>
   </div>
   <div class="carte">
     <h3>Serveur</h3>

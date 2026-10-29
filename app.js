@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-02 GT";
+  var VERSION_APP = "2026-11-02 GU";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -477,7 +477,7 @@
     };
     var html = S.gabarit;
     Object.keys(vals).forEach(function (k) { html = html.split(k).join(vals[k]); });
-    if (!document.body.classList.contains("clair")) html = html.replace("</head>", STYLE_SOMBRE_LOT + "</head>");
+    html = html.replace("</head>", (document.body.classList.contains("clair") ? "<style>:root{color-scheme:only light}</style>" : STYLE_SOMBRE_LOT.replace("<style>", "<style>:root{color-scheme:only dark}")) + "</head>");
     S.lotOuvert = lot;
     $("titre").textContent = lot.cle + " · " + lot.bdc;
     montrer("vueLot");
@@ -851,12 +851,15 @@
   var PL = { id: null, onglet: "lignes" };
   /* Mode jour / nuit : bouton ☀️ / 🌙 de l'en-tête, gardé sur l'appareil. */
   function appliquerTheme(clair) {
-    document.body.classList.toggle("clair", !!clair);
+    document.body.classList.toggle("clair", !!clair); document.documentElement.classList.toggle("clair", !!clair);
+    if ($("metaScheme")) $("metaScheme").content = clair ? "only light" : "only dark";   // le navigateur ne doit pas changer le thème tout seul
+    if ($("choixTheme")) $("choixTheme").value = clair ? "clair" : "sombre";
     if ($("btnTheme")) { $("btnTheme").textContent = clair ? "🌙" : "☀️"; $("btnTheme").title = clair ? "Passer en mode nuit" : "Passer en mode jour"; }
     try { localStorage.setItem("duocoreTheme", clair ? "clair" : "sombre"); } catch (e) {}
   }
   setTimeout(function () {
     appliquerTheme(document.body.classList.contains("clair"));
+    if ($("choixTheme")) $("choixTheme").onchange = function () { appliquerTheme(this.value === "clair"); };
     if ($("btnTheme")) $("btnTheme").onclick = function () {
       appliquerTheme(!document.body.classList.contains("clair"));
       if (S.lotOuvert && $("vueLot").style.display !== "none") ouvrirLot(S.lotOuvert.bdc, S.lotOuvert.cle, true);   // page du lot redessinée
