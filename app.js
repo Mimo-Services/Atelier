@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-03 GV";
+  var VERSION_APP = "2026-11-03 GW";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -292,6 +292,7 @@
       var nC = comRetards().length;
       tuile("commercial", "🤝", "Commercial", "Contrats, BL, factures", nC ? { badge: "⏰" + nC, bcls: "rouge", cls: "large" } : { cls: "large" });
     }
+    if (droitTreso()) tuile("treso", "🏦", "Trésorerie", S.formulaires.droits.validation === "Walid" || S.formulaires.droits.validation === "DG" ? "Tous les comptes" : "Vos comptes", { cls: "large" });
     if (droitMis()) {
       var nM = misNbBadge();
       tuile("missions", "🎯", "Missions", S.mis && S.mis.direction ? "Équipe, clôture" : "Mes missions", nM ? { badge: nM, bcls: "rouge", cls: "large" } : { cls: "large" });
@@ -313,6 +314,7 @@
         else if (id === "rh") afficherRH();
         else if (id === "commercial") afficherCom();
         else if (id === "missions") afficherMis();
+        else if (id === "treso") afficherTreso();
         else if (id === "planif") { if (modePC()) afficherPlanifPC(); else afficherPlanif(); }
         else if (id === "attente") afficherListe("attente");
         else if (id === "corriger") afficherListe("corriger");
@@ -327,7 +329,7 @@
     if ($("btnConnexion")) $("btnConnexion").onclick = pageConnexion;
     if ($("btnDeconnexion")) $("btnDeconnexion").onclick = function () {
       if (S.file.some(function (x) { return x.type === "form"; }) && !confirm("Des saisies sont en attente d'envoi : elles partiront quand même. Changer d'agent ?")) return;
-      S.agent = null; S.formulaires = null; S.planif = null; S.fin = null; S.rh = null; S.com = null; S.mis = null; FOUR.liste = null; FOUR.fiches = {}; ecrire("four", null); ecrire("com", null); ecrire("mis", null); ecrire("agent", null); ecrire("formulaires", null); ecrire("planif", null); ecrire("fin", null); ecrire("rh", null); montrer("vueAccueil");
+      S.agent = null; S.formulaires = null; S.planif = null; S.fin = null; S.rh = null; S.com = null; S.mis = null; S.treso = null; TRV.releves = {}; ecrire("treso", null); FOUR.liste = null; FOUR.fiches = {}; ecrire("four", null); ecrire("com", null); ecrire("mis", null); ecrire("agent", null); ecrire("formulaires", null); ecrire("planif", null); ecrire("fin", null); ecrire("rh", null); montrer("vueAccueil");
     };
 
     var d = S.donnees;
@@ -1354,7 +1356,7 @@
   function afficherSoldes(onglet) {
     var F = S.fin, D = F.demandes, now = Date.now();
     $("titre").textContent = "Soldes";
-    var h = "<div class='carte'><div class='onglets'>" + [["fournisseurs", "🏭 Fournisseurs"], ["tresorerie", "🏦 Trésorerie"]].map(function (o) {
+    var h = "<div class='carte'><div class='onglets'>" + [["fournisseurs", "🏭 Fournisseurs"]].map(function (o) {
       return "<button data-s='" + o[0] + "' class='" + (onglet === o[0] ? "actif" : "") + "' style='border-radius:10px;border-bottom:1px solid var(--bord)'>" + o[1] + "</button>"; }).join("") +
       "</div><div class='info' style='margin-top:6px'>Données du " + dateCourte(F.recu || F.genere) + " (⟳ pour actualiser).</div></div>";
     if (onglet === "fournisseurs") {
@@ -2466,6 +2468,79 @@
     api({ api: "finFour", nom: nom }).then(function (r) { FOUR.fiches[nom] = r; if ($("ftS")) dessiner(""); }, function (e) { if ($("ftS")) dessiner("⛔ " + e.message + (FOUR.fiches[nom] ? " (dernière copie)" : "")); });
   }
 
+  /* ---------- 🏦 Trésorerie : consultation des comptes (DG, WALID : tous ; autres : comptes attribués) ---------- */
+  function droitTreso() { return !!(S.agent && S.formulaires && S.formulaires.droits && S.formulaires.droits.treso); }
+  var TRV = { releves: {}, du: "", au: "" };
+  function afficherTreso() {
+    $("titre").textContent = "Trésorerie";
+    function dessiner(msg) {
+      var T = S.treso, h = "<div class='carte pleine'><h3>🏦 Comptes et caisses</h3><div class='info'>" + (T ? (T.tous ? "Tous les comptes" : "Vos comptes") + " · données du " + dateCourte(T.recu || T.genere) : "") + (msg ? " · " + esc(msg) : "") + "</div></div>";
+      if (T) {
+        var G = {}; T.comptes.forEach(function (c) { var g = c.type === "Caisse" ? "Caisses" : "Comptes bancaires"; (G[g] = G[g] || []).push(c); });
+        Object.keys(G).forEach(function (g) {
+          h += "<div class='carte pleine'><h3>" + esc(g) + "</h3></div>" + G[g].map(function (c) {
+            var apres = c.solde - c.aPayer + c.aRecevoir;
+            return "<div class='carte' data-tr='" + esc(c.nom) + "' style='cursor:pointer'><div class='ligne' style='justify-content:space-between'><b>" + esc(c.nom) + "</b>" +
+              "<b style='flex:0;white-space:nowrap" + (c.solde < 0 ? ";color:#c62828" : "") + "'>" + gnf(c.solde) + " " + esc(c.devise) + "</b></div>" +
+              "<div class='info'>" + [c.societe, c.aPayer ? "à payer " + gnf(c.aPayer) : "", c.aRecevoir ? "à recevoir " + gnf(c.aRecevoir) : "", c.enValidation ? "en validation " + gnf(c.enValidation) : ""].filter(String).map(esc).join(" · ") + "</div>" +
+              (c.aPayer || c.aRecevoir ? "<div style='font-size:13px;font-weight:700;color:" + (apres < 0 ? "#c62828" : "#2e7d32") + "'>Après paiements : " + gnf(apres) + " " + esc(c.devise) + "</div>" : "") + "</div>";
+          }).join("");
+        });
+      }
+      $("vueListe").innerHTML = h; montrer("vueListe");
+      Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-tr]"), function (el) { el.onclick = function () { ficheTreso(el.getAttribute("data-tr")); }; });
+    }
+    dessiner(S.treso ? "mise à jour…" : "chargement…");
+    api({ api: "treso" }).then(function (r) { r.recu = Date.now(); S.treso = r; ecrire("treso", r); dessiner(""); },
+      function (e) { dessiner("⛔ " + e.message + (S.treso ? " (dernière copie)" : "")); });
+  }
+  function ficheTreso(nom) {
+    $("titre").textContent = nom;
+    var c = (S.treso && S.treso.comptes.filter(function (x) { return x.nom === nom; })[0]) || { nom: nom, devise: "", solde: 0 };
+    function dessiner(msg) {
+      var R = TRV.releves[nom + "|" + TRV.du + "|" + TRV.au], dev = c.devise;
+      var h = "<div class='carte'><h3>🏦 " + esc(nom) + "</h3><table><tr><td>Solde actuel</td><td class='v'>" + gnf(c.solde) + " " + esc(dev) + "</td></tr>" +
+        (c.aPayer ? "<tr><td>Validé, à payer</td><td class='v'>− " + gnf(c.aPayer) + "</td></tr>" : "") + (c.aRecevoir ? "<tr><td>À recevoir</td><td class='v'>+ " + gnf(c.aRecevoir) + "</td></tr>" : "") +
+        (c.aPayer || c.aRecevoir ? "<tr><td><b>Après paiements</b></td><td class='v'><b>" + gnf(c.solde - c.aPayer + c.aRecevoir) + " " + esc(dev) + "</b></td></tr>" : "") +
+        (c.enValidation ? "<tr><td>En validation (non compté)</td><td class='v'>" + gnf(c.enValidation) + "</td></tr>" : "") + "</table>" + (msg ? "<div class='info'>" + esc(msg) + "</div>" : "") + "</div>" +
+        "<div class='carte'><div class='ligne'><div><label>Du</label><input id='trDu' type='date' value='" + TRV.du + "'></div><div><label>Au</label><input id='trAu' type='date' value='" + TRV.au + "'></div></div>" +
+        "<button class='bouton' id='trPdf'>📄 Relevé PDF</button></div>";
+      if (R && R.engagements.length) h += "<div class='carte'><h3>Engagements DuoCore</h3>" + R.engagements.map(function (x) {
+        return "<div class='info' data-no='" + esc(x.no) + "' style='cursor:pointer'>" + esc(x.no) + " · " + esc(x.libelle) + " · <b>" + (x.sortie ? "− " + gnf(x.sortie) : "+ " + gnf(x.entree)) + "</b> · " + esc(x.statut) + "</div>"; }).join("") + "</div>";
+      if (R) {
+        var L = R.lignes.slice().reverse();
+        h += "<div class='carte pleine'><h3>Relevé</h3>" + (R.message ? "<div class='info'>" + esc(R.message) + "</div>" : "") + (R.tronque ? "<div class='info'>400 dernières opérations (choisissez une période pour remonter plus loin).</div>" : "") +
+          (L.length && !modePC() ? L.map(function (l) {   // téléphone : une ligne par opération
+            return "<div style='border-bottom:1px solid var(--bord);padding:7px 0'><div class='ligne' style='justify-content:space-between'><span>" + jourLib(l.date).substring(0, 5) + " · <b>" + esc(l.op) + "</b></span>" +
+              "<b style='flex:0;white-space:nowrap;color:" + (l.debit ? "#c62828" : "#2e7d32") + "'>" + (l.debit ? "− " + gnf(l.debit) : "+ " + gnf(l.credit)) + "</b></div>" +
+              "<div class='ligne' style='justify-content:space-between'><span class='info' style='font-size:12.5px'>" + esc(l.libelle) + " · " + esc(l.debit ? "→ " + l.benef : "← " + l.source) + "</span><span class='info' style='flex:0;white-space:nowrap;font-size:12.5px'>solde " + gnf(l.solde) + "</span></div></div>";
+          }).join("") + "<div class='info' style='padding-top:6px'>Solde de début : " + gnf(R.report) + "</div>" :
+           L.length ? "<table><tr><td><b>Date</b></td><td><b>Opération</b></td><td class='v'><b>Débit</b></td><td class='v'><b>Crédit</b></td><td class='v'><b>Solde</b></td></tr>" + L.map(function (l) {
+            return "<tr><td>" + jourLib(l.date) + "</td><td style='white-space:normal'>" + esc(l.op) + "<div class='info' style='font-size:11.5px'>" + esc(l.libelle) + " · " + esc(l.debit ? "→ " + l.benef : "← " + l.source) + (l.cat ? " · " + esc(l.cat) : "") + "</div></td>" +
+              "<td class='v' style='color:#c62828'>" + (l.debit ? gnf(l.debit) : "") + "</td><td class='v' style='color:#2e7d32'>" + (l.credit ? gnf(l.credit) : "") + "</td><td class='v'><b>" + gnf(l.solde) + "</b></td></tr>"; }).join("") +
+            "<tr><td></td><td><i>Solde de début</i></td><td></td><td></td><td class='v'>" + gnf(R.report) + "</td></tr></table>" : "<div class='info'>Aucune opération sur la période.</div>") + "</div>";
+      }
+      $("vueListe").innerHTML = h; montrer("vueListe");
+      ["trDu", "trAu"].forEach(function (id) { $(id).onchange = function () { TRV.du = $("trDu").value; TRV.au = $("trAu").value; charger(); }; });
+      Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-no]"), function (el) { el.onclick = function () { var no = el.getAttribute("data-no"); if (S.fin && S.fin.demandes.some(function (x) { return x.no === no; })) ouvrirDemandeFin(no); }; });
+      $("trPdf").onclick = function () {
+        $("trPdf").disabled = true; $("trPdf").textContent = "⏳ PDF…";
+        api({ api: "tresoPdf", compte: nom, du: TRV.du, au: TRV.au }, 120000).then(function (r) {
+          var blob = base64Blob(r.pdf), fi = new File([blob], r.nom, { type: "application/pdf" });
+          if (navigator.canShare && navigator.canShare({ files: [fi] }) && confirm("Partager le relevé ? (Annuler = l'ouvrir)")) navigator.share({ files: [fi], title: r.nom }).catch(function () {});
+          else { var u = URL.createObjectURL(blob); if (!window.open(u, "_blank")) { var a = document.createElement("a"); a.href = u; a.download = r.nom; document.body.appendChild(a); a.click(); a.remove(); } }
+          dessiner("");
+        }, function (e) { alert("⛔ Relevé : " + e.message); dessiner(""); });
+      };
+    }
+    function charger() {
+      dessiner("⏳ chargement du relevé…");
+      api({ api: "tresoReleve", compte: nom, du: TRV.du, au: TRV.au }).then(function (r) { TRV.releves[nom + "|" + TRV.du + "|" + TRV.au] = r; if ($("trDu")) dessiner(""); },
+        function (e) { if ($("trDu")) dessiner("⛔ " + e.message + " (réseau nécessaire)"); });
+    }
+    charger();
+  }
+
   function ouvrirDepuisNotif(d) {
     synchroniser(true).catch(function () {}).then(function () {
       if (d.vue === "finances" && typeof afficherFinances === "function") afficherFinances(d.id);
@@ -2962,7 +3037,8 @@
   }
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function () {});
 
-  Promise.all(["url", "donnees", "gabarit", "gv", "file", "envoyes", "aCorriger", "recents", "derniereSync", "agent", "formulaires", "planif", "planifLocal", "affichage", "fin", "rh", "com", "mis"].map(lire)).then(function (v) {
+  Promise.all(["url", "donnees", "gabarit", "gv", "file", "envoyes", "aCorriger", "recents", "derniereSync", "agent", "formulaires", "planif", "planifLocal", "affichage", "fin", "rh", "com", "mis", "treso"].map(lire)).then(function (v) {
+    S.treso = v[18] || null;
     S.fin = v[14] || null; S.rh = v[15] || null; S.com = v[16] || null; S.mis = v[17] || null;
     S.agent = v[9] || null; S.formulaires = v[10] || null; S.planif = v[11] || null; S.planifLocal = v[12] || {}; S.affichage = v[13] || "auto";
     $("choixAffichage").value = S.affichage; majClassePC();
