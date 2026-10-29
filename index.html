@@ -70,6 +70,14 @@
   h3 { color: var(--texte); }
 
 
+  /* ===== Accueil : sections, tuiles toutes de même taille (téléphone : 3 colonnes) ===== */
+  .sect { grid-column: 1 / -1; font-size: 12px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; color: var(--doux); margin: 8px 2px -4px; }
+  .sect:first-child { margin-top: 0; }
+  body:not(.pc) .grille { grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  body:not(.pc) .tuile, body:not(.pc) .tuile.large { grid-column: auto; flex-direction: column; min-height: 106px; gap: 6px; padding: 12px 4px; border-radius: 16px; font-size: 13.5px; line-height: 1.2; }
+  body:not(.pc) .tuile .ico { font-size: 34px; }
+  body:not(.pc) .tuile .det { font-size: 11px; margin-top: 0; line-height: 1.2; }
+  body:not(.pc) .badge { top: 6px; right: 6px; font-size: 11px; padding: 2px 7px; }
   /* ===== Affichage PC / tablette (body.pc) : plus large, grilles, fiches sur deux colonnes ===== */
   body.pc { font-size: 16px; }
   body.pc main { max-width: 1280px; padding: 86px 28px 40px; }

@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-04 GY";
+  var VERSION_APP = "2026-11-05 GZ";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -275,11 +275,14 @@
         (opt.badge ? "<span class='badge" + (opt.bcls ? " " + opt.bcls : "") + "'>" + esc(opt.badge) + "</span>" : "") +
         "<span class='ico'>" + ico + "</span><span>" + esc(lib) + "</span>" + (det ? "<span class='det'>" + esc(det) + "</span>" : "") + "</div>");
     }
+    function section(titre) { t.push("<div class='sect'>" + titre + "</div>"); }
+    section("Atelier");
     tuile("scan", "📷", "Scanner une fiche", "Atelier", { cls: "principale" });
     tuile("manuel", "🔢", "Lot sans QR", S.recents.length ? "Derniers lots" : "");
     Object.keys(fs).forEach(function (k) {
       tuile("form:" + k, k === "stock" ? "📦" : "🧾", fs[k].nom || fs[k].titre || k, fs[k].erreur ? "indisponible" : "");
     });
+    if (droitPlanif() || droitFin() || droitRH() || droitCom() || droitTreso() || droitMis()) section("Gestion");
     if (droitPlanif()) {
       var nPl = S.file.filter(function (x) { return x.type === "planif"; }).length;
       tuile("planif", "🗂️", "Planification", "BDC, saisie", nPl ? { badge: nPl, bcls: "orange", cls: "large" } : { cls: "large" });
@@ -290,7 +293,7 @@
     }
     if (droitRH()) {
       var nR = rhNbATraiter();
-      tuile("rh", "👥", "Ressources humaines", S.rh && S.rh.direction ? "Personnel, validation" : "Personnel, événements", nR ? { badge: nR, bcls: "rouge", cls: "large" } : { cls: "large" });
+      tuile("rh", "👥", "RH", S.rh && S.rh.direction ? "Personnel, validation" : "Personnel, événements", nR ? { badge: nR, bcls: "rouge", cls: "large" } : { cls: "large" });
     }
     if (droitCom()) {
       var nC = comRetards().length;
@@ -301,6 +304,7 @@
       var nM = misNbBadge();
       tuile("missions", "🎯", "Missions", S.mis && S.mis.direction ? "Équipe, clôture" : "Mes missions", nM ? { badge: nM, bcls: "rouge", cls: "large" } : { cls: "large" });
     }
+    section("Appareil");
     if (!S.agent && S.url) tuile("connexion", "🔐", "Saisies", "Se connecter");
     tuile("attente", "⏳", "En attente", S.file.length ? "à envoyer" : "rien", S.file.length ? { badge: S.file.length, bcls: "orange" } : {});
     tuile("corriger", "⛔", "À corriger", S.aCorriger.length ? "refusés" : "rien", S.aCorriger.length ? { badge: S.aCorriger.length, bcls: "rouge" } : {});
