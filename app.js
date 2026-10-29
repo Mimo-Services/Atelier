@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-02 GU";
+  var VERSION_APP = "2026-11-03 GV";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -996,7 +996,7 @@
     var nouv = S.file.filter(function (x) { return x.type === "fin" && x.op === "creer"; });
     var h = "<div class='carte'><h3>💰 Finances</h3><div class='info'>" + esc(F.agent) + (F.role ? " · valideur " + esc(F.role) : F.comptable ? " · comptable (lecture)" : "") + " · données du " + dateCourte(F.recu || F.genere) + "</div>" +
       "<div class='ligne'><button class='bouton' id='fnNouv'>➕ Nouvelle demande</button><button class='bouton second' id='fnFour'>🏭 Fournisseurs</button></div>" +
-      (F.role || F.comptable ? "<div class='ligne'><button class='bouton second' id='fnSol'>📊 Soldes</button><button class='bouton second' id='fnExp'>📤 Export du mois</button></div>" : "") +
+      (F.role || F.comptable ? "<div class='ligne'><button class='bouton second' id='fnSol'>📊 Soldes</button><button class='bouton second' id='fnIc'>🔁 Inter-sociétés</button><button class='bouton second' id='fnExp'>📤 Export du mois</button></div>" : "") +
       (F.suiviAchat || F.comptable ? "<button class='bouton second' id='fnAch'>📦 Suivi des achats (" + ((F.achat && F.achat.ouverts) || []).length + ")</button>" : "") +
       "<div class='onglets' style='margin-top:10px'>" + [["traiter", "À traiter (" + finNbATraiter() + ")"], ["miennes", "Mes demandes"]].concat(F.role || F.comptable ? [["toutes", "Toutes"]] : [])
         .map(function (o) { return "<button data-f='" + o[0] + "' class='" + (FIN.filtre === o[0] ? "actif" : "") + "' style='border-radius:10px;border-bottom:1px solid var(--bord)'>" + o[1] + "</button>"; }).join("") + "</div>" +
@@ -1015,7 +1015,7 @@
         var att = finAttente(d.no).length;
         return "<div class='carte" + (att ? " att" : "") + "' data-no='" + esc(d.no) + "' style='cursor:pointer'><div class='ligne' style='justify-content:space-between'><b>" + esc(d.no) + " · " + esc(libelleFin(d)) + "</b>" +
           "<b style='flex:0;white-space:nowrap'>" + gnf(d.montant) + " " + esc(d.devise) + "</b></div>" +
-          "<div class='info'>" + esc(d.fournisseur || d.objet || d.compte || "") + " · " + esc(d.demandeur) + " · " + dateCourte(d.date) + "</div>" +
+          "<div class='info'>" + esc(d.fournisseur || d.objet || d.compte || "") + (d.pourCompte ? " · <b>pour " + esc(d.pourCompte) + "</b>" : "") + " · " + esc(d.demandeur) + " · " + dateCourte(d.date) + "</div>" +
           "<div style='color:" + (COUL_ST[d.statut] || "#999") + ";font-weight:700;font-size:14px'>" + esc(statutFin(d)) + (att ? " · ⏳ action en attente d'envoi" : "") +
           (d.solde ? " · reste " + gnf(d.solde.reste) + " GNF" : "") + "</div></div>";
       }).join("") || "<p class='info' style='padding:0 4px'>Rien ici.</p>";
@@ -1028,6 +1028,7 @@
     if ($("fnAch")) $("fnAch").onclick = function () { afficherSuiviAchats(); };
     if ($("fnSol")) $("fnSol").onclick = function () { afficherSoldes("fournisseurs"); };
     if ($("fnExp")) $("fnExp").onclick = exporterFin;
+    if ($("fnIc")) $("fnIc").onclick = afficherInterco;
   }
 
   // Pièce : image affichée, PDF ouvert ; gardée en mémoire le temps de la session.
@@ -1066,7 +1067,7 @@
       ligne("Objet", esc(d.objet)) + ligne("Mode", esc(d.mode)) + ligne("Compte", esc(d.compte) + (d.contrepartie ? " → " + esc(d.contrepartie) : "")) +
       ligne("Personnel", esc(d.personnel) + (d.motifRH ? " · " + esc(d.motifRH) : "")) +
       ligne("Achat", d.achat ? esc(d.achat.nature + " · " + (d.achat.article || d.achat.designation || (d.achat.articles || []).join(", ")) + (d.achat.quantite ? " · qté " + d.achat.quantite : "")) + (d.achatId ? " [" + esc(d.achatId) + "]" : "") : "") +
-      ligne("Bénéficiaire", esc(d.beneficiaire)) + ligne("Catégorie", esc(d.categorie)) + ligne(d.type === "Paiement RH" ? "Équivalent" : "Reçu", d.recu ? gnf(d.recu) + " " + esc(d.deviseRecue) : "") +
+      ligne("Pour le compte de", d.pourCompte ? "<b>" + esc(d.pourCompte) + "</b> (dette envers " + esc(d.societe) + ")" : "") + ligne("Bénéficiaire", esc(d.beneficiaire)) + ligne("Catégorie", esc(d.categorie)) + ligne(d.type === "Paiement RH" ? "Équivalent" : "Reçu", d.recu ? gnf(d.recu) + " " + esc(d.deviseRecue) : "") +
       ligne("Mois", d.dateEffet ? moisLib(d.dateEffet) : "") +
       ligne("Base", d.ligneBase ? "ligne " + esc(d.ligneBase) : "") + ligne("Société", esc(d.societe)) + ligne("Échéance", d.echeance ? dateCourte(d.echeance).split(" ")[0] : "") +
       ligne("Demandeur", esc(d.demandeur) + " · " + dateCourte(d.date)) +
@@ -1191,7 +1192,8 @@
     var h = "<div class='carte'><label>Type</label><select id='ffType'>" + opts(types, src.type || "Règlement fournisseur") + "</select>" +
       "<div id='ffOpB'><label>Mouvement</label><select id='ffOp'>" + opts(F.opsBanque, src.type === "Mouvement de trésorerie" ? src.op : "", "— choisir —") + "</select></div>" +
       "<div id='ffOcB'><label>Opération constatée (sans validation)</label><select id='ffOc'>" + opts(F.opsConstatees || [], src.type === "Opération constatée" ? src.op : "", "— choisir —") + "</select></div>" +
-      "<label>Société</label><select id='ffSoc'>" + opts(["AB", "M2S"], src.societe || "AB") + "</select>" +
+      "<div class='ligne'><div><label>Société (payeuse)</label><select id='ffSoc'>" + opts(["AB", "M2S"], src.societe || "AB") + "</select></div>" +
+      "<div id='ffPcB'><label>Pour le compte de</label><select id='ffPc'><option value=''>— elle-même —</option>" + (F.pourCompte || ["CASAFINO"]).map(function (x) { return "<option" + (x === src.pourCompte ? " selected" : "") + ">" + esc(x) + "</option>"; }).join("") + "</select></div></div>" +
       "<div id='ffRhB'><div class='ligne'><div><label>Personnel</label><select id='ffPers'>" + opts(F.personnel || [], src.personnel, "— choisir —") + "</select></div>" +
       "<div><label>Motif</label><select id='ffMotRH'>" + opts(F.motifsRH || [], src.motifRH, "— choisir —") + "</select></div></div>" +
       "<div id='ffMoisB'><label>Mois du salaire</label><input id='ffMois' type='month' value='" + (src.dateEffet ? new Date(src.dateEffet).toISOString().slice(0, 7) : "") + "'></div></div>" +
@@ -1259,6 +1261,7 @@
         else if (op === "Virement") { srcL = BA; dstL = BA; lS = "Depuis le compte"; lD = "Vers le compte (ou bénéficiaire)"; }
         else if (op === "Dépôt de chèque") { srcL = BA; dstL = BA; lS = "Chèque tiré sur"; lD = "Déposé sur"; }
         else if (op === "Transfert entre caisses") { srcL = CA; dstL = CA; lS = "Depuis la caisse"; lD = "Vers la caisse"; }
+        else if (op === F.opRemb) { srcL = F.comptes.filter(function (c) { return c.societe === "CASAFINO"; }); dstL = F.comptes.filter(function (c) { return c.societe === "AB" || c.societe === "M2S"; }); lS = "Depuis le compte CasaFino"; lD = "Vers le compte AB / M2S"; }
       }
       function remplir(id, L, val, vide) { var cur = $(id).value || val || ""; $(id).innerHTML = (vide ? "<option value=''>" + vide + "</option>" : "") + L.map(function (c) { return "<option" + (c.nom === cur ? " selected" : "") + ">" + esc(c.nom) + "</option>"; }).join(""); }
       remplir("ffCpt", srcL, src.compte, "— choisir —"); remplir("ffCtp", dstL || [], src.contrepartie, op === "Virement" ? "— bénéficiaire externe —" : "— choisir —");
@@ -1279,7 +1282,11 @@
       var four = v("ffFour"), fc = F.fournisseurs.filter(function (f) { return f.nom.toLowerCase() === four.toLowerCase(); })[0], connu = !!fc;
       vis("ffNouvF", on("ffFourB") && four && !connu);
       // Compte réservé à une société : société imposée.
-      if (fc && fc.societe && on("ffFourB")) { $("ffSoc").value = fc.societe; $("ffSoc").disabled = true; } else $("ffSoc").disabled = false;
+      var pourC = fc && (F.pourCompte || ["CASAFINO"]).indexOf(fc.societe) >= 0;
+      if (fc && fc.societe && !pourC && on("ffFourB")) { $("ffSoc").value = fc.societe; $("ffSoc").disabled = true; } else $("ffSoc").disabled = false;
+      // Pour le compte de CasaFino : facture, règlement, dépense ; imposé par un compte fournisseur de CasaFino.
+      vis("ffPcB", t === "Facture d'achat" || (t === "Règlement fournisseur" && !v("ffFact")) || t === "Dépense de caisse");
+      if (pourC && on("ffFourB")) { $("ffPc").value = fc.societe; $("ffPc").disabled = true; } else $("ffPc").disabled = false;
       $("ffFourI").textContent = fc ? [fc.raison && fc.raison !== fc.nom ? fc.raison : "", fc.societe ? "compte " + fc.societe : "", fc.projet ? "projet " + fc.projet : "", fc.article ? "article " + fc.article : ""].filter(String).join(" · ")
         : four && on("ffFourB") ? "Nouveau compte : il sera créé (vous pourrez préciser société, projet, article dans 🏭 Fournisseurs)." : "";
       var fa = null;
@@ -1295,7 +1302,7 @@
       vis("ffCatB", !catAuto);
       var cat = on("ffCatB") ? v("ffCat") : fa ? fa.categorie : "";
       // Bloc achat : catégorie Fourniture (sauf règlement d'une facture qui porte déjà l'achat).
-      vis("ffAchB", on("ffCatB") && (cat === "Fourniture Locale" || cat === "Fourniture Importee") && t !== "Opération constatée");
+      vis("ffAchB", on("ffCatB") && (cat === "Fourniture Locale" || cat === "Fourniture Importee") && t !== "Opération constatée" && !(on("ffPcB") && v("ffPc")));
       if (on("ffAchB")) {
         var n = v("ffAN"); vis("ffAEx", n === "Article existant"); vis("ffANv", n === "Nouvel article"); vis("ffAQt", n === "Article existant" || n === "Nouvel article"); vis("ffAFr", n === "Frais");
         var ca = v("ffACat"), artCur = $("ffAArt").value || A0.article || "";
@@ -1309,7 +1316,7 @@
       var gros = g >= (F.seuil || 5000000), regle;
       if (t === "Opération constatée") regle = "aucune (constatée, inscrite directement)";
       else regle = t === "Facture d'achat" || (t === "Dépense de caisse" && gros) || (t === "Règlement fournisseur" && !((mode === "Espèces" || mode === "Chèque") && !gros)) ||
-        (t === "Paiement RH" && !(mode === "Espèces" && !gros)) || (t === "Mouvement de trésorerie" && !((op === "Dépôt de chèque" || op === "Transfert entre caisses") && !gros)) ? "Walid puis DG" : "Walid";
+        (t === "Paiement RH" && !(mode === "Espèces" && !gros)) || (t === "Mouvement de trésorerie" && !((op === "Dépôt de chèque" || op === "Transfert entre caisses" || op === F.opRemb) && !gros)) ? "Walid puis DG" : "Walid";
       var photo = t === "Facture d'achat" ? "photo de la facture obligatoire" : (t === "Règlement fournisseur" && mode === "Chèque") || (t === "Mouvement de trésorerie" && (op === "Dépôt de chèque" || op === "Retrait")) ? "photo du chèque obligatoire" : "pièces facultatives";
       $("ffRegle").innerHTML = "🔐 Validation : <b>" + regle + "</b> · 📷 " + photo + (t !== "Facture d'achat" && t !== "Opération constatée" ? " · preuve du paiement à joindre après validation" + (t === "Dépense de caisse" ? " (facultative)" : "") : "");
       $("ffEnv").textContent = t === "Opération constatée" ? "📒 Enregistrer" : "📤 Envoyer la demande";
@@ -1319,7 +1326,7 @@
     maj();
     $("ffEnv").onclick = function () {
       var t = v("ffType"), m = $("ffMsg"), op = t === "Mouvement de trésorerie" ? v("ffOp") : t === "Opération constatée" ? v("ffOc") : "";
-      var s = { no: src.no, type: t, op: op, societe: v("ffSoc"), fournisseur: on("ffFourB") ? v("ffFour") : "", facture: t === "Règlement fournisseur" ? v("ffFact") : "",
+      var s = { no: src.no, type: t, op: op, societe: v("ffSoc"), pourCompte: on("ffPcB") ? v("ffPc") : "", fournisseur: on("ffFourB") ? v("ffFour") : "", facture: t === "Règlement fournisseur" ? v("ffFact") : "",
         refFacture: t === "Facture d'achat" ? v("ffRef") : "", echeance: t === "Facture d'achat" ? v("ffEch") : "", objet: v("ffObj"), montant: nb(v("ffMt")), devise: v("ffDev"), taux: nb(v("ffTaux")),
         mode: on("ffModeB") ? v("ffMode") : t === "Dépense de caisse" ? "Espèces" : "", compte: t === "Facture d'achat" ? "" : v("ffCpt"), contrepartie: on("ffCtpB") ? v("ffCtp") : "",
         beneficiaire: on("ffBenB") ? v("ffBen") : "", commentaire: v("ffCom"), personnel: t === "Paiement RH" ? v("ffPers") : "", motifRH: t === "Paiement RH" ? v("ffMotRH") : "",
@@ -2302,7 +2309,7 @@
       var L = (FOUR.liste && FOUR.liste.fournisseurs) || [];
       $("vueListe").innerHTML = "<div class='carte'><h3>🏭 Fournisseurs et prestataires</h3><div class='info'>" + (FOUR.liste ? "Données du " + dateCourte(FOUR.liste.recu) : "") + (msg ? " · " + esc(msg) : "") + "</div>" +
         "<button class='bouton' id='foNouv'>➕ Nouveau compte fournisseur / prestataire</button>" +
-        "<div class='ligne'><input id='foQ' placeholder='Rechercher (nom, projet, article)' value='" + esc(FOUR.q) + "'><select id='foS' style='flex:0 0 130px'><option value=''>AB + M2S</option><option" + (FOUR.soc === "AB" ? " selected" : "") + ">AB</option><option" + (FOUR.soc === "M2S" ? " selected" : "") + ">M2S</option></select></div>" +
+        "<div class='ligne'><input id='foQ' placeholder='Rechercher (nom, projet, article)' value='" + esc(FOUR.q) + "'><select id='foS' style='flex:0 0 130px'><option value=''>AB + M2S</option><option" + (FOUR.soc === "AB" ? " selected" : "") + ">AB</option><option" + (FOUR.soc === "M2S" ? " selected" : "") + ">M2S</option><option" + (FOUR.soc === "CASAFINO" ? " selected" : "") + ">CASAFINO</option></select></div>" +
         "<label style='font-weight:400'><input type='checkbox' id='foI' style='width:auto'" + (FOUR.inactifs ? " checked" : "") + "> afficher les comptes désactivés</label>" +
         "<div class='info'>Un compte par société, projet ou article si besoin (soldes séparés). Solde = facturé − payé (positif : reste dû ; négatif : avance).</div></div><div id='foL'></div>";
       montrer("vueListe");
@@ -2326,6 +2333,38 @@
     api({ api: "finFour" }).then(function (r) { r.recu = Date.now(); FOUR.liste = r; ecrire("four", r); if ($("foL")) dessiner(""); },
       function (e) { if ($("foL")) dessiner("⛔ " + e.message + " (dernière copie affichée)"); });
   }
+  /* 🔁 Comptes entre sociétés : ce que CasaFino doit à AB / M2S. */
+  function afficherInterco() {
+    $("titre").textContent = "Inter-sociétés";
+    $("vueListe").innerHTML = "<div class='carte'><h3>🔁 Comptes entre sociétés</h3><p class='info'>⏳ Chargement…</p></div>"; montrer("vueListe");
+    api({ api: "finInterco" }).then(function (r) {
+      var soc = ["AB", "M2S"], h = "<div class='carte pleine'><h3>🔁 CasaFino ↔ AB / M2S</h3><div class='info'>Dette de CasaFino : paiements faits pour son compte − remboursements − compensations / apports.</div>" +
+        "<table>" + soc.map(function (s) { var v = r.soldes["CASAFINO|" + s] || 0; return "<tr><td>CasaFino doit à <b>" + s + "</b></td><td class='v' style='color:" + (v > 0 ? "#c62828" : "inherit") + "'>" + gnf(v) + " GNF</td></tr>"; }).join("") + "</table>" +
+        (r.direction ? "<div class='ligne'><button class='bouton second' id='icRemb'>💸 Remboursement (mouvement)</button><button class='bouton second' id='icComp'>⚖️ Compensation / apport</button></div>" : "") + "</div>";
+      soc.forEach(function (s) {
+        var solde = 0, L = r.mouvements.filter(function (m) { return m.societe === s; });
+        if (!L.length) return;
+        h += "<div class='carte'><h3>" + s + "</h3><table><tr><td><b>Date</b></td><td><b>Opération</b></td><td class='v'><b>Dû</b></td><td class='v'><b>Remb.</b></td><td class='v'><b>Solde</b></td></tr>" +
+          L.map(function (m) { solde += m.du - m.rembourse; return "<tr" + (m.no ? " data-no='" + esc(m.no) + "' style='cursor:pointer'" : "") + "><td>" + jourLib(m.date).substring(0, 5) + "</td><td style='white-space:normal'>" + esc(m.op) + (m.no ? "<div class='info' style='font-size:11px'>" + esc(m.no) + "</div>" : "") + "</td><td class='v'>" + (m.du ? gnf(m.du) : "") + "</td><td class='v'>" + (m.rembourse ? gnf(m.rembourse) : "") + "</td><td class='v'><b>" + gnf(solde) + "</b></td></tr>"; }).join("") + "</table></div>";
+      });
+      if (r.enCours.length) h += "<div class='carte'><h3>En cours (pas encore dans la dette)</h3>" + r.enCours.map(function (c) { return "<div class='info' data-no='" + esc(c.no) + "' style='cursor:pointer'>" + esc(c.no) + " · " + esc(c.societe) + " · " + esc(c.op) + " · <b>" + gnf(c.gnf) + " GNF</b> · " + esc(c.statut) + "</div>"; }).join("") + "</div>";
+      $("vueListe").innerHTML = h;
+      Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-no]"), function (el) { el.onclick = function () { var no = el.getAttribute("data-no"); if (S.fin && S.fin.demandes.some(function (x) { return x.no === no; })) ouvrirDemandeFin(no); }; });
+      if ($("icRemb")) $("icRemb").onclick = function () { formulaireFin({ type: "Mouvement de trésorerie", op: S.fin.opRemb }); };
+      if ($("icComp")) $("icComp").onclick = function () {
+        $("vueListe").innerHTML = "<div class='carte'><h3>⚖️ Compensation / apport définitif</h3><div class='info'>Diminue la dette de CasaFino sans mouvement d'argent.</div>" +
+          "<div class='ligne'><div><label>Envers</label><select id='icS'><option>AB</option><option>M2S</option></select></div><div><label>Nature</label><select id='icN'><option>Compensation</option><option>Apport définitif</option></select></div></div>" +
+          "<label>Montant (GNF)</label><input id='icM' inputmode='decimal'><label>Commentaire (obligatoire)</label><input id='icC'><button class='bouton' id='icEnv'>Enregistrer</button><div class='info' id='icMsg'></div></div>";
+        $("icEnv").onclick = function () {
+          var m = parseFloat(String($("icM").value).replace(/\s/g, "").replace(",", ".")), c = $("icC").value.trim();
+          if (!(m > 0) || !c) { $("icMsg").textContent = "⛔ Montant et commentaire."; return; }
+          if (!confirm($("icN").value + " de " + gnf(m) + " GNF envers " + $("icS").value + " ?")) return;
+          var it = { type: "fin", op: "interco", jeton: nouveauJeton(), horodatage: Date.now(), agent: S.agent.nom, code: S.agent.code, donnees: { societe: $("icS").value, nature: $("icN").value, montant: m, commentaire: c }, titre: "Inter-sociétés " + $("icN").value, resume: "Finances", essais: 0 };
+          soumettre(it).then(function (r2) { alert((r2.ok ? (r2.enAttente ? "📥 " : "✅ ") : "⛔ ") + r2.titre + "\n" + (r2.message || "")); afficherInterco(); });
+        };
+      };
+    }, function (e) { $("vueListe").innerHTML = "<div class='carte'><h3>🔁 Comptes entre sociétés</h3><p class='info'>⛔ " + esc(e.message) + " (réseau nécessaire)</p></div>"; });
+  }
   var FOURF = { soc: "", du: "", au: "" };
   /* Création / modification d'un compte (une fiche par société, projet ou article si besoin). */
   function formulaireCompteFour(f) {
@@ -2336,7 +2375,8 @@
     $("vueListe").innerHTML = "<div class='carte'><h3>" + (nouveau ? "➕ Nouveau compte fournisseur / prestataire" : "✏️ " + esc(src.nom)) + "</h3>" +
       "<label>Fournisseur / prestataire (raison sociale)</label><input id='cfR' list='cfRL' value='" + esc(src.raison || "") + "'><datalist id='cfRL'>" + raisons.map(function (x) { return "<option value='" + esc(x) + "'>"; }).join("") + "</datalist>" +
       "<div class='ligne'><div><label>Type</label><select id='cfT'>" + opt(["Fournisseur", "Prestataire"], src.type || "Fournisseur") + "</select></div>" +
-      "<div><label>Société</label><select id='cfS'>" + opt(["AB", "M2S"], src.societe || "", "Toutes") + "</select></div></div>" +
+      "<div><label>Société</label><select id='cfS'>" + opt(["AB", "M2S", "CASAFINO"], src.societe || "", "Toutes") + "</select></div></div>" +
+      "<div class='info'>CASAFINO : compte de CasaFino, payé par AB ou M2S → dette de CasaFino (🔁 Inter-sociétés).</div>" +
       "<label>Projet / contrat (facultatif)</label><select id='cfP'>" + opt(src.projet && P.indexOf(src.projet) < 0 ? P.concat([src.projet]) : P, src.projet || "", "— aucun —") + "</select>" +
       "<label>Article / catégorie (facultatif)</label><input id='cfA' list='cfAL' value='" + esc(src.article || "") + "' placeholder='ex. PAPIER, ENCRE OFFSET, Transport'><datalist id='cfAL'>" + R0.concat(["Transport", "Prestation", "Maintenance"]).map(function (x) { return "<option value='" + esc(x) + "'>"; }).join("") + "</datalist>" +
       "<div class='ligne'><div><label>Téléphone</label><input id='cfTe' value='" + esc(src.tel || "") + "'></div><div><label>NIF</label><input id='cfN' value='" + esc(src.nif || "") + "'></div></div>" +
@@ -2408,7 +2448,7 @@
       $("ftCopie").onclick = function () { formulaireCompteFour({ copie: true, raison: f.raison || f.nom, type: f.type, tel: f.tel, nif: f.nif, rib: f.rib }); };
       $("ftDem").onclick = function () { formulaireFin({ type: "Règlement fournisseur", fournisseur: f.nom }); };
       $("ftPdf").onclick = function () {
-        var soc = f.societe || FOURF.soc || prompt("Relevé pour quelle société ? (AB ou M2S)", "AB");
+        var soc = (f.societe && f.societe !== "CASAFINO" ? f.societe : "") || FOURF.soc || prompt("Relevé pour quelle société ? (AB ou M2S)", "AB");
         soc = String(soc || "").trim().toUpperCase(); if (soc !== "AB" && soc !== "M2S") return;
         $("ftPdf").disabled = true; $("ftPdf").textContent = "⏳ PDF…";
         api({ api: "finReleve", nom: f.nom, societe: soc, du: FOURF.du, au: FOURF.au }, 120000).then(function (r) {
