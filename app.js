@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-05 HE";
+  var VERSION_APP = "2026-11-05 HF";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -2416,9 +2416,19 @@
     dessiner(FOUR.liste ? "" : "chargement…");
     if (!FOUR.liste) chargerFour(function (m) { dessiner(m); });
   }
+  function normFour(x) { return String(x || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/gi, " ").trim().toLowerCase(); }
+  /* Fournisseur déjà connu : on ouvre sa fiche et directement le formulaire « Nouveau compte ». */
+  function ouvrirFourExistant(raison) {
+    var go = function () {
+      var r = ((FOUR.liste && FOUR.liste.fournisseurs) || []).map(fourRaison).filter(function (x) { return normFour(x) === normFour(raison); })[0] || raison;
+      ficheFourMere(r); formulaireCompteFour(r, null);
+    };
+    rafraichirFin().catch(function () {}).then(function () { FOUR.liste = null; chargerFour(go); });
+  }
   function envoyerFour(d, titre, apres) {
     var it = { type: "fin", op: "fournisseur", jeton: nouveauJeton(), horodatage: Date.now(), agent: S.agent.nom, code: S.agent.code, donnees: d, titre: titre, resume: "Finances", essais: 0 };
     soumettre(it).then(function (r) {
+      if (!r.ok && r.existant) { alert("ℹ️ " + r.titre + "\n" + r.message); ouvrirFourExistant(r.existant); return; }
       alert((r.ok ? (r.enAttente ? "📥 " : "✅ ") : "⛔ ") + (r.titre || "") + "\n" + (r.message || ""));
       if (!r.ok) return;
       if (d.projet && S.fin && S.fin.projets && S.fin.projets.indexOf(d.projet) < 0) S.fin.projets.push(d.projet);
@@ -2447,7 +2457,8 @@
       if (nouveau) {
         d.raison = $("cfR").value.replace(/\s+/g, " ").trim(); d.nom = d.raison; d.creer = true; d.general = true; d.societe = ""; d.projet = "";
         if (!d.raison) { $("cfM").textContent = "⛔ Indiquez la raison sociale."; return; }
-        if ((F.fournisseurs || []).some(function (x) { return fourRaison(x).toLowerCase() === d.raison.toLowerCase() || x.nom.toLowerCase() === d.raison.toLowerCase(); })) { $("cfM").textContent = "⛔ Ce fournisseur existe déjà : ouvrez sa fiche pour lui ajouter un compte."; return; }
+        var ex = (F.fournisseurs || []).filter(function (x) { return normFour(fourRaison(x)) === normFour(d.raison) || normFour(x.nom) === normFour(d.raison); })[0];
+        if (ex) { alert("ℹ️ « " + fourRaison(ex) + " » existe déjà : sa fiche s'ouvre pour lui ajouter un compte."); ouvrirFourExistant(fourRaison(ex)); return; }
       } else { d.raison = raison; d.mere = true; d.nom = k.nom || raison; }
       envoyerFour(d, (nouveau ? "Nouveau fournisseur " : "Fournisseur ") + d.raison, function () { ficheFourMere(d.raison); });
     };
