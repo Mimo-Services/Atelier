@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-01 GQ";
+  var VERSION_APP = "2026-11-02 GS";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -466,7 +466,7 @@
     S.recents = [{ bdc: lot.bdc, cle: lot.cle }].concat(S.recents.filter(function (r) { return !(r.bdc === lot.bdc && r.cle === lot.cle); })).slice(0, 10);
     sauver();
     var ctx = contexteLot(lot), nAtt = S.file.filter(function (x) { return x.o && x.o.bdc === lot.bdc && x.o.cle === lot.cle; }).length;
-    var bandeau = "<div style='margin-top:8px;padding:8px 10px;border-radius:10px;font-size:13px;background:" + (nAtt ? "#3a2f1a" : "#2a2826") + "'>" +
+    var bandeau = "<div style='margin-top:8px;padding:8px 10px;border-radius:10px;font-size:13px;background:" + (document.body.classList.contains("clair") ? (nAtt ? "#fff4e0" : "#f1ede7") : (nAtt ? "#3a2f1a" : "#2a2826")) + "'>" +
       (nAtt ? "⏳ <b>" + nAtt + " déclaration(s) de ce lot en attente d'envoi</b> : déjà prises en compte ci-dessous, pas encore dans l'avancement.<br>" : "") +
       "Avancement : données du " + dateCourte(S.donnees.genere) + "</div>";
     var options = lot.etapes.map(function (n) { return "<option value=\"" + esc(n) + "\">" + esc(n) + "</option>"; }).join("") || "<option value=''>—</option>";
@@ -477,7 +477,7 @@
     };
     var html = S.gabarit;
     Object.keys(vals).forEach(function (k) { html = html.split(k).join(vals[k]); });
-    html = html.replace("</head>", STYLE_SOMBRE_LOT + "</head>");
+    if (!document.body.classList.contains("clair")) html = html.replace("</head>", STYLE_SOMBRE_LOT + "</head>");
     S.lotOuvert = lot;
     $("titre").textContent = lot.cle + " · " + lot.bdc;
     montrer("vueLot");
@@ -849,6 +849,44 @@
 
   /* ---------- Deux affichages : Téléphone (suivi, publication) / PC-tablette (espace de travail) ---------- */
   var PL = { id: null, onglet: "lignes" };
+  /* Mode jour / nuit : bouton ☀️ / 🌙 de l'en-tête, gardé sur l'appareil. */
+  function appliquerTheme(clair) {
+    document.body.classList.toggle("clair", !!clair);
+    if ($("btnTheme")) { $("btnTheme").textContent = clair ? "🌙" : "☀️"; $("btnTheme").title = clair ? "Passer en mode nuit" : "Passer en mode jour"; }
+    try { localStorage.setItem("duocoreTheme", clair ? "clair" : "sombre"); } catch (e) {}
+  }
+  setTimeout(function () {
+    appliquerTheme(document.body.classList.contains("clair"));
+    if ($("btnTheme")) $("btnTheme").onclick = function () {
+      appliquerTheme(!document.body.classList.contains("clair"));
+      if (S.lotOuvert && $("vueLot").style.display !== "none") ouvrirLot(S.lotOuvert.bdc, S.lotOuvert.cle, true);   // page du lot redessinée
+    };
+  }, 0);
+  /* Affichage PC : classe sur <body>, et mise en page de chaque écran (liste en grille, formulaire, fiche). */
+  function majClassePC() { document.body.classList.toggle("pc", modePC()); misePagePC(); }
+  var SEL_CARTES = ".carte[data-no],.carte[data-ev],.carte[data-n],.carte[data-ct],.carte[data-fa],.carte[data-cl],.carte[data-mi],.carte[data-fo]";
+  function misePagePC() {
+    var v = $("vueListe"); if (!v) return;
+    v.classList.remove("formulaire", "fiche");
+    if (!document.body.classList.contains("pc")) return;
+    // Conteneurs dont au moins deux enfants sont des cartes cliquables → grille.
+    var parents = [];
+    Array.prototype.forEach.call(v.querySelectorAll(SEL_CARTES), function (c) { var p = c.parentNode; if (parents.indexOf(p) < 0) parents.push(p); });
+    var grille = false;
+    parents.forEach(function (p) {
+      var n = Array.prototype.filter.call(p.children, function (c) { return c.matches(SEL_CARTES); }).length;
+      if (n >= 2 && p !== v) { p.classList.add("gl"); grille = true; }
+    });
+    if (grille) return;
+    var champs = v.querySelectorAll("input:not([type=checkbox]):not([type=file]):not([type=radio]),select,textarea").length;
+    if (champs >= 3 && v.children.length <= 2) v.classList.add("formulaire");
+    else if (v.children.length >= 3) v.classList.add("fiche");
+  }
+  if (window.MutationObserver) setTimeout(function () {
+    var v = $("vueListe"), t = null;
+    if (v) new MutationObserver(function () { clearTimeout(t); t = setTimeout(misePagePC, 0); }).observe(v, { childList: true, subtree: true });
+  }, 0);
+  window.addEventListener("resize", function () { clearTimeout(window.__rpc); window.__rpc = setTimeout(majClassePC, 150); });
   function modePC() { var a = S.affichage || "auto"; return a === "pc" || (a === "auto" && Math.min(window.innerWidth, 4000) >= 760); }
   function ouvrirBDC(id, onglet) { if (modePC()) { if (!PL.actif) afficherPlanifPC(id, onglet); else ouvrirBDCPC(id, onglet || "lignes"); } else ouvrirSuiviBDC(id); }
 
@@ -2773,7 +2811,7 @@
     var b = this; b.disabled = true; $("infoNotif").textContent = "⏳ Activation…";
     activerNotifications(true).then(function () { majCarteNotif(); }, function (e) { $("infoNotif").textContent = "⛔ " + e.message; b.disabled = false; });
   };
-  $("choixAffichage").onchange = function () { S.affichage = this.value; ecrire("affichage", S.affichage); $("infoAffichage").textContent = "Affichage actuel : " + (modePC() ? "PC / tablette" : "Téléphone"); };
+  $("choixAffichage").onchange = function () { S.affichage = this.value; ecrire("affichage", S.affichage); majClassePC(); $("infoAffichage").textContent = "Affichage actuel : " + (modePC() ? "PC / tablette" : "Téléphone"); };
   $("annulerScan").onclick = function () { montrer("vueAccueil"); };
   $("btnRetour").onclick = function () {
     if (FM_OUVERT && $("vueLot").style.display !== "none" && !S.lotOuvert) { var id = FM_OUVERT; FM_OUVERT = null; ouvrirSaisieBDC(id); return; }
@@ -2821,7 +2859,7 @@
   Promise.all(["url", "donnees", "gabarit", "gv", "file", "envoyes", "aCorriger", "recents", "derniereSync", "agent", "formulaires", "planif", "planifLocal", "affichage", "fin", "rh", "com", "mis"].map(lire)).then(function (v) {
     S.fin = v[14] || null; S.rh = v[15] || null; S.com = v[16] || null; S.mis = v[17] || null;
     S.agent = v[9] || null; S.formulaires = v[10] || null; S.planif = v[11] || null; S.planifLocal = v[12] || {}; S.affichage = v[13] || "auto";
-    $("choixAffichage").value = S.affichage;
+    $("choixAffichage").value = S.affichage; majClassePC();
     S.url = v[0] || (typeof URL_SERVEUR === "string" ? URL_SERVEUR : "") || "";
     S.donnees = v[1] || null; S.gabarit = v[2] || ""; S.gv = v[3] || "";
     S.file = v[4] || []; S.envoyes = v[5] || []; S.aCorriger = v[6] || []; S.recents = v[7] || []; S.derniereSync = v[8] || 0;
