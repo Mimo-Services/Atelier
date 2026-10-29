@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-05 HF";
+  var VERSION_APP = "2026-11-05 HG";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -277,18 +277,19 @@
     }
     function section(titre) { t.push("<div class='sect'>" + titre + "</div>"); }
     section("Atelier");
+    if (droitPlanif()) {
+      var nPl = S.file.filter(function (x) { return x.type === "planif"; }).length;
+      tuile("planif", "🗂️", "Planification", "BDC, saisie", nPl ? { badge: nPl, bcls: "orange" } : {});
+    }
     tuile("scan", "📷", "Scanner une fiche", "Atelier", { cls: "principale" });
     tuile("manuel", "🔢", "Lot sans QR", S.recents.length ? "Derniers lots" : "");
+    if (S.agent && S.url) { tuile("journal", "🧾", "Journal Prod", "Vérifier les scans"); tuile("avancement", "📊", "État d'avancement", "BDC et lots"); }
     Object.keys(fs).forEach(function (k) {
       if (k === "stock" && droitStockVal()) return;   // fusionnée : tuile « Sortie de stock » = saisie + liste des demandes
       tuile("form:" + k, k === "stock" ? "📦" : "🧾", k === "stock" ? "Sortie de stock" : fs[k].nom || fs[k].titre || k, fs[k].erreur ? "indisponible" : k === "stock" ? "Nouvelle saisie" : "");
     });
     if (droitStockVal()) { var nS = stockNbAttente(); tuile("stockval", "📦", "Sortie de stock", S.stockv && S.stockv.direction ? "Saisie, à valider" : "Saisie, mes demandes", nS ? { badge: nS, bcls: S.stockv && S.stockv.direction ? "rouge" : "orange" } : {}); }
-    if (droitPlanif() || droitFin() || droitRH() || droitCom() || droitTreso() || droitMis()) section("Gestion");
-    if (droitPlanif()) {
-      var nPl = S.file.filter(function (x) { return x.type === "planif"; }).length;
-      tuile("planif", "🗂️", "Planification", "BDC, saisie", nPl ? { badge: nPl, bcls: "orange", cls: "large" } : { cls: "large" });
-    }
+    if (droitFin() || droitRH() || droitCom() || droitTreso() || droitMis()) section("Gestion");
     if (droitFin()) {
       var nF = finNbATraiter();
       tuile("finances", "💰", "Finances", S.fin && S.fin.role ? "Validation " + S.fin.role : S.fin && S.fin.comptable ? "Comptabilité" : "Demandes, paiements", nF ? { badge: nF, bcls: "rouge", cls: "large" } : { cls: "large" });
@@ -326,6 +327,8 @@
         else if (id === "missions") afficherMis();
         else if (id === "treso") afficherTreso();
         else if (id === "stockval") afficherStockVal();
+        else if (id === "journal") afficherJournal();
+        else if (id === "avancement") afficherAvancement();
         else if (id === "planif") { if (modePC()) afficherPlanifPC(); else afficherPlanif(); }
         else if (id === "attente") afficherListe("attente");
         else if (id === "corriger") afficherListe("corriger");
@@ -2754,6 +2757,92 @@
     montrer("vueAccueil");
   }
   function initSecurite() { lireAppareil(); return true; }
+  /* ---------- 🏭 Suivi atelier : Journal Prod (vérifier les scans) et État d'avancement ---------- */
+  var JRN = { du: "", au: "", op: "", q: "", etape: "", anom: false, vue: "liste", data: null };
+  function isoJour(t) { var d = new Date(t); return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2); }
+  function afficherJournal() {
+    $("titre").textContent = "Journal Prod";
+    if (!JRN.du) { JRN.du = isoJour(Date.now() - 86400000); JRN.au = isoJour(Date.now()); }
+    function dessiner(msg) {
+      var R = JRN.data, L = R ? R.lignes : [], ops = [], ets = [];
+      L.forEach(function (x) { if (x.operateur && ops.indexOf(x.operateur) < 0) ops.push(x.operateur); if (x.poste && ets.indexOf(x.poste) < 0) ets.push(x.poste); });
+      ops.sort(); ets.sort();
+      var q = JRN.q.trim().toLowerCase();
+      var F = L.filter(function (x) { return (!JRN.op || x.operateur === JRN.op) && (!JRN.etape || x.poste === JRN.etape) && (!JRN.anom || x.anomalies.length) &&
+        (!q || (x.bdc + " " + x.cle + " " + x.article).toLowerCase().indexOf(q) >= 0); });
+      var nA = F.filter(function (x) { return x.anomalies.length; }).length;
+      function o(L2, v, vide) { return "<option value=''>" + vide + "</option>" + L2.map(function (x) { return "<option" + (x === v ? " selected" : "") + ">" + esc(x) + "</option>"; }).join(""); }
+      var h = "<div class='carte pleine'><h3>🧾 Journal Prod · vérifier les scans</h3>" +
+        "<div class='ligne'><div><label>Du</label><input type='date' id='jrDu' value='" + JRN.du + "'></div><div><label>Au</label><input type='date' id='jrAu' value='" + JRN.au + "'></div></div>" +
+        "<div class='ligne'><select id='jrOp'>" + o(ops, JRN.op, "Tous les opérateurs") + "</select><select id='jrEt'>" + o(ets, JRN.etape, "Toutes les étapes") + "</select></div>" +
+        "<input id='jrQ' placeholder='Lot, BDC ou article' value='" + esc(JRN.q) + "'>" +
+        "<label style='font-weight:400'><input type='checkbox' id='jrAn' style='width:auto'" + (JRN.anom ? " checked" : "") + "> anomalies seulement</label>" +
+        "<div class='ligne'><button class='bouton" + (JRN.vue === "liste" ? "" : " second") + "' id='jrL'>📋 Scans (" + F.length + ")</button><button class='bouton" + (JRN.vue === "total" ? "" : " second") + "' id='jrT'>👷 Total par opérateur</button></div>" +
+        "<div class='info'>" + (R ? "Données du " + dateCourte(R.genere) + (R.tronque ? " · limité aux 3000 derniers scans : réduisez la période" : "") : "") + (nA ? " · <b style='color:#c62828'>⚠️ " + nA + " anomalie(s)</b>" : "") + (msg ? " · " + esc(msg) : "") + "</div></div>";
+      if (JRN.vue === "total") {
+        var T = {}, et2 = [];
+        F.forEach(function (x) { if (!x.compte || !x.quantite) return; var k = x.operateur || "?"; T[k] = T[k] || { tot: 0, n: 0, p: {} }; T[k].tot += x.quantite; T[k].n++; T[k].p[x.poste] = (T[k].p[x.poste] || 0) + x.quantite; });
+        h += Object.keys(T).sort(function (a, b) { return T[b].tot - T[a].tot; }).map(function (k) {
+          return "<div class='carte'><div class='ligne' style='justify-content:space-between'><b>👷 " + esc(k) + "</b><b style='flex:0;white-space:nowrap'>" + gnf(T[k].tot) + "</b></div>" +
+            "<div class='info'>" + T[k].n + " déclaration(s) comptabilisée(s)</div><table>" + Object.keys(T[k].p).sort().map(function (e) { return "<tr><td>" + esc(e) + "</td><td class='v'>" + gnf(T[k].p[e]) + "</td></tr>"; }).join("") + "</table></div>";
+        }).join("") || "<p class='info' style='padding:0 4px'>Aucune quantité sur la période.</p>";
+      } else {
+        h += F.slice(0, 400).map(function (x) {
+          return "<div class='carte'" + (x.anomalies.length ? " style='border-color:#c62828'" : "") + "><div class='ligne' style='justify-content:space-between'><b>" + esc(x.bdc) + " · " + esc(x.cle) + "</b>" +
+            "<span style='flex:0;white-space:nowrap' class='info'>" + dateCourte(x.date) + "</span></div>" +
+            "<div>" + esc(x.poste) + (x.passage > 1 ? " · passage " + x.passage : "") + " · <b>" + esc(x.evenement) + "</b>" + (x.quantite ? " · " + gnf(x.quantite) : "") + (x.dispo !== "" ? " <span class='info'>(dispo " + gnf(x.dispo) + ")</span>" : "") + "</div>" +
+            "<div class='info'>👷 " + esc(x.operateur || "?") + (x.article ? " · " + esc(x.article) : "") + " · ligne " + x.ligne + "</div>" +
+            x.anomalies.map(function (a) { return "<div style='color:#c62828;font-size:13px'>⚠️ " + esc(a) + "</div>"; }).join("") + "</div>";
+        }).join("") || "<p class='info' style='padding:0 4px'>" + (R ? "Aucun scan." : "Réseau nécessaire.") + "</p>";
+        if (F.length > 400) h += "<p class='info' style='padding:0 4px'>400 premiers affichés sur " + F.length + " : filtrez davantage.</p>";
+      }
+      $("vueListe").innerHTML = h; montrer("vueListe");
+      function lire() { JRN.op = $("jrOp").value; JRN.etape = $("jrEt").value; JRN.q = $("jrQ").value; JRN.anom = $("jrAn").checked; }
+      $("jrOp").onchange = $("jrEt").onchange = $("jrAn").onchange = function () { lire(); dessiner(""); };
+      $("jrQ").onchange = function () { lire(); dessiner(""); };
+      $("jrL").onclick = function () { lire(); JRN.vue = "liste"; dessiner(""); };
+      $("jrT").onclick = function () { lire(); JRN.vue = "total"; dessiner(""); };
+      $("jrDu").onchange = $("jrAu").onchange = function () { lire(); JRN.du = $("jrDu").value; JRN.au = $("jrAu").value; charger(); };
+    }
+    function charger() {
+      dessiner("⏳ chargement…");
+      api({ api: "suiviAtelier", vue: "journal", du: JRN.du, au: JRN.au }, 90000).then(function (r) { JRN.data = r; dessiner(""); }, function (e) { dessiner("⛔ " + e.message + " (réseau nécessaire)"); });
+    }
+    charger();
+  }
+  var AVC = { q: "", data: null, termines: false };
+  function afficherAvancement(bdcOuvert) {
+    $("titre").textContent = "État d'avancement";
+    var C = { ok: "#2e7d32", cours: "#e67e22", todo: "#9e9e9e" };
+    function barre(r) { var pc = Math.round(r * 100); return "<div style='height:10px;background:var(--bord);border-radius:6px;overflow:hidden;margin:6px 0'><div style='height:100%;width:" + pc + "%;background:" + (pc >= 100 ? "#2e7d32" : "#e67e22") + "'></div></div>"; }
+    function dessiner(msg) {
+      var R = AVC.data, L = R ? R.bdcs : [], q = AVC.q.trim().toLowerCase();
+      var F = L.filter(function (b) { return (AVC.termines || !b.termine) && (!q || (b.bdc + " " + b.lots.map(function (x) { return x.cle + " " + x.designation; }).join(" ")).toLowerCase().indexOf(q) >= 0); });
+      var h = "<div class='carte pleine'><h3>📊 État d'avancement</h3><input id='avQ' placeholder='Rechercher un BDC, un lot, un article' value='" + esc(AVC.q) + "'>" +
+        "<label style='font-weight:400'><input type='checkbox' id='avT' style='width:auto'" + (AVC.termines ? " checked" : "") + "> afficher les BDC terminés (30 derniers jours)</label>" +
+        "<div class='info'>" + (R ? F.length + " BDC · données du " + dateCourte(R.genere) : "") + (msg ? " · " + esc(msg) : "") + "</div></div>";
+      h += F.map(function (b) {
+        var ouvert = b.bdc === bdcOuvert, pc = Math.round(b.ratio * 100), pp = b.commande ? Math.min(100, Math.round(b.produit / b.commande * 100)) : null, pl = b.commande ? Math.min(100, Math.round(b.livre / b.commande * 100)) : null;
+        var nf = b.lots.filter(function (x) { return x.fini >= x.nb; }).length;
+        var t = "<div class='carte" + (ouvert ? " pleine" : "") + "' data-b='" + esc(b.bdc) + "' style='cursor:pointer'><div class='ligne' style='justify-content:space-between'><b>📄 " + esc(b.bdc) + "</b><b style='flex:0;white-space:nowrap;color:" + (b.termine ? "#2e7d32" : "#e67e22") + "'>" + (b.termine ? "✔ terminé" : pc + " %") + "</b></div>" + barre(b.ratio) +
+          "<div class='info'>" + nf + " / " + b.lots.length + " lot(s) terminé(s)" + (pp !== null ? " · produit " + pp + " % · livré " + pl + " % (" + gnf(b.produit) + " / " + gnf(b.commande) + ")" : "") + (b.dernier ? " · dernier scan " + dateCourte(b.dernier) : "") + "</div>";
+        if (ouvert) t += b.lots.map(function (x) {
+          var p2 = x.fini >= x.nb ? 100 : Math.round(x.ratio * 100);
+          return "<div style='border-top:1px solid var(--bord);margin-top:8px;padding-top:8px'><div class='ligne' style='justify-content:space-between'><b>" + "&nbsp;".repeat(Math.max(0, x.niveau) * 2) + esc(x.cle) + "</b><span style='flex:0;white-space:nowrap;font-weight:700'>" + p2 + " %</span></div>" +
+            "<div class='info'>" + esc(x.designation) + (x.quantite ? " · " + gnf(x.quantite) : "") + " · " + x.fini + "/" + x.nb + " étapes" + (x.dernier ? " · " + esc(x.dernier.poste) + " " + esc(x.dernier.evenement) + " (" + esc(x.dernier.operateur) + ", " + dateCourte(x.dernier.date) + ")" : "") + "</div>" + barre(x.fini >= x.nb ? 1 : x.ratio) +
+            "<div style='display:flex;flex-wrap:wrap;gap:4px'>" + x.etapes.map(function (e) { return "<span title='" + esc(e.texte) + "' style='font-size:12px;padding:3px 8px;border-radius:12px;color:#fff;background:" + C[e.st] + "'>" + (e.st === "ok" ? "✓ " : e.st === "cours" ? "● " : "○ ") + esc(e.nom) + (e.st === "cours" && e.texte && e.texte.length < 30 ? " · " + esc(e.texte) : "") + "</span>"; }).join("") + "</div></div>";
+        }).join("");
+        return t + "</div>";
+      }).join("") || "<p class='info' style='padding:0 4px'>" + (R ? "Aucun BDC en cours." : "Réseau nécessaire.") + "</p>";
+      $("vueListe").innerHTML = h; montrer("vueListe");
+      $("avQ").onchange = function () { AVC.q = $("avQ").value; dessiner(""); };
+      $("avT").onchange = function () { AVC.termines = $("avT").checked; dessiner(""); };
+      Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-b]"), function (el) { el.onclick = function () { var b = el.getAttribute("data-b"); bdcOuvert = bdcOuvert === b ? "" : b; dessiner(""); }; });
+    }
+    dessiner(AVC.data ? "mise à jour…" : "⏳ chargement…");
+    api({ api: "suiviAtelier", vue: "avancement" }, 90000).then(function (r) { AVC.data = r; dessiner(""); }, function (e) { dessiner("⛔ " + e.message + " (réseau nécessaire)"); });
+  }
+
   /* ---------- 📦 Sorties de stock hors production : validation WALID ou DG ---------- */
   function droitStockVal() { var d = S.agent && S.formulaires && S.formulaires.droits; return !!(d && (d.stock || ["DG", "WALID"].indexOf(String(S.agent.nom).toUpperCase()) >= 0)); }
   var rafStk = null;
