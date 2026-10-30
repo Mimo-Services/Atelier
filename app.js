@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-05 HK";
+  var VERSION_APP = "2026-11-05 HM";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -241,7 +241,22 @@
   }
 
   /* ---------- Écrans ---------- */
+  var NAV = { pile: [], retour: false };
+  function navEnvelopper(nom, fn) {
+    return function () {
+      var a = Array.prototype.slice.call(arguments).filter(function (x) { return !(x && x.target !== undefined && x.type); });   // pas l'événement du clic
+      if (!NAV.retour) {
+        var P = NAV.pile, i;
+        while (P.length && /^formulaire|^ouvrirFormulaire/.test(P[P.length - 1].n) && P[P.length - 1].n !== nom) P.pop();
+        for (i = 0; i < P.length; i++) if (P[i].n === nom) break;
+        if (i < P.length) P.length = i;   // écran déjà dans la pile : on y remonte
+        P.push({ n: nom, a: a });
+      }
+      return fn.apply(null, a);
+    };
+  }
   function montrer(vue) {
+    if (vue === "vueAccueil") NAV.pile = [];
     ["vueAccueil", "vueListe", "vueManuel", "vueReglages"].forEach(function (v) { $(v).style.display = v === vue ? "block" : "none"; });
     $("vueScan").style.display = vue === "vueScan" ? "block" : "none";
     $("vueLot").style.display = vue === "vueLot" ? "block" : "none";
@@ -1001,6 +1016,8 @@
   function finNbATraiter() { return S.fin ? S.fin.demandes.filter(finATraiter).length : 0; }
   var COUL_ST = { "En attente Walid": "#e65100", "En attente DG": "#e65100", "À corriger": "#b26a00", "Refusée": "#c62828", "Validée": "#2e7d32", "À exécuter": "#1565c0", "Exécutée": "#2e7d32", "Annulée": "#777" };
   function statutFin(d) { return d.solde && d.statut === "Validée" ? (d.solde.reste <= 0 ? "Soldée" : d.solde.regle > 0 ? "Partiellement payée" : "Validée — à payer") : d.statut; }
+  // Clôture sans pièce : retrait (la photo du chèque de la demande fait foi) et transfert entre caisses.
+  function sansPreuveFin(d) { return d.type === "Mouvement de trésorerie" && (d.op === "Retrait" || d.op === "Transfert entre caisses"); }
   function libelleFin(d) { return d.type === "Mouvement de trésorerie" || d.type === "Opération constatée" ? d.op : d.type === "Paiement RH" ? (S.fin && d.demandeur === S.fin.auto ? "Salaire · " : "Paie RH · ") + d.personnel
     : d.type === "Règlement fournisseur" && d.groupe ? "Règlement groupé · " + (d.refFacture || d.facture)
     : d.type === "Règlement fournisseur" && d.op === "Achat comptant" ? "Achat payé" + (d.refFacture ? "" : " sans facture") : d.type === "Facture d'achat" ? (d.op === "Sans facture" ? "Achat à payer sans facture" : "Achat à payer (facture)") : d.type; }
@@ -1124,7 +1141,7 @@
           "<div style='flex:2'><label>Compte payeur</label><select id='fnPc'></select></div></div>" +
           "<div id='fnPmB'><label id='fnPmL'>Montant payé</label><input id='fnPmt' inputmode='decimal'></div><div id='fnPtB'><label>Taux (1 unité = … GNF)</label><input id='fnPt' inputmode='decimal'></div>" +
           "<div class='info' id='fnPi'></div>" : "") +
-        "<div class='info'>" + (d.type === "Dépense de caisse" ? "Justificatif facultatif." : "Photo de la preuve obligatoire : reçu, talon de chèque, avis de virement…") + "</div>" +
+        "<div class='info'>" + (d.type === "Dépense de caisse" ? "Justificatif facultatif." : sansPreuveFin(d) ? "Pas de pièce à joindre (la photo du chèque de la demande fait foi) : justificatif facultatif." : "Photo de la preuve obligatoire : reçu, talon de chèque, avis de virement…") + "</div>" +
         champFichiers("fnPr") + "<label>Commentaire</label><input id='fnCom'><button class='bouton' id='fnExe'>🧾 Clôturer : paiement effectué</button><div id='fnMsg' class='info'></div></div>";
       lierFichiers("fnPr");
       function nbx(x) { x = String(x || "").replace(/[\s  ]/g, "").replace(",", "."); return parseFloat(x) || 0; }
@@ -1148,7 +1165,7 @@
           if (!(x.paiement.montant > 0)) { $("fnMsg").textContent = "⛔ Indiquez le montant payé."; return; }
           if (!(x.paiement.taux > 0)) { $("fnMsg").textContent = "⛔ Indiquez le taux."; return; }
         }
-        if (!f.length && d.type !== "Dépense de caisse") { $("fnMsg").textContent = "⛔ Ajoutez la photo de la preuve."; return; }
+        if (!f.length && d.type !== "Dépense de caisse" && !sansPreuveFin(d)) { $("fnMsg").textContent = "⛔ Ajoutez la photo de la preuve."; return; }
         envoyerFin("executer", x, "Paiement " + d.no, d.no);
       };
     } else if ((d.demandeur === moi || (d.demandeur === F.auto && role)) && ["En attente Walid", "En attente DG", "À corriger"].indexOf(d.statut) >= 0) {
@@ -1452,7 +1469,7 @@
       if (F.role === "DG") regle = "validée d'office (DG)" + (t === "Facture d'achat" || t === "Opération constatée" ? "" : " · exécution directe avec la preuve");
       else if (F.role === "Walid" && t !== "Opération constatée") regle = /DG/.test(regle) ? "Walid d'office, puis DG" : "validée d'office (Walid)";
       if ($("ffXB")) vis("ffXB", t !== "Facture d'achat" && t !== "Opération constatée");
-      $("ffRegle").innerHTML = "🔐 Validation : <b>" + regle + "</b> · 📷 " + photo + (t !== "Facture d'achat" && t !== "Opération constatée" && F.role !== "DG" ? " · preuve du paiement à joindre après validation" + (t === "Dépense de caisse" ? " (facultative)" : "") : "");
+      $("ffRegle").innerHTML = "🔐 Validation : <b>" + regle + "</b> · 📷 " + photo + (t !== "Facture d'achat" && t !== "Opération constatée" && F.role !== "DG" ? (t === "Mouvement de trésorerie" && (op === "Retrait" || op === "Transfert entre caisses") ? " · clôture sans pièce" : " · preuve du paiement à joindre après validation" + (t === "Dépense de caisse" ? " (facultative)" : "")) : "");
       $("ffEnv").textContent = t === "Opération constatée" ? "📒 Enregistrer" : "📤 Envoyer la demande";
     }
     ["ffType", "ffPiece", "ffPay", "ffDest", "ffRegM", "ffRegS", "ffRegP", "ffAvS", "ffOp", "ffOc", "ffDev", "ffSoc", "ffPc", "ffFourC", "ffMode", "ffFact", "ffCpt", "ffCtp", "ffCat", "ffAN", "ffACat", "ffACatN", "ffPers", "ffMotRH"].forEach(function (id) { $(id).onchange = maj; });
@@ -3455,9 +3472,98 @@
   };
   $("choixAffichage").onchange = function () { S.affichage = this.value; ecrire("affichage", S.affichage); majClassePC(); $("infoAffichage").textContent = "Affichage actuel : " + (modePC() ? "PC / tablette" : "Téléphone"); };
   $("annulerScan").onclick = function () { montrer("vueAccueil"); };
+  /* ‹ Retour : revient à l'écran précédent (pile de navigation), l'accueil seulement en bout de pile.
+     Les formulaires sont transitoires : après un envoi, ‹ ne rouvre pas le formulaire vide. */
+  var NAV_ECRANS = ["afficherListe", "afficherFinances", "ouvrirDemandeFin", "formulaireFin", "afficherSoldes", "afficherSuiviAchats", "afficherRH", "ouvrirEvRH", "ficheRH", "formulaireEvRH", "formulaireSalaireRH", "formulaireDepartRH", "formulaireNouvelRH", "afficherPaieRH", "afficherCom", "ficheContratCom", "ficheFactureCom", "ficheClientCom", "formulaireContratCom", "formulaireBdcCom", "formulaireDocCom", "formulaireEncCom", "formulaireRelanceCom", "afficherMis", "ficheMis", "formulaireMis", "afficherFournisseurs", "ficheFourMere", "formulaireFourMere", "formulaireCompteFour", "afficherInterco", "ficheFournisseur", "afficherTreso", "ficheTreso", "afficherJournal", "afficherAvancement", "afficherStockVal", "afficherFiches", "ouvrirFormulaire"];
+  var NAV_FN = {};
+  NAV_FN.afficherListe = afficherListe;
+  NAV_FN.afficherFinances = afficherFinances;
+  NAV_FN.ouvrirDemandeFin = ouvrirDemandeFin;
+  NAV_FN.formulaireFin = formulaireFin;
+  NAV_FN.afficherSoldes = afficherSoldes;
+  NAV_FN.afficherSuiviAchats = afficherSuiviAchats;
+  NAV_FN.afficherRH = afficherRH;
+  NAV_FN.ouvrirEvRH = ouvrirEvRH;
+  NAV_FN.ficheRH = ficheRH;
+  NAV_FN.formulaireEvRH = formulaireEvRH;
+  NAV_FN.formulaireSalaireRH = formulaireSalaireRH;
+  NAV_FN.formulaireDepartRH = formulaireDepartRH;
+  NAV_FN.formulaireNouvelRH = formulaireNouvelRH;
+  NAV_FN.afficherPaieRH = afficherPaieRH;
+  NAV_FN.afficherCom = afficherCom;
+  NAV_FN.ficheContratCom = ficheContratCom;
+  NAV_FN.ficheFactureCom = ficheFactureCom;
+  NAV_FN.ficheClientCom = ficheClientCom;
+  NAV_FN.formulaireContratCom = formulaireContratCom;
+  NAV_FN.formulaireBdcCom = formulaireBdcCom;
+  NAV_FN.formulaireDocCom = formulaireDocCom;
+  NAV_FN.formulaireEncCom = formulaireEncCom;
+  NAV_FN.formulaireRelanceCom = formulaireRelanceCom;
+  NAV_FN.afficherMis = afficherMis;
+  NAV_FN.ficheMis = ficheMis;
+  NAV_FN.formulaireMis = formulaireMis;
+  NAV_FN.afficherFournisseurs = afficherFournisseurs;
+  NAV_FN.ficheFourMere = ficheFourMere;
+  NAV_FN.formulaireFourMere = formulaireFourMere;
+  NAV_FN.formulaireCompteFour = formulaireCompteFour;
+  NAV_FN.afficherInterco = afficherInterco;
+  NAV_FN.ficheFournisseur = ficheFournisseur;
+  NAV_FN.afficherTreso = afficherTreso;
+  NAV_FN.ficheTreso = ficheTreso;
+  NAV_FN.afficherJournal = afficherJournal;
+  NAV_FN.afficherAvancement = afficherAvancement;
+  NAV_FN.afficherStockVal = afficherStockVal;
+  NAV_FN.afficherFiches = afficherFiches;
+  NAV_FN.ouvrirFormulaire = ouvrirFormulaire;
+  NAV_ECRANS.forEach(function (n) { NAV_FN[n] = navEnvelopper(n, NAV_FN[n]); });
+  afficherListe = NAV_FN.afficherListe;
+  afficherFinances = NAV_FN.afficherFinances;
+  ouvrirDemandeFin = NAV_FN.ouvrirDemandeFin;
+  formulaireFin = NAV_FN.formulaireFin;
+  afficherSoldes = NAV_FN.afficherSoldes;
+  afficherSuiviAchats = NAV_FN.afficherSuiviAchats;
+  afficherRH = NAV_FN.afficherRH;
+  ouvrirEvRH = NAV_FN.ouvrirEvRH;
+  ficheRH = NAV_FN.ficheRH;
+  formulaireEvRH = NAV_FN.formulaireEvRH;
+  formulaireSalaireRH = NAV_FN.formulaireSalaireRH;
+  formulaireDepartRH = NAV_FN.formulaireDepartRH;
+  formulaireNouvelRH = NAV_FN.formulaireNouvelRH;
+  afficherPaieRH = NAV_FN.afficherPaieRH;
+  afficherCom = NAV_FN.afficherCom;
+  ficheContratCom = NAV_FN.ficheContratCom;
+  ficheFactureCom = NAV_FN.ficheFactureCom;
+  ficheClientCom = NAV_FN.ficheClientCom;
+  formulaireContratCom = NAV_FN.formulaireContratCom;
+  formulaireBdcCom = NAV_FN.formulaireBdcCom;
+  formulaireDocCom = NAV_FN.formulaireDocCom;
+  formulaireEncCom = NAV_FN.formulaireEncCom;
+  formulaireRelanceCom = NAV_FN.formulaireRelanceCom;
+  afficherMis = NAV_FN.afficherMis;
+  ficheMis = NAV_FN.ficheMis;
+  formulaireMis = NAV_FN.formulaireMis;
+  afficherFournisseurs = NAV_FN.afficherFournisseurs;
+  ficheFourMere = NAV_FN.ficheFourMere;
+  formulaireFourMere = NAV_FN.formulaireFourMere;
+  formulaireCompteFour = NAV_FN.formulaireCompteFour;
+  afficherInterco = NAV_FN.afficherInterco;
+  ficheFournisseur = NAV_FN.ficheFournisseur;
+  afficherTreso = NAV_FN.afficherTreso;
+  ficheTreso = NAV_FN.ficheTreso;
+  afficherJournal = NAV_FN.afficherJournal;
+  afficherAvancement = NAV_FN.afficherAvancement;
+  afficherStockVal = NAV_FN.afficherStockVal;
+  afficherFiches = NAV_FN.afficherFiches;
+  ouvrirFormulaire = NAV_FN.ouvrirFormulaire;
+
   $("btnRetour").onclick = function () {
     if (FM_OUVERT && $("vueLot").style.display !== "none" && !S.lotOuvert) { var id = FM_OUVERT; FM_OUVERT = null; ouvrirSaisieBDC(id); return; }
-    FM_OUVERT = null; montrer("vueAccueil");
+    FM_OUVERT = null;
+    if ($("vueListe").style.display !== "none" && NAV.pile.length) NAV.pile.pop();   // l'écran affiché est le haut de la pile
+    var e = NAV.pile[NAV.pile.length - 1];
+    if (!e) { montrer("vueAccueil"); return; }
+    NAV.retour = true;
+    try { NAV_FN[e.n].apply(null, e.a); } finally { NAV.retour = false; }
   };
   $("btnSync").onclick = function () {
     var b = $("btnSync"); b.disabled = true; b.textContent = "⏳";
