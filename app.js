@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-05 HO";
+  var VERSION_APP = "2026-11-05 HP";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -245,6 +245,7 @@
   function navEnvelopper(nom, fn) {
     return function () {
       var a = Array.prototype.slice.call(arguments).filter(function (x) { return !(x && x.target !== undefined && x.type); });   // pas l'événement du clic
+      if (["afficherFinances", "afficherRH", "afficherCom", "afficherMis"].indexOf(nom) >= 0) a = [];   // la liste, pas l'élément ouvert
       if (!NAV.retour) {
         var P = NAV.pile, i;
         while (P.length && /^formulaire|^ouvrirFormulaire/.test(P[P.length - 1].n) && P[P.length - 1].n !== nom) P.pop();
@@ -1680,7 +1681,7 @@
   }
   if ("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", function (e) {
     var m = e.data || {};
-    if (m.type === "notif") synchroniser(true).catch(function () {});
+    if (m.type === "notif") { setTimeout(majCloche, 800); synchroniser(true).catch(function () {}); }
     if (m.type === "ouvrir") ouvrirDepuisNotif(m.data || {});
   });
   /* ---------- 👥 Ressources humaines : personnel, événements (validés par Walid), paie du mois ---------- */
@@ -3018,16 +3019,61 @@
     rafraichirStockVal().then(function () { dessiner(""); }, function (e) { dessiner("⛔ " + e.message); });
   }
 
+  /* Notification touchée : l'opération s'ouvre tout de suite (données du téléphone), puis se met à jour après la synchronisation
+     (si l'agent est toujours sur cet écran). Elle est marquée lue dans l'historique 🔔. */
+  var NOTIF_MARQUE = 0;
+  function routerNotif(d) {
+    if (d.vue === "finances" && droitFin()) {
+      if (d.id && S.fin && S.fin.demandes.some(function (x) { return x.no === d.id; })) { afficherFinances(); ouvrirDemandeFin(d.id); return true; }
+      afficherFinances(); return false;
+    }
+    if (d.vue === "rh" && droitRH()) { afficherRH(d.id); return true; }
+    if (d.vue === "commercial" && droitCom()) { afficherCom(d.id); return true; }
+    if (d.vue === "missions" && droitMis()) { afficherMis(d.id); return true; }
+    if (d.vue === "stockval" && droitStockVal()) { afficherStockVal(d.id); return true; }
+    montrer("vueAccueil"); return true;
+  }
   function ouvrirDepuisNotif(d) {
+    var marque = ++NOTIF_MARQUE;
+    marquerNotifLue(d);
+    if (!S.agent) { montrer("vueAccueil"); return; }
+    var trouve = routerNotif(d), titre = $("titre").textContent;
+    if (!trouve) $("titre").textContent = "⏳ " + (d.id || "Chargement…");
     synchroniser(true).catch(function () {}).then(function () {
-      if (d.vue === "finances" && typeof afficherFinances === "function") afficherFinances(d.id);
-      else if (d.vue === "rh" && droitRH()) afficherRH(d.id);
-      else if (d.vue === "commercial" && droitCom()) afficherCom(d.id);
-      else if (d.vue === "missions" && droitMis()) afficherMis(d.id);
-      else if (d.vue === "stockval" && droitStockVal()) afficherStockVal(d.id);
-      else montrer("vueAccueil");
+      if (marque !== NOTIF_MARQUE) return;
+      if (!trouve || $("titre").textContent === titre) routerNotif(d);   // mise à jour seulement si l'agent n'a pas changé d'écran
     });
   }
+  /* 🔔 Historique des notifications (30 jours, sur l'appareil) */
+  function majCloche() {
+    return lire("notifs").then(function (L) {
+      var n = (L || []).filter(function (x) { return !x.lu; }).length;
+      $("nbNotifs").textContent = n > 99 ? "99+" : String(n); $("nbNotifs").style.display = n ? "" : "none";
+    });
+  }
+  function marquerNotifLue(d) {
+    lire("notifs").then(function (L) {
+      L = L || []; var ch = false;
+      L.forEach(function (x) { if (!x.lu && x.vue === (d.vue || "") && String(x.id) === String(d.id || "")) { x.lu = true; ch = true; } });
+      if (ch) return ecrire("notifs", L);
+    }).then(majCloche, function () {});
+  }
+  function afficherNotifs() {
+    lire("notifs").then(function (L) {
+      L = L || [];
+      $("titre").textContent = "Notifications";
+      $("vueListe").innerHTML = "<div class='carte pleine'><h3>🔔 Notifications</h3><div class='info'>Reçues sur cet appareil (30 derniers jours). Touchez pour ouvrir l'opération.</div>" +
+        (L.some(function (x) { return !x.lu; }) ? "<button class='bouton second' id='ntTout'>✓ Tout marquer comme lu</button>" : "") + "</div>" +
+        (L.map(function (x, i) {
+          return "<div class='carte' data-nt='" + i + "' style='cursor:pointer" + (x.lu ? ";opacity:.6" : ";border-color:var(--cuivre)") + "'><div class='ligne' style='justify-content:space-between'><b>" + (x.lu ? "" : "● ") + esc(x.titre) + "</b>" +
+            "<span class='info' style='flex:0;white-space:nowrap'>" + dateCourte(x.recu) + "</span></div><div>" + esc(x.texte) + "</div></div>";
+        }).join("") || "<p class='info' style='padding:0 4px'>Aucune notification.</p>");
+      montrer("vueListe");
+      if ($("ntTout")) $("ntTout").onclick = function () { L.forEach(function (x) { x.lu = true; }); ecrire("notifs", L).then(majCloche).then(afficherNotifs); };
+      Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-nt]"), function (el) { el.onclick = function () { var x = L[+el.getAttribute("data-nt")]; ouvrirDepuisNotif({ vue: x.vue, id: x.id }); }; });
+    });
+  }
+
 
   /* ---------- Fiches (étape 5) : PDF gardés sur l'appareil (lecture, impression, partage hors ligne) ---------- */
   function base64Blob(b64) { var bin = atob(b64), n = bin.length, u = new Uint8Array(n); for (var i = 0; i < n; i++) u[i] = bin.charCodeAt(i); return new Blob([u], { type: "application/pdf" }); }
@@ -3477,7 +3523,7 @@
   $("annulerScan").onclick = function () { montrer("vueAccueil"); };
   /* ‹ Retour : revient à l'écran précédent (pile de navigation), l'accueil seulement en bout de pile.
      Les formulaires sont transitoires : après un envoi, ‹ ne rouvre pas le formulaire vide. */
-  var NAV_ECRANS = ["afficherListe", "afficherFinances", "ouvrirDemandeFin", "formulaireFin", "afficherSoldes", "afficherSuiviAchats", "afficherRH", "ouvrirEvRH", "ficheRH", "formulaireEvRH", "formulaireSalaireRH", "formulaireDepartRH", "formulaireNouvelRH", "afficherPaieRH", "afficherCom", "ficheContratCom", "ficheFactureCom", "ficheClientCom", "formulaireContratCom", "formulaireBdcCom", "formulaireDocCom", "formulaireEncCom", "formulaireRelanceCom", "afficherMis", "ficheMis", "formulaireMis", "afficherFournisseurs", "ficheFourMere", "formulaireFourMere", "formulaireCompteFour", "afficherInterco", "ficheFournisseur", "afficherTreso", "ficheTreso", "afficherJournal", "afficherAvancement", "afficherStockVal", "afficherFiches", "ouvrirFormulaire"];
+  var NAV_ECRANS = ["afficherListe", "afficherFinances", "ouvrirDemandeFin", "formulaireFin", "afficherSoldes", "afficherSuiviAchats", "afficherRH", "ouvrirEvRH", "ficheRH", "formulaireEvRH", "formulaireSalaireRH", "formulaireDepartRH", "formulaireNouvelRH", "afficherPaieRH", "afficherCom", "ficheContratCom", "ficheFactureCom", "ficheClientCom", "formulaireContratCom", "formulaireBdcCom", "formulaireDocCom", "formulaireEncCom", "formulaireRelanceCom", "afficherMis", "ficheMis", "formulaireMis", "afficherFournisseurs", "ficheFourMere", "formulaireFourMere", "formulaireCompteFour", "afficherInterco", "ficheFournisseur", "afficherTreso", "ficheTreso", "afficherJournal", "afficherAvancement", "afficherStockVal", "afficherFiches", "ouvrirFormulaire", "afficherNotifs"];
   var NAV_FN = {};
   NAV_FN.afficherListe = afficherListe;
   NAV_FN.afficherFinances = afficherFinances;
@@ -3518,6 +3564,7 @@
   NAV_FN.afficherStockVal = afficherStockVal;
   NAV_FN.afficherFiches = afficherFiches;
   NAV_FN.ouvrirFormulaire = ouvrirFormulaire;
+  NAV_FN.afficherNotifs = afficherNotifs;
   NAV_ECRANS.forEach(function (n) { NAV_FN[n] = navEnvelopper(n, NAV_FN[n]); });
   afficherListe = NAV_FN.afficherListe;
   afficherFinances = NAV_FN.afficherFinances;
@@ -3558,7 +3605,9 @@
   afficherStockVal = NAV_FN.afficherStockVal;
   afficherFiches = NAV_FN.afficherFiches;
   ouvrirFormulaire = NAV_FN.ouvrirFormulaire;
+  afficherNotifs = NAV_FN.afficherNotifs;
 
+  $("btnNotifs").onclick = function () { afficherNotifs(); };
   $("btnRetour").onclick = function () {
     if (FM_OUVERT && $("vueLot").style.display !== "none" && !S.lotOuvert) { var id = FM_OUVERT; FM_OUVERT = null; ouvrirSaisieBDC(id); return; }
     FM_OUVERT = null;
@@ -3620,6 +3669,8 @@
     var q = new URLSearchParams(location.search), bdc = q.get("bdc"), cle = q.get("cle");
     if (q.get("notif")) { history.replaceState(null, "", location.pathname); setTimeout(function () { ouvrirDepuisNotif({ vue: q.get("notif"), id: q.get("id") }); }, 300); }
     setTimeout(verifierNotifications, 4000);
+    setTimeout(majCloche, 1200);
+    document.addEventListener("visibilitychange", function () { if (!document.hidden) majCloche(); });
     if (cle) history.replaceState(null, "", location.pathname);
     if (cle && S.donnees) { ouvrirLot(bdc || "", cle); synchroniser(false); }
     else {
