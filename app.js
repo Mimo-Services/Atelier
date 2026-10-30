@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-05 HV";
+  var VERSION_APP = "2026-11-05 HX";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -1286,7 +1286,7 @@
     var fourActifs = F.fournisseurs.filter(function (f) { return f.actif !== false; }), raisonsF = [];
     fourActifs.forEach(function (f) { if (raisonsF.indexOf(fourRaison(f)) < 0) raisonsF.push(fourRaison(f)); }); raisonsF.sort();
     var fourSrc = src.fournisseur ? F.fournisseurs.filter(function (f) { return f.nom.toLowerCase() === String(src.fournisseur).toLowerCase(); })[0] : null;
-    function comptesDe(r) { return F.fournisseurs.filter(function (f) { return fourRaison(f).toLowerCase() === String(r).trim().toLowerCase() && (f.actif !== false || (fourSrc && f.nom === fourSrc.nom)); })
+    function comptesDe(r) { return F.fournisseurs.filter(function (f) { return fourRaison(f).toLowerCase() === String(r).trim().toLowerCase() && ((f.actif !== false && !f.projetAcheve) || (fourSrc && f.nom === fourSrc.nom)); })
       .sort(function (a, b) { return (a.societe || a.projet ? 1 : 0) - (b.societe || b.projet ? 1 : 0) || a.nom.localeCompare(b.nom); }); }
     function estAchat() { return v("ffType") === "Achat fournisseur"; }
     // Achat : le compte du fournisseur découle de la société bénéficiaire + projet (créé s'il n'existe pas encore).
@@ -1300,7 +1300,7 @@
     function payeurAchat(t) { return t === "Règlement fournisseur" ? v("ffPayS") || v("ffSoc") : v("ffSoc"); }
     function estRegl() { return v("ffType") === "Règlement fournisseur"; }
     function estAvance() { return estRegl() && v("ffRegM") === "Avance (sans facture)"; }
-    function facturesDe(r) { var noms = comptesDe(r).map(function (c) { return c.nom.toLowerCase(); }); return F.factures.filter(function (f) { return noms.indexOf(f.fournisseur.toLowerCase()) >= 0 || (src.facture && f.no === src.facture); }); }
+    function facturesDe(r) { var noms = F.fournisseurs.filter(function (f) { return fourRaison(f).toLowerCase() === String(r).trim().toLowerCase(); }).map(function (c) { return c.nom.toLowerCase(); });   /* toutes ses factures (même projet achevé) */ return F.factures.filter(function (f) { return noms.indexOf(f.fournisseur.toLowerCase()) >= 0 || (src.facture && f.no === src.facture); }); }
     function regCoches() { return Object.keys(REG).filter(function (k) { return REG[k].on; }).map(function (k) { return F.factures.filter(function (f) { return f.no === k; })[0]; }).filter(Boolean); }
     function compteChoisi() {
       if (estAchat()) return compteAchat();
@@ -2538,7 +2538,7 @@
     ordre.forEach(function (r) { G[r].sort(function (a, b) { return (a.societe || a.projet ? 1 : 0) - (b.societe || b.projet ? 1 : 0) || a.nom.localeCompare(b.nom); }); });
     return { G: G, ordre: ordre };
   }
-  function fourLibCompte(f) { return (f.societe ? "" : "⚠️ sans société · ") + ([f.societe || "", f.projet || ""].filter(String).join(" · ") || "à affilier"); }
+  function fourLibCompte(f) { return (f.societe ? "" : "⚠️ sans société · ") + ([f.societe || "", f.projet || ""].filter(String).join(" · ") || "à affilier") + (f.projetAcheve ? " (projet achevé" + (Math.abs(f.solde || 0) > 0.5 ? " · ⚠️ solde à régler" : "") + ")" : ""); }
   function fourCoord(raison) {   // coordonnées du fournisseur (compte général, sinon le premier)
     var L = ((S.fin && S.fin.fournisseurs) || []).filter(function (f) { return fourRaison(f) === raison; });
     return L.filter(function (f) { return !f.societe && !f.projet; })[0] || L[0] || { raison: raison, nom: raison };
@@ -2556,12 +2556,13 @@
         "<div class='ligne'><input id='foQ' placeholder='Rechercher' value='" + esc(FOUR.q) + "'><select id='foS' style='flex:0 0 140px'><option value=''>Toutes sociétés</option>" +
         ["AB", "M2S", "CASAFINO"].map(function (x) { return "<option" + (FOUR.soc === x ? " selected" : "") + ">" + x + "</option>"; }).join("") + "</select></div>" +
         "<select id='foP'><option value=''>Tous les projets</option>" + P.sort().map(function (x) { return "<option" + (x === FOUR.projet ? " selected" : "") + ">" + esc(x) + "</option>"; }).join("") + "</select>" +
-        "<label style='font-weight:400'><input type='checkbox' id='foI' style='width:auto'" + (FOUR.inactifs ? " checked" : "") + "> afficher les comptes désactivés</label>" +
+        "<label style='font-weight:400'><input type='checkbox' id='foI' style='width:auto'" + (FOUR.inactifs ? " checked" : "") + "> afficher les comptes désactivés et les projets achevés</label>" +
+        "<div id='foPA'></div>" +
         "<div class='info'>Un fournisseur peut avoir plusieurs comptes (société, projet), chacun avec son solde. Solde = facturé − payé (positif : reste dû ; négatif : avance).</div></div><div id='foL'></div>";
       montrer("vueListe");
       var liste = function () {
         FOUR.q = $("foQ").value; FOUR.soc = $("foS").value; FOUR.projet = $("foP").value; FOUR.inactifs = $("foI").checked; var q = FOUR.q.trim().toLowerCase();
-        var Lf = L.filter(function (f) { return (FOUR.inactifs || f.actif !== false) && (!FOUR.soc || f.societe === FOUR.soc) && (!FOUR.projet || f.projet === FOUR.projet) &&
+        var Lf = L.filter(function (f) { return (FOUR.inactifs || (f.actif !== false && (!f.projetAcheve || Math.abs(f.solde || 0) > 0.5))) && (!FOUR.soc || f.societe === FOUR.soc) && (!FOUR.projet || f.projet === FOUR.projet) &&
           (!q || (f.nom + " " + fourRaison(f) + " " + (f.projet || "")).toLowerCase().indexOf(q) >= 0); });
         var tot = Lf.reduce(function (a, f) { a.fa += f.facture || 0; a.pa += f.paye || 0; a.co += f.cours || 0; return a; }, { fa: 0, pa: 0, co: 0 }), h = "";
         if (FOUR.projet || FOUR.soc) h += "<div class='carte'><h3>" + (FOUR.projet ? "📁 " + esc(FOUR.projet) : "") + (FOUR.projet && FOUR.soc ? " · " : "") + esc(FOUR.soc) + "</h3><table><tr><td>Comptes</td><td class='v'>" + Lf.length + "</td></tr>" +
@@ -2577,6 +2578,18 @@
             "<div class='info' style='font-size:12.5px'>" + C.map(function (f) { return esc(fourLibCompte(f)) + " : " + gnf(f.solde || 0) + (f.actif === false ? " (désactivé)" : ""); }).join(" · ") + "</div></div>";
         }).join("") || "<p class='info' style='padding:0 4px'>" + (FOUR.liste ? "Aucun fournisseur." : "Réseau nécessaire la 1re fois.") + "</p>";
         $("foL").innerHTML = h;
+        // Direction : clôturer / rouvrir le projet filtré.
+        var achS = (S.fin && S.fin.projetsAcheves) || [], dirF = S.fin && S.fin.role;
+        $("foPA").innerHTML = FOUR.projet && dirF ? (achS.indexOf(FOUR.projet) >= 0
+          ? "<div class='info'>📁 Projet achevé.</div><button class='bouton second' id='foPR'>↩️ Rouvrir le projet « " + esc(FOUR.projet) + " »</button>"
+          : "<button class='bouton second' id='foPF'>✅ Marquer le projet « " + esc(FOUR.projet) + " » achevé</button>") : "";
+        function projetOp(ach) {
+          if (!confirm((ach ? "Marquer achevé" : "Rouvrir") + " le projet « " + FOUR.projet + " » ?" + (ach ? "\nSes comptes seront masqués (sauf solde à régler) et ne seront plus proposés dans les demandes." : ""))) return;
+          var it = { type: "fin", op: "projet", jeton: nouveauJeton(), horodatage: Date.now(), agent: S.agent.nom, code: S.agent.code, donnees: { nom: FOUR.projet, acheve: ach }, titre: "Projet " + FOUR.projet, resume: "Finances", essais: 0 };
+          soumettre(it).then(function (r) { alert((r.ok ? "✅ " : "⛔ ") + r.titre + "\n" + (r.message || "")); FOUR.liste = null; rafraichirFin().catch(function () {}).then(afficherFournisseurs); });
+        }
+        if ($("foPF")) $("foPF").onclick = function () { projetOp(true); };
+        if ($("foPR")) $("foPR").onclick = function () { projetOp(false); };
         Array.prototype.forEach.call($("foL").querySelectorAll("[data-fr]"), function (el) { el.onclick = function () { ficheFourMere(el.getAttribute("data-fr")); }; });
       };
       $("foQ").oninput = liste; $("foS").onchange = liste; $("foP").onchange = liste; $("foI").onchange = liste; liste();
@@ -2675,7 +2688,9 @@
       : (f.societe ? "<div class='info'>Société : " + esc(f.societe) + " · projet : " + esc(f.projet || "aucun") + "</div>"
          : "<div class='info' style='color:#c62828'>⚠️ Compte sans société : choisissez la société bénéficiaire.</div><div class='ligne'><div><label>Société bénéficiaire</label><select id='ccSA'><option value=''>— choisir —</option><option>AB</option><option>M2S</option><option>CASAFINO</option></select></div>" +
            "<div><label>Projet (facultatif)</label><input id='ccPA' value='" + esc(f.projet || "") + "' list='ccPLA'><datalist id='ccPLA'>" + P.map(function (x) { return "<option value='" + esc(x) + "'>"; }).join("") + "</datalist></div></div>") + "<label style='font-weight:400'><input type='checkbox' id='ccAc' style='width:auto'" + (f.actif === false ? "" : " checked") + "> compte actif (proposé dans les demandes)</label>") +
-      "<button class='bouton' id='ccEnv'>" + (nouveau ? "Créer le compte" : "Enregistrer") + "</button><div class='info' id='ccM'></div></div>";
+      "<button class='bouton' id='ccEnv'>" + (nouveau ? "Créer le compte" : "Enregistrer") + "</button>" +
+      (!nouveau && dir ? "<button class='bouton' id='ccSup' style='background:var(--rouge);margin-top:8px'>🗑️ Supprimer ce compte</button><div class='info'>Seulement s'il n'a aucune demande (sinon : décocher « compte actif »).</div>" : "") +
+      "<div class='info' id='ccM'></div></div>";
     montrer("vueListe");
     var manuel = false;
     function proposer() {
@@ -2689,6 +2704,10 @@
       if ($("ccNomE")) $("ccNomE").onclick = function () { manuel = true; $("ccNom").style.display = ""; $("ccNomE").style.display = "none"; $("ccNom").focus(); };
       $("ccNom").oninput = function () { $("ccNomV").textContent = $("ccNom").value; };
     }
+    if ($("ccSup")) $("ccSup").onclick = function () {
+      if (!confirm("Supprimer définitivement le compte « " + f.nom + " » ?")) return;
+      envoyerFour({ nom: f.nom, supprimer: true }, "Suppression " + f.nom, function () { ficheFourMere(raison); });
+    };
     $("ccEnv").onclick = function () {
       var d;
       if (nouveau) {
@@ -2901,6 +2920,7 @@
   }
   // Nouveautés de cette version (affichées après une mise à jour réussie) : à mettre à jour avec chaque version.
   var NOUVEAUTES = [
+    "Fournisseurs : la direction peut supprimer un compte vide et marquer un projet « achevé » (ses comptes soldés sont masqués).",
     "Fournisseurs : plus de compte général ; chaque compte a une société bénéficiaire (+ projet facultatif).",
     "Caisses et comptes : seuls ceux de la devise de l'opération sont proposés.",
     "Caisses et comptes : seuls ceux de la société payeuse sont proposés (comptes personnels : payeur « DG »).",
