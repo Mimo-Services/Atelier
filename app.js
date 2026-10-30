@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-05 HS";
+  var VERSION_APP = "2026-11-05 HT";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -283,6 +283,7 @@
 
   function majAccueil() {
     majEtat();
+    try { majCloche(); } catch (eC) {}
     // Tuiles de l'accueil : atelier, saisies autorisées, files d'envoi, synchronisation.
     var fs = (S.agent && S.formulaires && S.formulaires.formulaires) || {}, t = [];
     function tuile(id, ico, lib, det, opt) {
@@ -2728,6 +2729,10 @@
       solde = report;
       var lignes = Ms.filter(function (m) { return m.date >= du && m.date <= au; }).map(function (m) {
         solde += m.facture - m.paye; tf += m.facture; tp += m.paye;
+        if (!modePC()) return "<div data-no='" + esc(m.no) + "' style='cursor:pointer;padding:8px 0;border-bottom:1px solid var(--bord)'><div class='ligne' style='justify-content:space-between'><b>" + esc(m.op) + "</b><span class='info' style='flex:0;white-space:nowrap'>" + jourLib(m.date).substring(0, 5) + "</span></div>" +
+          "<div class='info' style='font-size:11px'>" + esc(m.no) + (m.societe ? " · " + esc(m.societe) : "") + (m.devise !== "GNF" ? " · " + gnf(m.montant) + " " + esc(m.devise) : "") + "</div>" +
+          "<div class='ligne' style='justify-content:space-between;font-size:14px;margin-top:2px'>" + (m.facture ? "<span>Facturé <b>" + gnf(m.facture) + "</b></span>" : "") + (m.paye ? "<span>Payé <b style='color:#2e7d32'>" + gnf(m.paye) + "</b></span>" : "") +
+          "<span>Solde <b style='color:" + (solde > 0 ? "#c62828" : "inherit") + "'>" + gnf(solde) + "</b></span></div></div>";
         return "<tr data-no='" + esc(m.no) + "' style='cursor:pointer'><td>" + jourLib(m.date).substring(0, 5) + "</td><td style='white-space:normal'>" + esc(m.op) + "<div class='info' style='font-size:11px'>" + esc(m.no) + (m.societe ? " · " + esc(m.societe) : "") +
           (m.devise !== "GNF" ? " · " + gnf(m.montant) + " " + esc(m.devise) : "") + (m.reste > 0 && m.echeance ? " · éch. " + jourLib(m.echeance) : "") + "</div></td>" +
           "<td class='v'>" + (m.facture ? gnf(m.facture) : "") + "</td><td class='v'>" + (m.paye ? gnf(m.paye) : "") + "</td><td class='v'><b>" + gnf(solde) + "</b></td></tr>";
@@ -2741,7 +2746,7 @@
         "<tr><td><b>" + (solde >= 0 ? "Reste dû" : "Avance chez lui") + "</b></td><td class='v'><b style='color:" + (solde > 0 ? "#c62828" : "#1565c0") + "'>" + gnf(Math.abs(solde)) + " GNF</b></td></tr>" +
         (R && R.echu ? "<tr><td>Échu (toutes sociétés)</td><td class='v' style='color:#c62828'><b>" + gnf(R.echu) + "</b></td></tr>" : "") + "</table>" +
         "<div class='ligne'><button class='bouton' id='ftPdf'>📄 Relevé PDF</button><button class='bouton second' id='ftDem'>➕ Demande</button></div></div>" +
-        "<div class='carte'><h3>Relevé de compte</h3>" + (lignes ? "<table><tr><td><b>Date</b></td><td><b>Opération</b></td><td class='v'><b>Facturé</b></td><td class='v'><b>Payé</b></td><td class='v'><b>Solde</b></td></tr>" + lignes + "</table>" : "<div class='info'>Aucune opération sur la période.</div>") + "</div>" +
+        "<div class='carte'><h3>Relevé de compte</h3>" + (lignes && !modePC() ? lignes : lignes ? "<table><tr><td><b>Date</b></td><td><b>Opération</b></td><td class='v'><b>Facturé</b></td><td class='v'><b>Payé</b></td><td class='v'><b>Solde</b></td></tr>" + lignes + "</table>" : "<div class='info'>Aucune opération sur la période.</div>") + "</div>" +
         (C.length ? "<div class='carte'><h3>En cours (" + C.length + ")</h3>" + C.map(function (c) { return "<div class='info' data-no='" + esc(c.no) + "' style='cursor:pointer'>" + jourLib(c.date) + " · " + esc(c.op) + " · <b>" + gnf(c.gnf) + " GNF</b> · " + esc(c.statut) + " · " + esc(c.no) + "</div>"; }).join("") + "</div>" : "");
       $("vueListe").innerHTML = h; montrer("vueListe");
       ["ftS", "ftDu", "ftAu"].forEach(function (id) { $(id).onchange = function () { FOURF.soc = $("ftS").value; FOURF.du = $("ftDu").value; FOURF.au = $("ftAu").value; dessiner(""); }; });
@@ -2872,6 +2877,8 @@
   }
   // Nouveautés de cette version (affichées après une mise à jour réussie) : à mettre à jour avec chaque version.
   var NOUVEAUTES = [
+    "🔔 « À résoudre » : demandes, corrections, validations, RH, stock, missions, retards — une ligne ne disparaît qu'une fois l'opération close.",
+    "Relevé fournisseur lisible sur téléphone (Facturé · Payé · Solde).",
     "Finances : le DG peut valider avant Walid (sa validation suffit).",
     "Finances : Walid ou le DG modifient une demande avant validation ; après validation, le DG modifie et Walid demande une correction.",
     "Mise à jour guidée : progression à l'écran, puis ce panneau de confirmation.",
@@ -3202,11 +3209,34 @@
     });
   }
   /* 🔔 Historique des notifications (30 jours, sur l'appareil) */
-  function majCloche() {
-    return lire("notifs").then(function (L) {
-      var n = (L || []).filter(function (x) { return !x.lu; }).length;
-      $("nbNotifs").textContent = n > 99 ? "99+" : String(n); $("nbNotifs").style.display = n ? "" : "none";
+  /* 🔔 « À résoudre » : liste vivante calculée sur les données de l'appareil ; une ligne disparaît quand l'opération est close. */
+  function aResoudre() {
+    var L = [], moi = S.agent && S.agent.nom;
+    if (!S.agent) return L;
+    if (S.fin && droitFin()) S.fin.demandes.filter(finOuverte).forEach(function (d) {
+      var h = d.historique || [], der = h[h.length - 1] || {}, corr = /Correction demandée au DG/.test(der.act || "") && S.fin.role === "DG";
+      L.push({ rub: "💰", t: d.no + " · " + libelleFin(d), s: statutFin(d) + " · " + gnf(d.montant) + " " + d.devise + " · " + d.demandeur + (corr ? " · 📝 correction demandée : " + (der.c || "") : ""),
+               moi: finATraiter(d) || corr, q: d.date, ouvrir: function () { afficherFinances(); ouvrirDemandeFin(d.no); } });
     });
+    if (S.rh && S.rh.direction && droitRH()) S.rh.evenements.filter(function (e) { return e.statut === "En attente Walid"; }).forEach(function (e) {
+      L.push({ rub: "👥", t: e.type + " · " + e.personnel, s: "Événement RH à valider · " + e.no, moi: true, q: e.date || 0, ouvrir: function () { afficherRH(); if (typeof ouvrirEvRH === "function") ouvrirEvRH(e.no); } });
+    });
+    if (S.stockv && droitStockVal()) S.stockv.sorties.filter(function (x) { return x.statut === "En attente"; }).forEach(function (x) {
+      L.push({ rub: "📦", t: x.no + " · sortie de stock", s: x.resume + " · " + x.agent, moi: !!S.stockv.direction, q: x.saisi, ouvrir: function () { afficherStockVal(x.no); } });
+    });
+    if (S.mis && droitMis()) { var M = S.mis, fin = misAuj() + 86400000;
+      M.missions.filter(function (m) { return misOuv(m) && ((misPour(m, M.agent) && m.statut !== "À clôturer" && m.echeance && m.echeance < fin) || (M.direction && m.statut === "À clôturer")); }).forEach(function (m) {
+        L.push({ rub: "🎯", t: m.titre, s: (m.statut === "À clôturer" ? "Signalée terminée : à clôturer" : "Échéance " + jourLib(m.echeance)) + " · " + m.assignes.join(", "), moi: true, q: m.echeance || 0, ouvrir: function () { afficherMis(); ficheMis(m.id); } });
+      }); }
+    if (S.com && droitCom()) comRetards().forEach(function (f) {
+      L.push({ rub: "🤝", t: f.id + " · " + f.client, s: "Facture en retard (" + jours(f.echeance) + " j) · " + gnf(f.montant) + " " + f.devise, moi: false, q: f.echeance, ouvrir: function () { afficherCom(); ficheFactureCom(f.id); } });
+    });
+    return L.sort(function (a, b) { return (b.moi ? 1 : 0) - (a.moi ? 1 : 0) || (b.q || 0) - (a.q || 0); });
+  }
+  function majCloche() {
+    var n = 0; try { n = aResoudre().length; } catch (e) {}
+    $("nbNotifs").textContent = n > 99 ? "99+" : String(n); $("nbNotifs").style.display = n ? "" : "none";
+    return Promise.resolve(n);
   }
   function marquerNotifLue(d) {
     lire("notifs").then(function (L) {
@@ -3215,17 +3245,31 @@
       if (ch) return ecrire("notifs", L);
     }).then(majCloche, function () {});
   }
+  var CLOCHE = { onglet: "resoudre" };
   function afficherNotifs() {
     lire("notifs").then(function (L) {
       L = L || [];
       $("titre").textContent = "Notifications";
-      $("vueListe").innerHTML = "<div class='carte pleine'><h3>🔔 Notifications</h3><div class='info'>Reçues sur cet appareil (30 derniers jours). Touchez pour ouvrir l'opération.</div>" +
+      var A = aResoudre(), nm = A.filter(function (x) { return x.moi; }).length;
+      var ong = "<div class='onglets' style='margin-top:8px'><button data-cl='resoudre' class='" + (CLOCHE.onglet === "resoudre" ? "actif" : "") + "'>À résoudre (" + A.length + (nm ? " · 👉 " + nm : "") + ")</button><button data-cl='recues' class='" + (CLOCHE.onglet === "recues" ? "actif" : "") + "'>Reçues</button></div>";
+      if (CLOCHE.onglet === "resoudre") {
+        $("vueListe").innerHTML = "<div class='carte pleine'><h3>🔔 Notifications</h3>" + ong + "<div class='info'>Opérations en cours (données du téléphone) : une ligne disparaît quand l'opération est close. 👉 = action attendue de vous.</div></div>" +
+          (A.map(function (x, i) {
+            return "<div class='carte' data-ar='" + i + "' style='cursor:pointer" + (x.moi ? ";border-color:var(--cuivre)" : "") + "'><b>" + x.rub + " " + (x.moi ? "👉 " : "") + esc(x.t) + "</b><div class='info'>" + esc(x.s) + "</div></div>";
+          }).join("") || "<p class='info' style='padding:0 4px'>Rien à résoudre. 🎉</p>");
+        montrer("vueListe");
+        Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-ar]"), function (el) { el.onclick = function () { A[+el.getAttribute("data-ar")].ouvrir(); }; });
+        Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-cl]"), function (b) { b.onclick = function () { CLOCHE.onglet = b.getAttribute("data-cl"); afficherNotifs(); }; });
+        return;
+      }
+      $("vueListe").innerHTML = "<div class='carte pleine'><h3>🔔 Notifications</h3>" + ong + "<div class='info'>Reçues sur cet appareil (30 derniers jours). Touchez pour ouvrir l'opération.</div>" +
         (L.some(function (x) { return !x.lu; }) ? "<button class='bouton second' id='ntTout'>✓ Tout marquer comme lu</button>" : "") + "</div>" +
         (L.map(function (x, i) {
           return "<div class='carte' data-nt='" + i + "' style='cursor:pointer" + (x.lu ? ";opacity:.6" : ";border-color:var(--cuivre)") + "'><div class='ligne' style='justify-content:space-between'><b>" + (x.lu ? "" : "● ") + esc(x.titre) + "</b>" +
             "<span class='info' style='flex:0;white-space:nowrap'>" + dateCourte(x.recu) + "</span></div><div>" + esc(x.texte) + "</div></div>";
         }).join("") || "<p class='info' style='padding:0 4px'>Aucune notification.</p>");
       montrer("vueListe");
+      Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-cl]"), function (b) { b.onclick = function () { CLOCHE.onglet = b.getAttribute("data-cl"); afficherNotifs(); }; });
       if ($("ntTout")) $("ntTout").onclick = function () { L.forEach(function (x) { x.lu = true; }); ecrire("notifs", L).then(majCloche).then(afficherNotifs); };
       Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-nt]"), function (el) { el.onclick = function () { var x = L[+el.getAttribute("data-nt")]; ouvrirDepuisNotif({ vue: x.vue, id: x.id }); }; });
     });
