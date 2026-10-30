@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-05 HN";
+  var VERSION_APP = "2026-11-05 HO";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -1013,6 +1013,9 @@
     if (d.demandeur === F.auto && d.statut === "À exécuter" && (role || F.comptable || F.rh)) return true;
     return d.demandeur === (S.agent && S.agent.nom) && (d.statut === "À corriger" || d.statut === "À exécuter");
   }
+  // « À traiter » : toute opération non close (ni exécutée, refusée, annulée, ni facture soldée) ; 👉 = action attendue de vous.
+  function finOuverte(d) { return ["Exécutée", "Refusée", "Annulée"].indexOf(d.statut) < 0 && !(d.statut === "Validée" && (!d.solde || d.solde.reste <= 0)); }
+  function finNbOuvertes() { return S.fin ? S.fin.demandes.filter(finOuverte).length : 0; }
   function finNbATraiter() { return S.fin ? S.fin.demandes.filter(finATraiter).length : 0; }
   var COUL_ST = { "En attente Walid": "#e65100", "En attente DG": "#e65100", "À corriger": "#b26a00", "Refusée": "#c62828", "Validée": "#2e7d32", "À exécuter": "#1565c0", "Exécutée": "#2e7d32", "Annulée": "#777" };
   function statutFin(d) { return d.solde && d.statut === "Validée" ? (d.solde.reste <= 0 ? "Soldée" : d.solde.regle > 0 ? "Partiellement payée" : "Validée — à payer") : d.statut; }
@@ -1036,7 +1039,7 @@
       "<div class='ligne'><button class='bouton' id='fnNouv'>➕ Nouvelle demande</button><button class='bouton second' id='fnFour'>🏭 Fournisseurs</button></div>" +
       (F.role || F.comptable ? "<div class='ligne'><button class='bouton second' id='fnSol'>📊 Soldes</button><button class='bouton second' id='fnIc'>🔁 Inter-sociétés</button><button class='bouton second' id='fnExp'>📤 Export du mois</button></div>" : "") +
       (F.suiviAchat || F.comptable ? "<button class='bouton second' id='fnAch'>📦 Suivi des achats (" + ((F.achat && F.achat.ouverts) || []).length + ")</button>" : "") +
-      "<div class='onglets' style='margin-top:10px'>" + [["traiter", "À traiter (" + finNbATraiter() + ")"], ["miennes", "Mes demandes"]].concat(F.role || F.comptable ? [["toutes", "Toutes"]] : [])
+      "<div class='onglets' style='margin-top:10px'>" + [["traiter", "À traiter (" + finNbOuvertes() + (finNbATraiter() ? " · 👉 " + finNbATraiter() : "") + ")"], ["miennes", "Mes demandes"]].concat(F.role || F.comptable ? [["toutes", "Toutes"]] : [])
         .map(function (o) { return "<button data-f='" + o[0] + "' class='" + (FIN.filtre === o[0] ? "actif" : "") + "' style='border-radius:10px;border-bottom:1px solid var(--bord)'>" + o[1] + "</button>"; }).join("") + "</div>" +
       "<input id='fnCherche' placeholder='Rechercher (n°, fournisseur, objet…)' style='margin-top:8px'></div>" +
       (nouv.length ? "<div class='carte att'>⏳ " + nouv.length + " nouvelle(s) demande(s) sur cet appareil, en attente d'envoi.</div>" : "") +
@@ -1045,16 +1048,16 @@
     function liste() {
       var q = $("fnCherche").value.trim().toLowerCase(), moi = S.agent.nom;
       var L = F.demandes.filter(function (d) {
-        if (FIN.filtre === "traiter" && !finATraiter(d)) return false;
+        if (FIN.filtre === "traiter" && !finOuverte(d)) return false;
         if (FIN.filtre === "miennes" && d.demandeur !== moi) return false;
         return !q || (d.no + " " + d.type + " " + d.op + " " + d.fournisseur + " " + d.objet + " " + d.refFacture + " " + d.demandeur).toLowerCase().indexOf(q) >= 0;
-      }).sort(function (a, b) { return b.date - a.date; });
+      }).sort(function (a, b) { return (FIN.filtre === "traiter" ? (finATraiter(b) ? 1 : 0) - (finATraiter(a) ? 1 : 0) : 0) || b.date - a.date; });
       $("fnListe").innerHTML = L.map(function (d) {
-        var att = finAttente(d.no).length;
+        var att = finAttente(d.no).length, moiA = finATraiter(d);
         return "<div class='carte" + (att ? " att" : "") + "' data-no='" + esc(d.no) + "' style='cursor:pointer'><div class='ligne' style='justify-content:space-between'><b>" + esc(d.no) + " · " + esc(libelleFin(d)) + "</b>" +
           "<b style='flex:0;white-space:nowrap'>" + gnf(d.montant) + " " + esc(d.devise) + "</b></div>" +
           "<div class='info'>" + esc(d.fournisseur || d.objet || d.compte || "") + (d.pourCompte ? " · <b>pour " + esc(d.pourCompte) + "</b>" : "") + " · " + esc(d.demandeur) + " · " + dateCourte(d.date) + "</div>" +
-          "<div style='color:" + (COUL_ST[d.statut] || "#999") + ";font-weight:700;font-size:14px'>" + esc(statutFin(d)) + (att ? " · ⏳ action en attente d'envoi" : "") +
+          "<div style='color:" + (COUL_ST[d.statut] || "#999") + ";font-weight:700;font-size:14px'>" + (moiA ? "👉 " : "") + esc(statutFin(d)) + (moiA ? " · à vous" : "") + (att ? " · ⏳ action en attente d'envoi" : "") +
           (d.solde ? " · reste " + gnf(d.solde.reste) + " GNF" : "") + "</div></div>";
       }).join("") || "<p class='info' style='padding:0 4px'>Rien ici.</p>";
       Array.prototype.forEach.call($("fnListe").querySelectorAll("[data-no]"), function (el) { el.onclick = function () { ouvrirDemandeFin(el.getAttribute("data-no")); }; });
