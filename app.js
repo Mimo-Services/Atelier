@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-05 HM";
+  var VERSION_APP = "2026-11-05 HN";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -1017,7 +1017,7 @@
   var COUL_ST = { "En attente Walid": "#e65100", "En attente DG": "#e65100", "À corriger": "#b26a00", "Refusée": "#c62828", "Validée": "#2e7d32", "À exécuter": "#1565c0", "Exécutée": "#2e7d32", "Annulée": "#777" };
   function statutFin(d) { return d.solde && d.statut === "Validée" ? (d.solde.reste <= 0 ? "Soldée" : d.solde.regle > 0 ? "Partiellement payée" : "Validée — à payer") : d.statut; }
   // Clôture sans pièce : retrait (la photo du chèque de la demande fait foi) et transfert entre caisses.
-  function sansPreuveFin(d) { return d.type === "Mouvement de trésorerie" && (d.op === "Retrait" || d.op === "Transfert entre caisses"); }
+  function sansPreuveFin(d) { return (d.type === "Mouvement de trésorerie" && (d.op === "Retrait" || d.op === "Transfert entre caisses")) || (d.type === "Règlement fournisseur" && d.mode === "Chèque" && d.categorie === "Commission"); }
   function libelleFin(d) { return d.type === "Mouvement de trésorerie" || d.type === "Opération constatée" ? d.op : d.type === "Paiement RH" ? (S.fin && d.demandeur === S.fin.auto ? "Salaire · " : "Paie RH · ") + d.personnel
     : d.type === "Règlement fournisseur" && d.groupe ? "Règlement groupé · " + (d.refFacture || d.facture)
     : d.type === "Règlement fournisseur" && d.op === "Achat comptant" ? "Achat payé" + (d.refFacture ? "" : " sans facture") : d.type === "Facture d'achat" ? (d.op === "Sans facture" ? "Achat à payer sans facture" : "Achat à payer (facture)") : d.type; }
@@ -1469,7 +1469,7 @@
       if (F.role === "DG") regle = "validée d'office (DG)" + (t === "Facture d'achat" || t === "Opération constatée" ? "" : " · exécution directe avec la preuve");
       else if (F.role === "Walid" && t !== "Opération constatée") regle = /DG/.test(regle) ? "Walid d'office, puis DG" : "validée d'office (Walid)";
       if ($("ffXB")) vis("ffXB", t !== "Facture d'achat" && t !== "Opération constatée");
-      $("ffRegle").innerHTML = "🔐 Validation : <b>" + regle + "</b> · 📷 " + photo + (t !== "Facture d'achat" && t !== "Opération constatée" && F.role !== "DG" ? (t === "Mouvement de trésorerie" && (op === "Retrait" || op === "Transfert entre caisses") ? " · clôture sans pièce" : " · preuve du paiement à joindre après validation" + (t === "Dépense de caisse" ? " (facultative)" : "")) : "");
+      $("ffRegle").innerHTML = "🔐 Validation : <b>" + regle + "</b> · 📷 " + photo + (t !== "Facture d'achat" && t !== "Opération constatée" && F.role !== "DG" ? ((t === "Mouvement de trésorerie" && (op === "Retrait" || op === "Transfert entre caisses")) || (t === "Règlement fournisseur" && mode === "Chèque" && cat === "Commission") ? " · clôture sans pièce" : " · preuve du paiement à joindre après validation" + (t === "Dépense de caisse" ? " (facultative)" : "")) : "");
       $("ffEnv").textContent = t === "Opération constatée" ? "📒 Enregistrer" : "📤 Envoyer la demande";
     }
     ["ffType", "ffPiece", "ffPay", "ffDest", "ffRegM", "ffRegS", "ffRegP", "ffAvS", "ffOp", "ffOc", "ffDev", "ffSoc", "ffPc", "ffFourC", "ffMode", "ffFact", "ffCpt", "ffCtp", "ffCat", "ffAN", "ffACat", "ffACatN", "ffPers", "ffMotRH"].forEach(function (id) { $(id).onchange = maj; });
