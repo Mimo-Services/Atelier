@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-05 HX";
+  var VERSION_APP = "2026-11-05 HZ";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -2083,7 +2083,7 @@
     var ret = !f.paye && f.echeance && f.echeance < Date.now(), att = comAttente(f.id).length;
     return "<div class='carte" + (att ? " att" : "") + "' data-fa='" + esc(f.id) + "' style='cursor:pointer'><div class='ligne' style='justify-content:space-between'><b>" + esc(f.id) + "</b><b style='flex:0;white-space:nowrap'>" + gnf(f.montant) + " " + esc(f.devise) + "</b></div>" +
       "<div class='info'>" + esc(f.client) + " · " + esc(f.projet) + " · du " + jourLib(f.date) + "</div>" +
-      "<div style='font-weight:700;font-size:14px;color:" + (f.paye ? "#2e7d32" : ret ? "#c62828" : "#e65100") + "'>" + (f.paye ? "✅ Encaissée le " + jourLib(f.encaisse) : ret ? "⏰ En retard de " + jours(f.echeance) + " j (échéance " + jourLib(f.echeance) + ")" : "À encaisser · échéance " + jourLib(f.echeance)) +
+      "<div style='font-weight:700;font-size:14px;color:" + (f.paye ? "#2e7d32" : ret ? "#c62828" : "#e65100") + "'>" + (f.paye ? "✅ Encaissée le " + jourLib(f.encaisse) : ret ? "⏰ En retard de " + jours(f.echeance) + " j (échéance " + jourLib(f.echeance) + ")" : (f.echeance ? "À encaisser · échéance " + jourLib(f.echeance) : "À encaisser · sans échéance")) +
       (att ? " · ⏳ en attente d'envoi" : "") + "</div></div>";
   }
 
@@ -2193,13 +2193,23 @@
     var h = htmlFacture(f).replace("cursor:pointer", "") + "<div class='carte'><table><tr><td>Contrat</td><td class='v'>" + esc(f.contrat) + "</td></tr><tr><td>Compte</td><td class='v'>" + esc(f.benef) + "</td></tr>" +
       (f.bdc ? "<tr><td>BDC</td><td class='v'>" + esc(f.bdc) + "</td></tr>" : "") + "<tr><td>Saisie</td><td class='v'>" + esc(f.editeur) + "</td></tr></table>" +
       (f.pdf ? "<div class='ligne'><button class='bouton second' id='faPdf'>📄 Ouvrir le PDF</button><button class='bouton second' id='faPart'>📤 Partager</button></div>" : "<div class='info'>Facture saisie avant DuoCore : pas de PDF.</div>") +
-      (K.ecriture && !f.paye ? "<button class='bouton' id='faEnc' style='background:var(--vert)'>💵 Encaissée</button><button class='bouton second' id='faRel'>📞 Noter une relance</button>" : "") + "</div>" +
+      (K.ecriture && !f.paye ? "<button class='bouton' id='faEnc' style='background:var(--vert)'>💵 Encaissée</button><button class='bouton second' id='faRel'>📞 Noter une relance</button>" : "") +
+      (!f.paye ? "<div style='margin-top:10px'><label>📅 Échéance de paiement" + (f.echeanceLib ? " (actuelle : " + esc(f.echeanceLib) + ")" : f.echeance ? " (actuelle : délai habituel)" : "") + "</label><div class='ligne'><select id='faEd'>" +
+        ["Aucune", "15 jours", "1 mois", "2 mois", "3 mois", "6 mois", "Date"].map(function (x) { return "<option" + (x === (f.echeanceLib || "") ? " selected" : "") + ">" + x + "</option>"; }).join("") +
+        "</select><input id='faEdD' type='date' style='display:none' value='" + (f.echeance ? dateISO(f.echeance) : "") + "'><button class='bouton second' id='faEdOk' style='flex:0 0 auto'>Enregistrer</button></div><div class='info'>Durée comptée à partir de la date de la facture (" + jourLib(f.date) + "). « Aucune » : jamais en retard.</div></div>" : "") + "</div>" +
       "<div class='carte'><h3>Relances</h3>" + (R.map(function (r) { return "<div class='info'>" + jourLib(r.date) + " · " + esc(r.agent) + " · <b>" + esc(r.mode) + "</b>" + (r.com ? " — " + esc(r.com) : "") + (r.prochaine ? " · prochaine " + jourLib(r.prochaine) : "") + "</div>"; }).join("") || "<div class='info'>Aucune.</div>") + "</div>" +
       "<button class='bouton second' id='faCt'>Contrat " + esc(f.contrat) + "</button>";
     $("vueListe").innerHTML = h; montrer("vueListe");
     if ($("faPdf")) { $("faPdf").onclick = function () { ouvrirPdfCom(f.id); }; $("faPart").onclick = function () { ouvrirPdfCom(f.id, true); }; }
     if ($("faEnc")) { $("faEnc").onclick = function () { formulaireEncCom(f.id); }; $("faRel").onclick = function () { formulaireRelanceCom(f); }; }
     $("faCt").onclick = function () { ficheContratCom(f.contrat); };
+    if ($("faEd")) {
+      var majEd = function () { $("faEdD").style.display = $("faEd").value === "Date" ? "" : "none"; }; $("faEd").onchange = majEd; majEd();
+      $("faEdOk").onclick = function () {
+        if ($("faEd").value === "Date" && !$("faEdD").value) { alert("⛔ Choisissez la date d'échéance."); return; }
+        envoyerCom("echeance", { facture: f.id, dateFacture: f.date, duree: $("faEd").value, date: $("faEdD").value }, "Échéance " + f.id, function () { ficheFactureCom(f.id); });
+      };
+    }
   }
   function ficheClientCom(nom) {
     var K = S.com, cl = K.clients.filter(function (c) { return c.nom === nom; })[0];
@@ -2283,10 +2293,10 @@
       "<label>Contrat</label><select id='dcC'>" + optsCom(CT, idC || "", "— choisir —", function (c) { return c.id; }, function (c) { return c.designation + " · " + c.id; }) + "</select>" +
       "<div id='dcBB'><label>Bon de commande</label><select id='dcB'></select></div><div class='info' id='dcI'></div>" +
       "<div id='dcL'></div><button class='bouton second' id='dcAj'>➕ Ligne libre</button>" +
-      "<div class='ligne'><div><label>Date</label><input id='dcD' type='date' value='" + dateISO(Date.now()) + "'></div>" + (fact ? "<div><label>Échéance</label><input id='dcE' type='date'></div>" : "") + "</div>" +
+      "<div class='ligne'><div><label>Date</label><input id='dcD' type='date' value='" + dateISO(Date.now()) + "'></div>" + (fact ? "<div><label>Échéance de paiement</label><select id='dcEd'>" + ["Délai habituel", "Aucune", "15 jours", "1 mois", "2 mois", "3 mois", "6 mois", "Date"].map(function (x) { return "<option>" + x + "</option>"; }).join("") + "</select></div><div id='dcEB' style='display:none'><label>Date d'échéance</label><input id='dcE' type='date'></div>" : "") + "</div>" +
       "<label>" + (fact ? "Référence (BL, bon d'engagement… facultatif)" : "Livré à (lieu, réceptionnaire)") + "</label><input id='dcR'>" +
       "<div class='carte' id='dcT' style='margin-top:10px'></div><button class='bouton' id='dcEnv'>📤 " + (fact ? "Émettre la facture (PDF)" : "Émettre le BL (PDF)") + "</button><div class='info' id='dcM' style='white-space:pre-line'></div></div>";
-    montrer("vueListe");
+    montrer("vueListe"); if ($("dcEd")) $("dcEd").onchange = function () { $("dcEB").style.display = $("dcEd").value === "Date" ? "" : "none"; };
     var lignes = [];
     function contrat() { return K.contrats.filter(function (c) { return c.id === $("dcC").value; })[0]; }
     function soc() { var c = contrat(); return (K.societes || {})[c ? String(c.entreprise).toUpperCase() : "AB"] || { tva: 18, precompte: 50, armp: 0.6, delai: 30 }; }
@@ -2341,7 +2351,7 @@
       var net = L.reduce(function (t, l) { return t + l.qte * (l.pu || 0); }, 0);
       if (!confirm((fact ? "Émettre la facture" : "Émettre le BL") + " · " + c.client + " · " + L.length + " ligne(s)" + (net ? " · net " + gnf(net) + " " + c.devise : "") + " ?\nLe n° est attribué par le serveur (réseau nécessaire pour le PDF).")) return;
       var d = { contrat: c.id, bdc: $("dcB").value, lignes: L.map(function (l) { return { designation: String(l.designation).trim(), abr: l.abr || "", qte: l.qte, pu: l.pu || 0 }; }),
-        date: $("dcD").value, echeance: fact ? $("dcE").value : "", reference: $("dcR").value.trim(), devise: c.devise || "GNF" };
+        date: $("dcD").value, echeance: fact && $("dcEd").value === "Date" ? $("dcE").value : "", duree: fact && $("dcEd").value !== "Délai habituel" ? $("dcEd").value : "", reference: $("dcR").value.trim(), devise: c.devise || "GNF" };
       envoyerCom(type, d, (fact ? "Facture " : "BL ") + c.client, function (r) {
         if (r && r.ok && r.id && r.pdf) { ficheContratCom(c.id); if (confirm("Ouvrir le PDF " + r.id + " ?")) ouvrirPdfCom(r.id); } else ficheContratCom(c.id);
       });
@@ -2920,6 +2930,7 @@
   }
   // Nouveautés de cette version (affichées après une mise à jour réussie) : à mettre à jour avec chaque version.
   var NOUVEAUTES = [
+    "Commercial : échéance de paiement facultative (aucune, 15 jours, 1 à 6 mois ou date), déclarée à la facture ou modifiée ensuite.",
     "Fournisseurs : la direction peut supprimer un compte vide et marquer un projet « achevé » (ses comptes soldés sont masqués).",
     "Fournisseurs : plus de compte général ; chaque compte a une société bénéficiaire (+ projet facultatif).",
     "Caisses et comptes : seuls ceux de la devise de l'opération sont proposés.",
