@@ -1,18 +1,29 @@
 // Service worker : garde l'application sur le téléphone pour qu'elle s'ouvre sans réseau.
 // Changer VERSION à chaque mise à jour des fichiers de l'application.
-var VERSION = "duocore-2026-11-05-HQ";
+var VERSION = "duocore-2026-11-05-HR";
 var FICHIERS = ["./", "index.html", "app.js", "config.js", "manifest.webmanifest",
   "icone-192.png", "icone-512.png", "icone-maskable-512.png", "apple-touch-icon.png"];
 var JSQR = "https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js";
 
+// Installation : fichiers téléchargés un par un (progression envoyée à l'app : barre de mise à jour).
+function annoncer(m) { return self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(function (cl) { cl.forEach(function (c) { c.postMessage(m); }); }); }
 self.addEventListener("install", function (e) {
   e.waitUntil(caches.open(VERSION).then(function (c) {
+    var fait = 0, total = FICHIERS.length;
+    annoncer({ type: "majProgres", etape: "telechargement", fait: 0, total: total, version: VERSION });
     // cache: "reload" : toujours les fichiers du serveur (pas ceux du cache du navigateur), sinon une mise à jour pourrait garder l'ancien app.js.
-    return c.addAll(FICHIERS.map(function (f) { return new Request(f, { cache: "reload" }); })).then(function () {
+    return FICHIERS.reduce(function (p, f) {
+      return p.then(function () {
+        return fetch(new Request(f, { cache: "reload" })).then(function (r) {
+          if (!r.ok) throw new Error(f + " : HTTP " + r.status);
+          return c.put(f, r);
+        }).then(function () { fait++; return annoncer({ type: "majProgres", etape: "telechargement", fait: fait, total: total, version: VERSION }); });
+      });
+    }, Promise.resolve()).then(function () {
       // Lecteur QR de secours (téléphones sans lecteur intégré) : facultatif.
       return c.add(new Request(JSQR, { mode: "cors" })).catch(function () {});
     });
-  }).then(function () { return self.skipWaiting(); }));
+  }).then(function () { annoncer({ type: "majProgres", etape: "installation", version: VERSION }); return self.skipWaiting(); }));
 });
 
 self.addEventListener("message", function (e) { if (e.data && e.data.type === "activer") self.skipWaiting(); });

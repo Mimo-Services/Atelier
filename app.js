@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-05 HQ";
+  var VERSION_APP = "2026-11-05 HR";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -2831,50 +2831,100 @@
     if (S.majRequise !== v) { S.majRequise = v; ecrire("majRequise", v); }
     ecranMaj();
   }
+  // Nouveautés de cette version (affichées après une mise à jour réussie) : à mettre à jour avec chaque version.
+  var NOUVEAUTES = [
+    "Mise à jour guidée : progression à l'écran, puis ce panneau de confirmation.",
+    "Notification de mise à jour : un toucher lance directement la mise à jour.",
+    "Notifications : un toucher ouvre l'opération ; historique 🔔 dans l'en-tête.",
+    "Finances : « À traiter » montre tout ce qui n'est pas clos ; ‹ revient à l'écran précédent."
+  ];
+  var MAJ = { pct: 0, etape: "", encours: false };
+  function court(v) { return String(v || "").split(" ").pop().replace(/^duocore-.*-/, ""); }
   function ecranMaj(etat) {
     var o = $("ecranMaj");
     if (!o) { o = document.createElement("div"); o.id = "ecranMaj"; document.body.appendChild(o); }
     var essais = 0; try { essais = +localStorage.getItem("majEssais") || 0; } catch (e) {}
-    var nAtt = S.file.length, court = function (v) { return String(v || "").split(" ").pop(); };
+    var nAtt = S.file.length, enc = etat === "encours";
     o.innerHTML = "<div class='carte' style='max-width:560px;margin:0 auto'><h3>⬆️ Mise à jour obligatoire</h3>" +
       "<p>Une nouvelle version de DuoCore est exigée. Aucune saisie n'est possible tant qu'elle n'est pas installée.</p>" +
       "<table><tr><td>Version installée</td><td class='v'><b>" + esc(court(VERSION_APP)) + "</b></td></tr><tr><td>Version exigée</td><td class='v'><b style='color:#2e7d32'>" + esc(court(S.majRequise)) + "</b></td></tr></table>" +
       (nAtt ? "<div class='info' style='margin-top:8px'>📥 " + nAtt + " saisie(s) gardée(s) sur l'appareil : elles partiront automatiquement après la mise à jour. Ne les refaites pas.</div>" : "") +
-      "<button class='bouton' id='majGo' style='margin-top:12px'>" + (etat === "encours" ? "⏳ Mise à jour en cours…" : "⬆️ Mettre à jour") + "</button>" +
-      "<div class='info' id='majMsg' style='white-space:pre-line'>" + (etat === "hors" ? "⛔ Pas de réseau : connectez l'appareil (Wi-Fi ou données) puis réessayez." : essais ? "⚠️ La mise à jour automatique n'a pas abouti (" + essais + " essai(s)) : suivez les instructions ci-dessous." : "") + "</div>" +
-      "<details" + (essais ? " open" : "") + " style='margin-top:12px'><summary><b>Instructions si le bouton ne suffit pas</b></summary><ol style='padding-left:20px;line-height:1.6'>" +
-      "<li>Vérifiez que l'appareil a du réseau, puis touchez <b>⬆️ Mettre à jour</b> et attendez 30 secondes.</li>" +
+      (enc ? "<div style='margin-top:14px;text-align:center'><div class='majRoue'>⚙️</div><div id='majEtape' style='font-weight:700;margin:6px 0'>" + esc(MAJ.etape || "Recherche de la nouvelle version…") + "</div>" +
+        "<div style='height:12px;background:var(--bord);border-radius:8px;overflow:hidden'><div id='majBarre' style='height:100%;width:" + MAJ.pct + "%;background:var(--cuivre);transition:width .4s'></div></div>" +
+        "<div class='info' id='majPct'>" + MAJ.pct + " %</div><div class='info'>Ne fermez pas l'application.</div></div>"
+       : "<button class='bouton' id='majGo' style='margin-top:12px'>⬆️ Mettre à jour</button>") +
+      "<div class='info' id='majMsg' style='white-space:pre-line'>" + (etat === "hors" ? "⛔ Pas de réseau : connectez l'appareil (Wi-Fi ou données) puis réessayez." : etat === "echec" || (essais && !enc) ? "⚠️ La mise à jour automatique n'a pas abouti (" + essais + " essai(s)). La nouvelle version n'est peut-être pas encore publiée, ou le téléphone garde l'ancienne : suivez les instructions ci-dessous." : "") + "</div>" +
+      "<details" + (essais && !enc ? " open" : "") + " style='margin-top:12px'><summary><b>Instructions si le bouton ne suffit pas</b></summary><ol style='padding-left:20px;line-height:1.6'>" +
+      "<li>Vérifiez que l'appareil a du réseau, puis touchez <b>⬆️ Mettre à jour</b> et attendez la fin de la barre.</li>" +
       "<li>Fermez complètement DuoCore (bouton des applications récentes → balayer DuoCore), puis rouvrez-la.</li>" +
-      "<li>Toujours l'ancienne version ? Android (Chrome) : ouvrez Chrome → ⋮ → Paramètres → Paramètres des sites → Toutes les données → mimo-services.github.io → <b>Effacer</b>, puis rouvrez DuoCore et reconnectez-vous (code au DG si demandé).</li>" +
+      "<li>Toujours l'ancienne version ? Android (Chrome) : Chrome → ⋮ → Paramètres → Paramètres des sites → Toutes les données → mimo-services.github.io → <b>Effacer</b>, puis rouvrez DuoCore et reconnectez-vous (code au DG si demandé).</li>" +
       "<li>PC (Chrome / Edge) : sur la page DuoCore, appuyez sur <b>Ctrl + Maj + R</b>.</li>" +
       "<li>iPhone : supprimez l'icône DuoCore de l'écran d'accueil, rouvrez le lien dans Safari, puis Partager → Sur l'écran d'accueil.</li>" +
       "<li>Si rien ne change après 15 minutes : la nouvelle version n'est peut-être pas encore publiée — prévenez le DG.</li></ol>" +
       "<div class='info'>⚠️ N'effacez les données (étape 3) qu'en dernier recours : les saisies en attente sur l'appareil seraient perdues.</div></details></div>";
     o.style.display = "block";
-    $("majGo").onclick = installerMaj;
+    if ($("majGo")) $("majGo").onclick = installerMaj;
   }
+  function progresMaj(pct, etape) {
+    MAJ.pct = Math.max(MAJ.pct, Math.round(pct)); if (etape) MAJ.etape = etape;
+    if ($("majBarre")) { $("majBarre").style.width = MAJ.pct + "%"; $("majPct").textContent = MAJ.pct + " %"; $("majEtape").textContent = MAJ.etape; }
+  }
+  if ("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", function (e) {
+    var m = e.data || {};
+    if (m.type !== "majProgres" || !MAJ.encours) return;
+    if (m.etape === "telechargement") progresMaj(15 + 70 * (m.fait / Math.max(1, m.total)), "Téléchargement de la version " + court(m.version) + " (" + m.fait + " / " + m.total + " fichiers)…");
+    else if (m.etape === "installation") progresMaj(90, "Installation…");
+  });
   function installerMaj() {
+    if (MAJ.encours) return;
     if (!navigator.onLine) { ecranMaj("hors"); return; }
-    ecranMaj("encours");
-    try { localStorage.setItem("majEssais", String((+localStorage.getItem("majEssais") || 0) + 1)); } catch (e) {}
+    MAJ.encours = true; MAJ.pct = 0; MAJ.etape = "Recherche de la nouvelle version…";
+    ecranMaj("encours"); progresMaj(5);
+    try { localStorage.setItem("majEssais", String((+localStorage.getItem("majEssais") || 0) + 1));
+          localStorage.setItem("majAvant", JSON.stringify({ de: VERSION_APP, attente: S.file.length, t: Date.now() })); } catch (e) {}
     var fini = false;
-    function recharger() { if (fini) return; fini = true; location.reload(); }
+    function recharger() { if (fini) return; fini = true; progresMaj(100, "Redémarrage…"); setTimeout(function () { location.reload(); }, 600); }
     if (!("serviceWorker" in navigator)) { recharger(); return; }
     navigator.serviceWorker.addEventListener("controllerchange", recharger);
     navigator.serviceWorker.getRegistration().then(function (reg) {
       if (!reg) return recharger();
+      progresMaj(10);
       return reg.update().then(function () {
         var w = reg.installing || reg.waiting;
-        if (w) { w.addEventListener("statechange", function () { if (w.state === "activated") recharger(); }); if (reg.waiting) reg.waiting.postMessage({ type: "activer" }); }
+        if (w) { progresMaj(15, "Téléchargement de la nouvelle version…"); w.addEventListener("statechange", function () { if (w.state === "activated") recharger(); }); if (reg.waiting) reg.waiting.postMessage({ type: "activer" }); }
+        else progresMaj(20, "Vérification sur le serveur…");
       });
     }).catch(function () {});
-    // Filet : après 20 s, vider le cache des fichiers de l'app (pas les données) et recharger depuis le réseau.
+    // Filet : après 25 s, vider le cache des fichiers de l'app (pas les données) et recharger depuis le réseau.
     setTimeout(function () {
       if (fini) return;
+      progresMaj(80, "Rechargement depuis le serveur…");
       (window.caches ? caches.keys().then(function (k) { return Promise.all(k.map(function (c) { return caches.delete(c); })); }) : Promise.resolve()).then(recharger, recharger);
-    }, 20000);
+    }, 25000);
+  }
+  /* Après le redémarrage : panneau « ✅ DuoCore est à jour » (version, nouveautés, saisies envoyées) ou échec. */
+  function panneauMajReussie(av) {
+    var o = document.createElement("div");
+    o.id = "panneauMaj";
+    o.style.cssText = "position:fixed;inset:0;z-index:130;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:16px";
+    o.innerHTML = "<div class='carte' style='max-width:460px;width:100%;text-align:center'><div style='font-size:46px'>✅</div><h3 style='justify-content:center'>DuoCore est à jour</h3>" +
+      "<div>Version <b>" + esc(court(VERSION_APP)) + "</b> installée" + (av.de ? " (avant : " + esc(court(av.de)) + ")" : "") + ".</div>" +
+      (NOUVEAUTES.length ? "<div style='text-align:left;margin-top:12px'><b>Nouveautés</b><ul style='padding-left:20px;margin:6px 0'>" + NOUVEAUTES.map(function (x) { return "<li>" + esc(x) + "</li>"; }).join("") + "</ul></div>" : "") +
+      (av.attente ? "<div class='info' id='pmEnv' style='margin-top:8px'>📤 Envoi des " + av.attente + " saisie(s) en attente…</div>" : "") +
+      "<button class='bouton' id='pmOk' style='margin-top:14px'>OK</button></div>";
+    document.body.appendChild(o);
+    $("pmOk").onclick = function () { o.remove(); };
+    if (av.attente) lancerEnvoi().then(function () {
+      var reste = S.file.length, env = Math.max(0, av.attente - reste);
+      if ($("pmEnv")) $("pmEnv").textContent = "📤 " + env + " saisie(s) en attente envoyée(s)" + (reste ? " · " + reste + " encore en attente (réseau)" : "") + ".";
+    });
   }
   function verifierMajAuDemarrage() {
+    var av = null; try { av = JSON.parse(localStorage.getItem("majAvant") || "null"); } catch (e) {}
+    if (av && av.de && String(av.de) < String(VERSION_APP)) {
+      try { localStorage.removeItem("majAvant"); localStorage.removeItem("majEssais"); } catch (e) {}
+      setTimeout(function () { panneauMajReussie(av); }, 400);
+    } else if (av && av.de === VERSION_APP) { try { localStorage.removeItem("majAvant"); } catch (e) {} setTimeout(function () { if (S.majRequise && plusAncienne(S.majRequise)) ecranMaj("echec"); }, 500); }
     return lire("majRequise").then(function (v) {
       if (v && plusAncienne(v)) { S.majRequise = v; ecranMaj(); }
       else if (v) { S.majRequise = null; ecrire("majRequise", null); try { localStorage.removeItem("majEssais"); } catch (e) {} }
@@ -3083,7 +3133,11 @@
      (si l'agent est toujours sur cet écran). Elle est marquée lue dans l'historique 🔔. */
   var NOTIF_MARQUE = 0;
   function routerNotif(d) {
-    if (d.vue === "maj") { if (d.id && plusAncienne(d.id)) declencherMaj(d.id); else montrer("vueAccueil"); return true; }
+    if (d.vue === "maj") {   // notification de mise à jour : elle se lance aussitôt
+      if (d.id && plusAncienne(d.id)) { declencherMaj(d.id); setTimeout(installerMaj, 300); }
+      else { montrer("vueAccueil"); if (d.id) panneauMajReussie({ de: "", attente: 0 }); }
+      return true;
+    }
     if (d.vue === "finances" && droitFin()) {
       if (d.id && S.fin && S.fin.demandes.some(function (x) { return x.no === d.id; })) { afficherFinances(); ouvrirDemandeFin(d.id); return true; }
       afficherFinances(); return false;
@@ -3097,6 +3151,7 @@
   function ouvrirDepuisNotif(d) {
     var marque = ++NOTIF_MARQUE;
     marquerNotifLue(d);
+    if (d.vue === "maj") { routerNotif(d); return; }
     if (!S.agent) { montrer("vueAccueil"); return; }
     var trouve = routerNotif(d), titre = $("titre").textContent;
     if (!trouve) $("titre").textContent = "⏳ " + (d.id || "Chargement…");
