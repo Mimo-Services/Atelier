@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-05 HR";
+  var VERSION_APP = "2026-11-05 HS";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -1126,7 +1126,7 @@
         voirPiece(d.no, src[+k.substring(1)], $("pv" + k.charAt(0))); };
     });
     if (att.length) return;
-    var A = $("fnActions"), peutValider = (d.statut === "En attente Walid" && role === "Walid") || (d.statut === "En attente DG" && role === "DG");
+    var A = $("fnActions"), peutValider = (d.statut === "En attente Walid" && (role === "Walid" || role === "DG")) || (d.statut === "En attente DG" && role === "DG");
     if (peutValider) {
       var nG = d.groupe ? F.demandes.filter(function (x) { return x.groupe === d.groupe && x.statut === d.statut; }).length : 0;
       A.innerHTML = "<div class='carte'><h3>Votre décision</h3>" + (nG > 1 ? "<div class='info'>🔗 Règlement groupé : la décision s'applique aux " + nG + " factures du groupe (" + esc(F.demandes.filter(function (x) { return x.groupe === d.groupe; }).map(function (x) { return x.no; }).join(", ")) + ").</div>" : "") + "<label>Commentaire (obligatoire pour refuser ou faire corriger)</label><textarea id='fnCom' rows='2'></textarea>" +
@@ -1180,6 +1180,45 @@
       if ($("fnMod")) $("fnMod").onclick = function () { formulaireFin(d); };
       $("fnAnn").onclick = function () { if (confirm("Annuler " + d.no + " ?")) envoyerFin("annuler", { no: d.no, version: d.version }, "Annulation " + d.no, d.no); };
     }
+    // ✏️ Direction : avant validation WALID / DG modifient ; après validation le DG modifie, Walid demande une correction au DG.
+    var avantV = ["En attente Walid", "En attente DG", "À corriger"].indexOf(d.statut) >= 0, apresV = ["À exécuter", "Validée"].indexOf(d.statut) >= 0 && !(d.solde && (d.solde.regle > 0 || d.solde.engage > 0));
+    if (d.type !== "Opération constatée" && ((avantV && role) || (apresV && role === "DG"))) {
+      A.insertAdjacentHTML("beforeend", "<div class='carte'><button class='bouton second' id='fnDirMod'>✏️ Modifier (" + esc(role) + ")</button><div class='info'>" + (avantV ? "Avant validation : Walid ou le DG corrigent directement." : "Après validation : seul le DG modifie.") + "</div></div>");
+      $("fnDirMod").onclick = function () { formulaireDirection(d); };
+    } else if (apresV && role === "Walid") {
+      A.insertAdjacentHTML("beforeend", "<div class='carte'><label>Correction souhaitée (envoyée au DG)</label><input id='fnDcM'><button class='bouton second' id='fnDc'>📝 Demander une correction au DG</button></div>");
+      $("fnDc").onclick = function () { var c = $("fnDcM").value.trim(); if (!c) { alert("⛔ Indiquez la correction souhaitée."); return; } envoyerFin("demanderCorrection", { no: d.no, version: d.version, commentaire: c }, "Correction demandée " + d.no, d.no); };
+    }
+  }
+  /* Formulaire de modification par la direction (champs principaux ; trace dans l'historique, demandeur notifié). */
+  function formulaireDirection(d) {
+    var F = S.fin;
+    $("titre").textContent = "Modifier " + d.no;
+    function opts(L, v, vide) { return (vide ? "<option value=''>" + vide + "</option>" : "") + L.map(function (x) { return "<option" + (x === v ? " selected" : "") + ">" + esc(x) + "</option>"; }).join(""); }
+    var cpts = F.comptes.map(function (c) { return c.nom; }), modes = d.type === "Règlement fournisseur" ? ["Espèces", "Chèque", "Virement"] : d.type === "Paiement RH" ? ["Espèces", "Virement"] : [];
+    var fact = d.type === "Facture d'achat";
+    $("vueListe").innerHTML = "<div class='carte'><h3>✏️ " + esc(d.no) + " · " + esc(libelleFin(d)) + "</h3><div class='info'>" + esc(statutFin(d)) + " · demandeur " + esc(d.demandeur) + "</div>" +
+      "<div class='ligne'><div style='flex:2'><label>Montant</label><input id='dmMt' inputmode='decimal' value='" + esc(d.montant) + "'></div><div><label>Devise</label><input value='" + esc(d.devise) + "' disabled></div></div>" +
+      (d.devise !== "GNF" ? "<label>Taux (1 unité = … GNF)</label><input id='dmTx' inputmode='decimal' value='" + esc(d.taux || "") + "'>" : "") +
+      (modes.length ? "<label>Mode</label><select id='dmMo'>" + opts(modes, d.mode) + "</select>" : "") +
+      (!fact ? "<label>Compte</label><select id='dmCp'>" + opts(cpts, d.compte, "— choisir —") + "</select>" : "") +
+      (d.type === "Mouvement de trésorerie" ? "<label>Vers</label><select id='dmCt'>" + opts(cpts, d.contrepartie, "— (bénéficiaire externe) —") + "</select>" : "") +
+      (!fact ? "<label>Bénéficiaire (chèque / virement)</label><input id='dmBe' value='" + esc(d.beneficiaire || "") + "'>" : "") +
+      "<label>Catégorie</label><select id='dmCa'>" + opts(F.categories || [], d.categorie, "—") + "</select>" +
+      "<label>Objet</label><input id='dmOb' value='" + esc(d.objet || "") + "'>" +
+      (fact ? "<label>Réf. facture</label><input id='dmRf' value='" + esc(d.refFacture || "") + "'><label>Échéance</label><input id='dmEc' type='date' value='" + (d.echeance ? new Date(d.echeance).toISOString().slice(0, 10) : "") + "'>" : "") +
+      "<label>Motif de la modification</label><input id='dmCo'>" +
+      "<button class='bouton' id='dmEnv'>💾 Enregistrer la modification</button><div class='info' id='dmMsg'></div></div>";
+    montrer("vueListe");
+    $("dmEnv").onclick = function () {
+      function v(id) { return $(id) ? $(id).value : undefined; }
+      var n = function (x) { return x === undefined ? undefined : parseFloat(String(x).replace(/[\s  ]/g, "").replace(",", ".")) || 0; };
+      var m = { montant: n(v("dmMt")), taux: n(v("dmTx")), mode: v("dmMo"), compte: v("dmCp"), contrepartie: v("dmCt"), beneficiaire: v("dmBe"), categorie: v("dmCa"), objet: v("dmOb"), refFacture: v("dmRf"), echeance: v("dmEc") };
+      Object.keys(m).forEach(function (k) { if (m[k] === undefined) delete m[k]; });
+      if (!(m.montant > 0)) { $("dmMsg").textContent = "⛔ Montant."; return; }
+      if (!confirm("Enregistrer la modification de " + d.no + " ?")) return;
+      envoyerFin("modifierDirection", { no: d.no, version: d.version, modif: m, commentaire: v("dmCo") }, "Modification " + d.no, d.no);
+    };
   }
   function envoyerFin(op, donnees, titre, retour) {
     var it = { type: "fin", op: op, jeton: nouveauJeton(), horodatage: Date.now(), agent: S.agent.nom, code: S.agent.code, donnees: donnees, titre: titre, resume: "Finances", essais: 0 };
@@ -2833,6 +2872,8 @@
   }
   // Nouveautés de cette version (affichées après une mise à jour réussie) : à mettre à jour avec chaque version.
   var NOUVEAUTES = [
+    "Finances : le DG peut valider avant Walid (sa validation suffit).",
+    "Finances : Walid ou le DG modifient une demande avant validation ; après validation, le DG modifie et Walid demande une correction.",
     "Mise à jour guidée : progression à l'écran, puis ce panneau de confirmation.",
     "Notification de mise à jour : un toucher lance directement la mise à jour.",
     "Notifications : un toucher ouvre l'opération ; historique 🔔 dans l'en-tête.",
