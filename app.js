@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-05 HT";
+  var VERSION_APP = "2026-11-05 HU";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -1276,6 +1276,7 @@
     var types = F.types.filter(function (t) { return (t !== "Opération constatée" || F.role || F.comptable) && t !== "Facture d'achat"; });
     types.unshift("Achat fournisseur");   // Achat : avec / sans facture, payé maintenant / plus tard, stock / charge
     if (src.limiter) types = ["Achat fournisseur", "Règlement fournisseur"];   // depuis 🏭 Fournisseurs
+    else if (!src.no && !src.type) types = types.filter(function (t) { return t !== "Achat fournisseur" && t !== "Règlement fournisseur"; });   // Finances › Nouvelle demande : achats et règlements par 🏭 Fournisseurs
     var CATS_STOCK = ["Fourniture Locale", "Fourniture Importee"];
     var srcAchat = src.type === "Achat fournisseur" || src.type === "Facture d'achat" || (src.type === "Règlement fournisseur" && src.op === "Achat comptant");
     var A1 = { piece: srcAchat && (src.op === "Sans facture" || (src.type === "Règlement fournisseur" && !src.refFacture)) ? "Sans facture (reçu ou rien)" : "Avec facture",
@@ -1295,7 +1296,8 @@
       var ex = C.filter(function (c) { return (c.societe || "") === so && (c.projet || "").toLowerCase() === pr.toLowerCase(); })[0];
       return ex ? ex.nom : [C.length ? fourRaison(C[0]) : r, so, pr].filter(String).join(" — ");
     }
-    function payeurAchat(t) { var c = F.comptes.filter(function (x) { return x.nom === v("ffCpt"); })[0]; return t === "Règlement fournisseur" && c && c.societe ? c.societe : v("ffSoc"); }
+    var payManuel = !!(src.type === "Règlement fournisseur" && src.op === "Achat comptant");
+    function payeurAchat(t) { return t === "Règlement fournisseur" ? v("ffPayS") || v("ffSoc") : v("ffSoc"); }
     function estRegl() { return v("ffType") === "Règlement fournisseur"; }
     function estAvance() { return estRegl() && v("ffRegM") === "Avance (sans facture)"; }
     function facturesDe(r) { var noms = comptesDe(r).map(function (c) { return c.nom.toLowerCase(); }); return F.factures.filter(function (f) { return noms.indexOf(f.fournisseur.toLowerCase()) >= 0 || (src.facture && f.no === src.facture); }); }
@@ -1333,13 +1335,14 @@
       $("ffMt").value = tot ? String(tot) : "";
       return C2;
     }
-    var h = "<div class='carte'><label>Type</label><select id='ffType'>" + opts(types, srcAchat ? "Achat fournisseur" : src.type || "Achat fournisseur") + "</select>" +
+    var h = "<div class='carte'><label>Type</label><select id='ffType'>" + opts(types, srcAchat ? "Achat fournisseur" : src.type || types[0]) + "</select>" +
       "<div id='ffAchatB'><div class='ligne'><div><label>Pièce</label><select id='ffPiece'>" + opts(["Avec facture", "Sans facture (reçu ou rien)"], A1.piece) + "</select></div>" +
       "<div><label>Paiement</label><select id='ffPay'>" + opts(["Payé maintenant", "À payer plus tard"], A1.pay) + "</select></div></div>" +
       "<label>Destination</label><select id='ffDest'>" + opts(["📦 Stock · fourniture locale (Suivi Achats)", "📦 Stock · fourniture importée (Suivi Achats)", "💸 Charge ou prestation (passe directement)"], A1.dest) + "</select></div>" +
       "<div id='ffOpB'><label>Mouvement</label><select id='ffOp'>" + opts(F.opsBanque, src.type === "Mouvement de trésorerie" ? src.op : "", "— choisir —") + "</select></div>" +
       "<div id='ffOcB'><label>Opération constatée (sans validation)</label><select id='ffOc'>" + opts(F.opsConstatees || [], src.type === "Opération constatée" ? src.op : "", "— choisir —") + "</select></div>" +
       "<div class='ligne'><div><label id='ffSocL'>Société (payeuse)</label><select id='ffSoc'>" + opts(["AB", "M2S", "CASAFINO"], (srcAchat && (src.pourCompte || (fourSrc && fourSrc.societe))) || src.societe || "AB") + "</select></div>" +
+      "<div id='ffPaySB'><label>Société payeuse</label><select id='ffPayS'>" + opts(["AB", "M2S", "CASAFINO", "DG"], src.type === "Règlement fournisseur" && src.op === "Achat comptant" ? src.societe : "") + "</select><div class='info'>Caisse / compte proposés : ceux de la société payeuse. Différente de la bénéficiaire → 🔁 Inter-sociétés.</div></div>" +
       "<div id='ffProjB'><label>Projet / affectation (facultatif)</label><input id='ffProj' list='ffProjL' value='" + esc(fourSrc && fourSrc.projet ? fourSrc.projet : "") + "' placeholder='ex. Dépôt Nongo, Entretien et réparation Imprimerie'><datalist id='ffProjL'>" +
         (F.projets || []).map(function (x) { return "<option value='" + esc(x) + "'>"; }).join("") + "</datalist></div>" +
       "<div id='ffPcB'><label>Pour le compte de</label><select id='ffPc'><option value=''>— elle-même —</option>" + (F.pourCompte || ["CASAFINO"]).map(function (x) { return "<option" + (x === src.pourCompte ? " selected" : "") + ">" + esc(x) + "</option>"; }).join("") + "</select></div></div>" +
@@ -1400,7 +1403,9 @@
       var op = t === "Mouvement de trésorerie" ? v("ffOp") : t === "Opération constatée" ? v("ffOc") : "", dev = v("ffDev");
       vis("ffAchatB", achat); vis("ffProjB", achat);
       $("ffSocL").textContent = achat ? "Société bénéficiaire" : "Société (payeuse)";
-      var socsV = achat ? ["AB", "M2S", "CASAFINO"] : ["AB", "M2S"];
+      var socsV = ["AB", "M2S", "CASAFINO"].concat(achat ? [] : ["DG"]);
+      vis("ffPaySB", achat && t === "Règlement fournisseur");
+      if (achat && !payManuel && $("ffPayS").value !== v("ffSoc")) $("ffPayS").value = v("ffSoc");   // par défaut : la bénéficiaire
       if (socsV.join("|") !== $("ffSoc").getAttribute("data-l")) { var so0 = $("ffSoc").value; $("ffSoc").innerHTML = opts(socsV, socsV.indexOf(so0) >= 0 ? so0 : "AB"); $("ffSoc").setAttribute("data-l", socsV.join("|")); }
       // Catégories : Stock → fournitures (Suivi Achats) ; Charge → les autres.
       var catsL = (F.categories || []).filter(function (c) { return !achat || (stock ? CATS_STOCK.indexOf(c) >= 0 : CATS_STOCK.indexOf(c) < 0); });
@@ -1435,6 +1440,10 @@
         else if (op === F.opRemb) { srcL = F.comptes.filter(function (c) { return ["AB", "M2S", "CASAFINO"].indexOf(c.societe) >= 0; }); dstL = srcL; lS = "Depuis un compte de la société qui rembourse"; lD = "Vers un compte de la société remboursée"; }
       }
       function remplir(id, L, val, vide) { var cur = $(id).value || val || ""; $(id).innerHTML = (vide ? "<option value=''>" + vide + "</option>" : "") + L.map(function (c) { return "<option" + (c.nom === cur ? " selected" : "") + ">" + esc(c.nom) + "</option>"; }).join(""); }
+      // Seuls les caisses / comptes de la société payeuse (et ceux sans société) sont proposés.
+      var payeur = achat ? payeurAchat(t) : v("ffSoc"), deLui = function (c) { return !c.societe || c.societe === payeur; };
+      srcL = srcL.filter(deLui); if (dstL && op !== F.opRemb) dstL = dstL.filter(deLui);
+      if (op === F.opRemb && dstL) dstL = dstL.filter(function (c) { return c.societe && c.societe !== payeur; });
       remplir("ffCpt", srcL, src.compte, "— choisir —"); remplir("ffCtp", dstL || [], src.contrepartie, op === "Virement" ? "— bénéficiaire externe —" : "— choisir —");
       $("ffCptL").textContent = lS; $("ffCtpL").textContent = lD;
       vis("ffCptB", t !== "Facture d'achat"); vis("ffCtpB", !!dstL);
@@ -1518,7 +1527,8 @@
       $("ffRegle").innerHTML = "🔐 Validation : <b>" + regle + "</b> · 📷 " + photo + (t !== "Facture d'achat" && t !== "Opération constatée" && F.role !== "DG" ? ((t === "Mouvement de trésorerie" && (op === "Retrait" || op === "Transfert entre caisses")) || (t === "Règlement fournisseur" && mode === "Chèque" && cat === "Commission") ? " · clôture sans pièce" : " · preuve du paiement à joindre après validation" + (t === "Dépense de caisse" ? " (facultative)" : "")) : "");
       $("ffEnv").textContent = t === "Opération constatée" ? "📒 Enregistrer" : "📤 Envoyer la demande";
     }
-    ["ffType", "ffPiece", "ffPay", "ffDest", "ffRegM", "ffRegS", "ffRegP", "ffAvS", "ffOp", "ffOc", "ffDev", "ffSoc", "ffPc", "ffFourC", "ffMode", "ffFact", "ffCpt", "ffCtp", "ffCat", "ffAN", "ffACat", "ffACatN", "ffPers", "ffMotRH"].forEach(function (id) { $(id).onchange = maj; });
+    ["ffType", "ffPiece", "ffPay", "ffPayS", "ffDest", "ffRegM", "ffRegS", "ffRegP", "ffAvS", "ffOp", "ffOc", "ffDev", "ffSoc", "ffPc", "ffFourC", "ffMode", "ffFact", "ffCpt", "ffCtp", "ffCat", "ffAN", "ffACat", "ffACatN", "ffPers", "ffMotRH"].forEach(function (id) { $(id).onchange = maj; });
+    $("ffPayS").onchange = function () { payManuel = true; maj(); };
     ["ffMt", "ffTaux", "ffFour", "ffProj"].forEach(function (id) { $(id).oninput = maj; });
     maj();
     $("ffEnv").onclick = function () {
@@ -2683,10 +2693,10 @@
     $("titre").textContent = "Inter-sociétés";
     $("vueListe").innerHTML = "<div class='carte'><h3>🔁 Comptes entre sociétés</h3><p class='info'>⏳ Chargement…</p></div>"; montrer("vueListe");
     api({ api: "finInterco" }).then(function (r) {
-      var SOC = ["AB", "M2S", "CASAFINO"], NOMS = { AB: "AB", M2S: "M2S", CASAFINO: "CasaFino" }, paires = [["CASAFINO", "AB"], ["CASAFINO", "M2S"], ["M2S", "AB"]];
+      var SOC = ["AB", "M2S", "CASAFINO", "DG"], NOMS = { AB: "AB", M2S: "M2S", CASAFINO: "CasaFino", DG: "DG (personnel)" }, paires = [["CASAFINO", "AB"], ["CASAFINO", "M2S"], ["M2S", "AB"], ["AB", "DG"], ["M2S", "DG"], ["CASAFINO", "DG"]];
       function net(a, b) { return (r.soldes[a + "|" + b] || 0) - (r.soldes[b + "|" + a] || 0); }   // > 0 : a doit à b
       var h = "<div class='carte pleine'><h3>🔁 Dettes entre sociétés</h3><div class='info'>Paiements faits par une société pour le compte d'une autre − remboursements − compensations / apports.</div><table>" +
-        paires.map(function (p) { var v = net(p[0], p[1]), a = v >= 0 ? p[0] : p[1], b = v >= 0 ? p[1] : p[0];
+        paires.filter(function (p) { return p[1] !== "DG" || net(p[0], p[1]); }).map(function (p) { var v = net(p[0], p[1]), a = v >= 0 ? p[0] : p[1], b = v >= 0 ? p[1] : p[0];
           return "<tr><td><b>" + NOMS[a] + "</b> doit à <b>" + NOMS[b] + "</b></td><td class='v' style='color:" + (v ? "#c62828" : "inherit") + "'>" + gnf(Math.abs(v)) + " GNF</td></tr>"; }).join("") + "</table>" +
         (r.direction ? "<div class='ligne'><button class='bouton second' id='icRemb'>💸 Remboursement (mouvement)</button><button class='bouton second' id='icComp'>⚖️ Compensation / apport</button></div>" : "") + "</div>";
       paires.forEach(function (p) {
@@ -2877,6 +2887,8 @@
   }
   // Nouveautés de cette version (affichées après une mise à jour réussie) : à mettre à jour avec chaque version.
   var NOUVEAUTES = [
+    "Caisses et comptes : seuls ceux de la société payeuse sont proposés (comptes personnels : payeur « DG »).",
+    "Finances › Nouvelle demande : achats et règlements fournisseurs se font depuis 🏭 Fournisseurs.",
     "🔔 « À résoudre » : demandes, corrections, validations, RH, stock, missions, retards — une ligne ne disparaît qu'une fois l'opération close.",
     "Relevé fournisseur lisible sur téléphone (Facturé · Payé · Solde).",
     "Finances : le DG peut valider avant Walid (sa validation suffit).",
