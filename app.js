@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-05 HP";
+  var VERSION_APP = "2026-11-05 HQ";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -581,6 +581,7 @@
   // Envoi de la file et téléchargement des données : chacun une seule fois à la fois.
   var envoiP = null, rafP = null;
   function lancerEnvoi() {
+    if (S.majRequise && plusAncienne(S.majRequise)) return Promise.resolve(0);   // tout est bloqué jusqu'à la mise à jour
     if (!envoiP) envoiP = envoyerFile().then(function (n) { envoiP = null; majEtat(); return n; }, function () { envoiP = null; return 0; });
     return envoiP;
   }
@@ -626,6 +627,7 @@
       return requete(S.url, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(corps), redirect: "follow" }, it.type === "planif" || it.type === "fin" || it.type === "rh" || it.type === "com" || it.type === "mis" ? DELAI_PLANIF : DELAI_ENVOI)
         .then(function (r) {
           S.derniereSync = Date.now(); ecrire("derniereSync", S.derniereSync);
+          if (r && r.majRequise) { it.essais--; it.erreur = "en attente de la mise à jour de l'app"; return sauver().then(function () { return n; }); }   // gardé : repart après la mise à jour
           if (r && r.appareilRefus) { it.essais--; it.erreur = "en attente du code de connexion (DG)"; return sauver().then(function () { return n; }); }   // gardé : repart après le code
           if (erreurPassagere(r) && it.essais < 6) { it.erreur = r.message; return sauver().then(function () { return n; }); }
           S.file.shift();
@@ -2817,12 +2819,70 @@
   function avecAppareil(url, options) {
     if (!S.dev || !S.url || String(url).indexOf(S.url) !== 0) return url;
     if (options && typeof options.body === "string" && options.body.charAt(0) === "{") {
-      try { var c = JSON.parse(options.body); c.appareil = S.dev.id; c.secret = S.dev.secret; options.body = JSON.stringify(c); } catch (e) {}
+      try { var c = JSON.parse(options.body); c.appareil = S.dev.id; c.secret = S.dev.secret; c.appVersion = VERSION_APP; options.body = JSON.stringify(c); } catch (e) {}
       return url;
     }
-    return url + (url.indexOf("?") < 0 ? "?" : "&") + "appareil=" + encodeURIComponent(S.dev.id) + "&secret=" + encodeURIComponent(S.dev.secret);
+    return url + (url.indexOf("?") < 0 ? "?" : "&") + "appareil=" + encodeURIComponent(S.dev.id) + "&secret=" + encodeURIComponent(S.dev.secret) + "&appVersion=" + encodeURIComponent(VERSION_APP);
   }
+  /* ---------- ⬆️ Mise à jour obligatoire : le script exige une version ; tant qu'elle n'est pas installée, tout est bloqué ---------- */
+  function plusAncienne(v) { return !!v && String(VERSION_APP) < String(v); }
+  function declencherMaj(v) {
+    if (!plusAncienne(v)) return;
+    if (S.majRequise !== v) { S.majRequise = v; ecrire("majRequise", v); }
+    ecranMaj();
+  }
+  function ecranMaj(etat) {
+    var o = $("ecranMaj");
+    if (!o) { o = document.createElement("div"); o.id = "ecranMaj"; document.body.appendChild(o); }
+    var essais = 0; try { essais = +localStorage.getItem("majEssais") || 0; } catch (e) {}
+    var nAtt = S.file.length, court = function (v) { return String(v || "").split(" ").pop(); };
+    o.innerHTML = "<div class='carte' style='max-width:560px;margin:0 auto'><h3>⬆️ Mise à jour obligatoire</h3>" +
+      "<p>Une nouvelle version de DuoCore est exigée. Aucune saisie n'est possible tant qu'elle n'est pas installée.</p>" +
+      "<table><tr><td>Version installée</td><td class='v'><b>" + esc(court(VERSION_APP)) + "</b></td></tr><tr><td>Version exigée</td><td class='v'><b style='color:#2e7d32'>" + esc(court(S.majRequise)) + "</b></td></tr></table>" +
+      (nAtt ? "<div class='info' style='margin-top:8px'>📥 " + nAtt + " saisie(s) gardée(s) sur l'appareil : elles partiront automatiquement après la mise à jour. Ne les refaites pas.</div>" : "") +
+      "<button class='bouton' id='majGo' style='margin-top:12px'>" + (etat === "encours" ? "⏳ Mise à jour en cours…" : "⬆️ Mettre à jour") + "</button>" +
+      "<div class='info' id='majMsg' style='white-space:pre-line'>" + (etat === "hors" ? "⛔ Pas de réseau : connectez l'appareil (Wi-Fi ou données) puis réessayez." : essais ? "⚠️ La mise à jour automatique n'a pas abouti (" + essais + " essai(s)) : suivez les instructions ci-dessous." : "") + "</div>" +
+      "<details" + (essais ? " open" : "") + " style='margin-top:12px'><summary><b>Instructions si le bouton ne suffit pas</b></summary><ol style='padding-left:20px;line-height:1.6'>" +
+      "<li>Vérifiez que l'appareil a du réseau, puis touchez <b>⬆️ Mettre à jour</b> et attendez 30 secondes.</li>" +
+      "<li>Fermez complètement DuoCore (bouton des applications récentes → balayer DuoCore), puis rouvrez-la.</li>" +
+      "<li>Toujours l'ancienne version ? Android (Chrome) : ouvrez Chrome → ⋮ → Paramètres → Paramètres des sites → Toutes les données → mimo-services.github.io → <b>Effacer</b>, puis rouvrez DuoCore et reconnectez-vous (code au DG si demandé).</li>" +
+      "<li>PC (Chrome / Edge) : sur la page DuoCore, appuyez sur <b>Ctrl + Maj + R</b>.</li>" +
+      "<li>iPhone : supprimez l'icône DuoCore de l'écran d'accueil, rouvrez le lien dans Safari, puis Partager → Sur l'écran d'accueil.</li>" +
+      "<li>Si rien ne change après 15 minutes : la nouvelle version n'est peut-être pas encore publiée — prévenez le DG.</li></ol>" +
+      "<div class='info'>⚠️ N'effacez les données (étape 3) qu'en dernier recours : les saisies en attente sur l'appareil seraient perdues.</div></details></div>";
+    o.style.display = "block";
+    $("majGo").onclick = installerMaj;
+  }
+  function installerMaj() {
+    if (!navigator.onLine) { ecranMaj("hors"); return; }
+    ecranMaj("encours");
+    try { localStorage.setItem("majEssais", String((+localStorage.getItem("majEssais") || 0) + 1)); } catch (e) {}
+    var fini = false;
+    function recharger() { if (fini) return; fini = true; location.reload(); }
+    if (!("serviceWorker" in navigator)) { recharger(); return; }
+    navigator.serviceWorker.addEventListener("controllerchange", recharger);
+    navigator.serviceWorker.getRegistration().then(function (reg) {
+      if (!reg) return recharger();
+      return reg.update().then(function () {
+        var w = reg.installing || reg.waiting;
+        if (w) { w.addEventListener("statechange", function () { if (w.state === "activated") recharger(); }); if (reg.waiting) reg.waiting.postMessage({ type: "activer" }); }
+      });
+    }).catch(function () {});
+    // Filet : après 20 s, vider le cache des fichiers de l'app (pas les données) et recharger depuis le réseau.
+    setTimeout(function () {
+      if (fini) return;
+      (window.caches ? caches.keys().then(function (k) { return Promise.all(k.map(function (c) { return caches.delete(c); })); }) : Promise.resolve()).then(recharger, recharger);
+    }, 20000);
+  }
+  function verifierMajAuDemarrage() {
+    return lire("majRequise").then(function (v) {
+      if (v && plusAncienne(v)) { S.majRequise = v; ecranMaj(); }
+      else if (v) { S.majRequise = null; ecrire("majRequise", null); try { localStorage.removeItem("majEssais"); } catch (e) {} }
+    });
+  }
+
   function surReponseSecurite(r) {
+    if (r && r.appRequise && plusAncienne(r.appRequise)) declencherMaj(r.appRequise);
     if (!r || !r.appareilRefus) return;
     SEC.refus = r.appareilRefus;
     // Agent connecté mais pas (ou plus) autorisé sur cet appareil : code au DG.
@@ -3023,6 +3083,7 @@
      (si l'agent est toujours sur cet écran). Elle est marquée lue dans l'historique 🔔. */
   var NOTIF_MARQUE = 0;
   function routerNotif(d) {
+    if (d.vue === "maj") { if (d.id && plusAncienne(d.id)) declencherMaj(d.id); else montrer("vueAccueil"); return true; }
     if (d.vue === "finances" && droitFin()) {
       if (d.id && S.fin && S.fin.demandes.some(function (x) { return x.no === d.id; })) { afficherFinances(); ouvrirDemandeFin(d.id); return true; }
       afficherFinances(); return false;
@@ -3670,6 +3731,7 @@
     if (q.get("notif")) { history.replaceState(null, "", location.pathname); setTimeout(function () { ouvrirDepuisNotif({ vue: q.get("notif"), id: q.get("id") }); }, 300); }
     setTimeout(verifierNotifications, 4000);
     setTimeout(majCloche, 1200);
+    verifierMajAuDemarrage();
     document.addEventListener("visibilitychange", function () { if (!document.hidden) majCloche(); });
     if (cle) history.replaceState(null, "", location.pathname);
     if (cle && S.donnees) { ouvrirLot(bdc || "", cle); synchroniser(false); }

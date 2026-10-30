@@ -1,18 +1,21 @@
 // Service worker : garde l'application sur le téléphone pour qu'elle s'ouvre sans réseau.
 // Changer VERSION à chaque mise à jour des fichiers de l'application.
-var VERSION = "duocore-2026-11-05-HP";
+var VERSION = "duocore-2026-11-05-HQ";
 var FICHIERS = ["./", "index.html", "app.js", "config.js", "manifest.webmanifest",
   "icone-192.png", "icone-512.png", "icone-maskable-512.png", "apple-touch-icon.png"];
 var JSQR = "https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js";
 
 self.addEventListener("install", function (e) {
   e.waitUntil(caches.open(VERSION).then(function (c) {
-    return c.addAll(FICHIERS).then(function () {
+    // cache: "reload" : toujours les fichiers du serveur (pas ceux du cache du navigateur), sinon une mise à jour pourrait garder l'ancien app.js.
+    return c.addAll(FICHIERS.map(function (f) { return new Request(f, { cache: "reload" }); })).then(function () {
       // Lecteur QR de secours (téléphones sans lecteur intégré) : facultatif.
       return c.add(new Request(JSQR, { mode: "cors" })).catch(function () {});
     });
   }).then(function () { return self.skipWaiting(); }));
 });
+
+self.addEventListener("message", function (e) { if (e.data && e.data.type === "activer") self.skipWaiting(); });
 
 self.addEventListener("activate", function (e) {
   e.waitUntil(caches.keys().then(function (cles) {
