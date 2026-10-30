@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-05 HU";
+  var VERSION_APP = "2026-11-05 HV";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -1420,6 +1420,11 @@
       vis("ffRegB", regl); vis("ffRegFB", regl && !avance); vis("ffAvB", avance); vis("ffObjB", !regl && !achat); vis("ffProjB", achat || avance);
       $("ffMt").readOnly = regl && !avance;
       var regC = regl && !avance ? dessinerFactures() : [];
+      // Devise : celle des factures réglées (imposée) ; sinon choisie d'abord, et seuls les comptes de cette devise sont proposés.
+      if (regC.length) { var devsF = []; regC.forEach(function (f) { var x = f.devise || "GNF"; if (devsF.indexOf(x) < 0) devsF.push(x); });
+        $("ffDev").value = devsF[0]; $("ffDev").disabled = true; dev = devsF[0];
+        if (devsF.length > 1) $("ffRegT").innerHTML += " · <b style='color:#c62828'>⛔ factures en devises différentes (" + devsF.join(", ") + ") : réglez-les séparément</b>"; }
+      else $("ffDev").disabled = false;
       vis("ffFactB", false); vis("ffRefB", achat); vis("ffRefOB", avecF); vis("ffEchB", t === "Facture d'achat");
       // Modes de paiement selon le type.
       var modes = t === "Règlement fournisseur" ? ["Espèces", "Chèque", "Virement"] : t === "Paiement RH" ? ["Espèces", "Virement"] : [];
@@ -1442,13 +1447,13 @@
       function remplir(id, L, val, vide) { var cur = $(id).value || val || ""; $(id).innerHTML = (vide ? "<option value=''>" + vide + "</option>" : "") + L.map(function (c) { return "<option" + (c.nom === cur ? " selected" : "") + ">" + esc(c.nom) + "</option>"; }).join(""); }
       // Seuls les caisses / comptes de la société payeuse (et ceux sans société) sont proposés.
       var payeur = achat ? payeurAchat(t) : v("ffSoc"), deLui = function (c) { return !c.societe || c.societe === payeur; };
-      srcL = srcL.filter(deLui); if (dstL && op !== F.opRemb) dstL = dstL.filter(deLui);
+      srcL = srcL.filter(function (c) { return deLui(c) && (c.devise || "GNF") === dev; }); if (dstL && op !== F.opRemb) dstL = dstL.filter(deLui);
       if (op === F.opRemb && dstL) dstL = dstL.filter(function (c) { return c.societe && c.societe !== payeur; });
       remplir("ffCpt", srcL, src.compte, "— choisir —"); remplir("ffCtp", dstL || [], src.contrepartie, op === "Virement" ? "— bénéficiaire externe —" : "— choisir —");
       $("ffCptL").textContent = lS; $("ffCtpL").textContent = lD;
       vis("ffCptB", t !== "Facture d'achat"); vis("ffCtpB", !!dstL);
       var cpt = F.comptes.filter(function (c) { return c.nom === v("ffCpt"); })[0], dst = F.comptes.filter(function (c) { return c.nom === v("ffCtp"); })[0];
-      if (cpt && cpt.devise) { $("ffDev").value = cpt.devise; $("ffDev").disabled = true; dev = cpt.devise; } else $("ffDev").disabled = false;
+      // (la devise n'est plus imposée par le compte : la liste des comptes suit la devise choisie)
       var devR = dst && dst.devise && dst.devise !== dev ? dst.devise : "";
       vis("ffChqI", t === "Mouvement de trésorerie" && op === "Dépôt de chèque");
       vis("ffRecuB", !!devR); $("ffRecuL").textContent = "Montant reçu sur " + (dst ? dst.nom : "") + " (" + devR + ")";
@@ -1545,6 +1550,7 @@
       if (reglF) {
         var RC = regCoches();
         if (!RC.length) { m.textContent = "⛔ Cochez au moins une facture (ou choisissez « Avance »)."; return; }
+        if (RC.some(function (f) { return (f.devise || "GNF") !== (RC[0].devise || "GNF"); })) { m.textContent = "⛔ Factures en devises différentes : réglez-les séparément."; return; }
         var trop = RC.filter(function (f) { var mt = nb((REG[f.no] || {}).mt); return !(mt > 0) || (s.devise === "GNF" && mt > f.reste - f.engage + (src.facture === f.no ? +src.montant || 0 : 0) + 0.5); })[0];
         if (trop) { m.textContent = "⛔ Montant de " + (trop.ref || trop.no) + " : vide ou supérieur au reste."; return; }
         s.objet = "Règlement " + RC.map(function (f) { return f.ref || f.no; }).join(", ");
@@ -2532,7 +2538,7 @@
     ordre.forEach(function (r) { G[r].sort(function (a, b) { return (a.societe || a.projet ? 1 : 0) - (b.societe || b.projet ? 1 : 0) || a.nom.localeCompare(b.nom); }); });
     return { G: G, ordre: ordre };
   }
-  function fourLibCompte(f) { return [f.societe || "", f.projet || ""].filter(String).join(" · ") || "Compte général"; }
+  function fourLibCompte(f) { return (f.societe ? "" : "⚠️ sans société · ") + ([f.societe || "", f.projet || ""].filter(String).join(" · ") || "à affilier"); }
   function fourCoord(raison) {   // coordonnées du fournisseur (compte général, sinon le premier)
     var L = ((S.fin && S.fin.fournisseurs) || []).filter(function (f) { return fourRaison(f) === raison; });
     return L.filter(function (f) { return !f.societe && !f.projet; })[0] || L[0] || { raison: raison, nom: raison };
@@ -2631,20 +2637,24 @@
     function opt(L, v, vide) { return (vide !== undefined ? "<option value=''>" + vide + "</option>" : "") + L.map(function (x) { return "<option" + (x === v ? " selected" : "") + ">" + esc(x) + "</option>"; }).join(""); }
     $("titre").textContent = nouveau ? "Nouveau fournisseur" : raison;
     $("vueListe").innerHTML = "<div class='carte'><h3>" + (nouveau ? "➕ Nouveau fournisseur / prestataire" : "✏️ " + esc(raison)) + "</h3>" +
-      (nouveau ? "<label>Raison sociale</label><input id='cfR'>" : "") +
+      (nouveau ? "<label>Raison sociale</label><input id='cfR'>" +
+        "<div class='ligne'><div><label>Société bénéficiaire du 1er compte</label><select id='cfS'><option value=''>— choisir —</option><option>AB</option><option>M2S</option><option>CASAFINO</option></select></div>" +
+        "<div><label>Projet (facultatif)</label><input id='cfP' list='cfPL' placeholder='ex. Dépôt Nongo'><datalist id='cfPL'>" + (F.projets || []).map(function (x) { return "<option value='" + esc(x) + "'>"; }).join("") + "</datalist></div></div>" : "") +
       "<div class='ligne'><div><label>Type</label><select id='cfT'>" + opt(["Fournisseur", "Prestataire"], k.type || "Fournisseur") + "</select></div>" +
       "<div><label>Assujetti à la TVA 18 %</label><select id='cfV'>" + opt(["Non", "Oui"], k.tva ? "Oui" : "Non") + "</select></div></div>" +
       "<label>Catégorie de dépense habituelle</label><select id='cfA'>" + opt(C0, k.article || "", "— aucune —") + "</select>" +
       "<div class='ligne'><div><label>Téléphone</label><input id='cfTe' value='" + esc(k.tel || "") + "'></div><div><label>NIF</label><input id='cfN' value='" + esc(k.nif || "") + "'></div></div>" +
       "<label>RIB / compte bancaire</label><input id='cfRi' value='" + esc(k.rib || "") + "'>" +
-      "<div class='info'>" + (nouveau ? "Un compte général (toutes sociétés, sans projet) est créé d'office. Vous pourrez ensuite lui ajouter des comptes par société et projet." : "Ces informations s'appliquent à tous ses comptes.") + "</div>" +
+      "<div class='info'>" + (nouveau ? "Le fournisseur est créé avec ce premier compte (société + projet). D'autres comptes s'ajoutent ensuite depuis sa fiche." : "Ces informations s'appliquent à tous ses comptes.") + "</div>" +
       "<button class='bouton' id='cfEnv'>" + (nouveau ? "Créer le fournisseur" : "Enregistrer") + "</button><div class='info' id='cfM'></div></div>";
     montrer("vueListe");
     $("cfEnv").onclick = function () {
       var d = { type: $("cfT").value, tva: $("cfV").value === "Oui", article: $("cfA").value, tel: $("cfTe").value.trim(), nif: $("cfN").value.trim(), rib: $("cfRi").value.trim() };
       if (nouveau) {
-        d.raison = $("cfR").value.replace(/\s+/g, " ").trim(); d.nom = d.raison; d.creer = true; d.general = true; d.societe = ""; d.projet = "";
+        d.raison = $("cfR").value.replace(/\s+/g, " ").trim(); d.creer = true; d.general = true; d.societe = $("cfS").value; d.projet = $("cfP").value.replace(/\s+/g, " ").trim();
+        d.nom = [d.raison, d.societe, d.projet].filter(String).join(" — ");
         if (!d.raison) { $("cfM").textContent = "⛔ Indiquez la raison sociale."; return; }
+        if (!d.societe) { $("cfM").textContent = "⛔ Choisissez la société bénéficiaire du premier compte."; return; }
         var ex = (F.fournisseurs || []).filter(function (x) { return normFour(fourRaison(x)) === normFour(d.raison) || normFour(x.nom) === normFour(d.raison); })[0];
         if (ex) { alert("ℹ️ « " + fourRaison(ex) + " » existe déjà : sa fiche s'ouvre pour lui ajouter un compte."); ouvrirFourExistant(fourRaison(ex)); return; }
       } else { d.raison = raison; d.mere = true; d.nom = k.nom || raison; }
@@ -2658,11 +2668,13 @@
     var existants = (F.fournisseurs || []).filter(function (x) { return fourRaison(x) === raison; });
     $("titre").textContent = nouveau ? "Nouveau compte" : f.nom;
     $("vueListe").innerHTML = "<div class='carte'><h3>" + (nouveau ? "➕ Nouveau compte · " + esc(raison) : "✏️ " + esc(fourLibCompte(f)) + " · " + esc(raison)) + "</h3>" +
-      (nouveau ? "<div class='ligne'><div><label>Société bénéficiaire</label><select id='ccS'><option value=''>— toutes —</option><option>AB</option><option>M2S</option><option>CASAFINO</option></select></div>" +
+      (nouveau ? "<div class='ligne'><div><label>Société bénéficiaire</label><select id='ccS'><option value=''>— choisir —</option><option>AB</option><option>M2S</option><option>CASAFINO</option></select></div>" +
         "<div><label>Projet (facultatif)</label><input id='ccP' list='ccPL' placeholder='ex. Dépôt Nongo'><datalist id='ccPL'>" + P.map(function (x) { return "<option value='" + esc(x) + "'>"; }).join("") + "</datalist></div></div>" +
         "<div class='info'>Société pour laquelle l'achat ou la prestation est fait. Le règlement reste libre : payé par une autre société, la dette va en 🔁 Inter-sociétés. Un projet nouveau est ajouté à la liste.</div>" +
         "<div class='info' style='margin-top:10px'>Nom du compte : <b id='ccNomV'></b>" + (dir ? " <button class='lien' id='ccNomE'>✏️ modifier</button>" : "") + "</div><input id='ccNom' style='display:none'>"
-      : "<div class='info'>Société : " + esc(f.societe || "toutes") + " · projet : " + esc(f.projet || "aucun") + "</div><label style='font-weight:400'><input type='checkbox' id='ccAc' style='width:auto'" + (f.actif === false ? "" : " checked") + "> compte actif (proposé dans les demandes)</label>") +
+      : (f.societe ? "<div class='info'>Société : " + esc(f.societe) + " · projet : " + esc(f.projet || "aucun") + "</div>"
+         : "<div class='info' style='color:#c62828'>⚠️ Compte sans société : choisissez la société bénéficiaire.</div><div class='ligne'><div><label>Société bénéficiaire</label><select id='ccSA'><option value=''>— choisir —</option><option>AB</option><option>M2S</option><option>CASAFINO</option></select></div>" +
+           "<div><label>Projet (facultatif)</label><input id='ccPA' value='" + esc(f.projet || "") + "' list='ccPLA'><datalist id='ccPLA'>" + P.map(function (x) { return "<option value='" + esc(x) + "'>"; }).join("") + "</datalist></div></div>") + "<label style='font-weight:400'><input type='checkbox' id='ccAc' style='width:auto'" + (f.actif === false ? "" : " checked") + "> compte actif (proposé dans les demandes)</label>") +
       "<button class='bouton' id='ccEnv'>" + (nouveau ? "Créer le compte" : "Enregistrer") + "</button><div class='info' id='ccM'></div></div>";
     montrer("vueListe");
     var manuel = false;
@@ -2682,9 +2694,11 @@
       if (nouveau) {
         d = { creer: true, nom: $("ccNom").value.replace(/\s+/g, " ").trim(), raison: raison, societe: $("ccS").value, projet: $("ccP").value.replace(/\s+/g, " ").trim(),
               type: k.type || "Fournisseur", article: k.article || "", tva: !!k.tva, tel: k.tel || "", nif: k.nif || "", rib: k.rib || "" };
+        if (!d.societe) { $("ccM").textContent = "⛔ Choisissez la société bénéficiaire."; return; }
         if (existants.some(function (x) { return (x.societe || "") === d.societe && (x.projet || "").toLowerCase() === d.projet.toLowerCase(); })) { $("ccM").textContent = "⛔ Ce fournisseur a déjà un compte pour cette société et ce projet."; return; }
         if (!d.nom || (F.fournisseurs || []).some(function (x) { return x.nom.toLowerCase() === d.nom.toLowerCase(); })) { $("ccM").textContent = "⛔ Nom de compte vide ou déjà pris."; return; }
-      } else d = { nom: f.nom, actif: $("ccAc").checked };
+      } else { d = { nom: f.nom, actif: $("ccAc").checked };
+        if ($("ccSA")) { if (!$("ccSA").value && d.actif) { $("ccM").textContent = "⛔ Choisissez la société bénéficiaire."; return; } if ($("ccSA").value) { d.societe = $("ccSA").value; d.projet = $("ccPA").value.replace(/\s+/g, " ").trim(); } } }
       envoyerFour(d, (nouveau ? "Nouveau compte " : "Compte ") + d.nom, function (r) { if (nouveau) ficheFourMere(raison); else ficheFournisseur(f.nom); });
     };
   }
@@ -2887,6 +2901,8 @@
   }
   // Nouveautés de cette version (affichées après une mise à jour réussie) : à mettre à jour avec chaque version.
   var NOUVEAUTES = [
+    "Fournisseurs : plus de compte général ; chaque compte a une société bénéficiaire (+ projet facultatif).",
+    "Caisses et comptes : seuls ceux de la devise de l'opération sont proposés.",
     "Caisses et comptes : seuls ceux de la société payeuse sont proposés (comptes personnels : payeur « DG »).",
     "Finances › Nouvelle demande : achats et règlements fournisseurs se font depuis 🏭 Fournisseurs.",
     "🔔 « À résoudre » : demandes, corrections, validations, RH, stock, missions, retards — une ligne ne disparaît qu'une fois l'opération close.",
