@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-05 IB";
+  var VERSION_APP = "2026-11-06 IE";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -2950,8 +2950,8 @@
   }
   // Nouveautés de cette version (affichées après une mise à jour réussie) : à mettre à jour avec chaque version.
   var NOUVEAUTES = [
-    "Notifications : l'icône de droite montre la rubrique (💰 👥 🤝 🎯 📦).",
-    "Demandes : le demandeur corrige avant validation ; le valideur peut « ↩️ Retour pour correction » (motif) au lieu de refuser — Finances, RH, Stock, Missions."
+    "📊 État d'avancement en arbre : BDC ▶ groupe de lots (A, B, C…) ▶ lots, pastilles ✓ ● ○ par étape ; touchez un lot pour le détail.",
+    "Lots terminés masqués par défaut (case « afficher les lots terminés »)."
   ];
   var MAJ = { pct: 0, etape: "", encours: false };
   function court(v) { return String(v || "").split(" ").pop().replace(/^duocore-.*-/, ""); }
@@ -3170,34 +3170,69 @@
     }
     charger();
   }
-  var AVC = { q: "", data: null, termines: false };
+  var AVC = { q: "", data: null, termines: false, lotsFinis: false, ouv: {}, det: {} };
   function afficherAvancement(bdcOuvert) {
     $("titre").textContent = "État d'avancement";
-    var C = { ok: "#2e7d32", cours: "#e67e22", todo: "#9e9e9e" };
-    function barre(r) { var pc = Math.round(r * 100); return "<div style='height:10px;background:var(--bord);border-radius:6px;overflow:hidden;margin:6px 0'><div style='height:100%;width:" + pc + "%;background:" + (pc >= 100 ? "#2e7d32" : "#e67e22") + "'></div></div>"; }
+    if (bdcOuvert) AVC.ouv["b|" + bdcOuvert] = true;
+    var C = { ok: "#2e7d32", cours: "#e67e22", todo: "#b0b0b0" };
+    function couleur(pc) { return pc >= 100 ? "#2e7d32" : pc > 0 ? "#e67e22" : "#b0b0b0"; }
+    function barre(pc, w) { return "<div style='flex:" + (w ? "0 0 " + w : "1") + ";height:9px;background:var(--bord);border-radius:6px;overflow:hidden'><div style='height:100%;width:" + pc + "%;background:" + couleur(pc) + "'></div></div>"; }
+    function pcLot(x) { return x.fini >= x.nb ? 100 : Math.round((x.ratio || 0) * 100); }
+    function niv(x) { return typeof x.niveau === "number" ? x.niveau : Math.max(0, String(x.cle).length - 1); }
+    function pastilles(x) { return x.etapes.map(function (e) { return "<span title='" + esc(e.nom + (e.texte ? " · " + e.texte : "")) + "' style='display:inline-block;width:14px;height:14px;line-height:14px;text-align:center;font-size:10px;border-radius:50%;margin-right:2px;color:#fff;background:" + C[e.st] + "'>" + (e.st === "ok" ? "✓" : e.st === "cours" ? "●" : "") + "</span>"; }).join(""); }
+    // Groupes : un lot de niveau 0 (A, B, C…) ouvre un groupe ; ses sous-lots (A1, A11…) le suivent.
+    function groupes(lots) {
+      var G = [];
+      lots.forEach(function (x) { if (!G.length || niv(x) === 0) G.push({ cle: x.cle, lots: [] }); G[G.length - 1].lots.push(x); });
+      G.forEach(function (g) { g.pc = Math.round(g.lots.reduce(function (t, x) { return t + pcLot(x); }, 0) / g.lots.length); g.finis = g.lots.filter(function (x) { return pcLot(x) >= 100; }).length; });
+      return G;
+    }
     function dessiner(msg) {
       var R = AVC.data, L = R ? R.bdcs : [], q = AVC.q.trim().toLowerCase();
-      var F = L.filter(function (b) { return (AVC.termines || !b.termine) && (!q || (b.bdc + " " + b.lots.map(function (x) { return x.cle + " " + x.designation; }).join(" ")).toLowerCase().indexOf(q) >= 0); });
+      function trouve(x) { return !q || (x.cle + " " + x.designation).toLowerCase().indexOf(q) >= 0; }
+      var F = L.filter(function (b) { return (AVC.termines || !b.termine) && (!q || b.bdc.toLowerCase().indexOf(q) >= 0 || b.lots.some(trouve)); });
       var h = "<div class='carte pleine'><h3>📊 État d'avancement</h3><input id='avQ' placeholder='Rechercher un BDC, un lot, un article' value='" + esc(AVC.q) + "'>" +
+        "<label style='font-weight:400'><input type='checkbox' id='avL' style='width:auto'" + (AVC.lotsFinis ? " checked" : "") + "> afficher les lots terminés</label>" +
         "<label style='font-weight:400'><input type='checkbox' id='avT' style='width:auto'" + (AVC.termines ? " checked" : "") + "> afficher les BDC terminés (30 derniers jours)</label>" +
-        "<div class='info'>" + (R ? F.length + " BDC · données du " + dateCourte(R.genere) : "") + (msg ? " · " + esc(msg) : "") + "</div></div>";
-      h += F.map(function (b) {
-        var ouvert = b.bdc === bdcOuvert, pc = Math.round(b.ratio * 100), pp = b.commande ? Math.min(100, Math.round(b.produit / b.commande * 100)) : null, pl = b.commande ? Math.min(100, Math.round(b.livre / b.commande * 100)) : null;
-        var nf = b.lots.filter(function (x) { return x.fini >= x.nb; }).length;
-        var t = "<div class='carte" + (ouvert ? " pleine" : "") + "' data-b='" + esc(b.bdc) + "' style='cursor:pointer'><div class='ligne' style='justify-content:space-between'><b>📄 " + esc(b.bdc) + "</b><b style='flex:0;white-space:nowrap;color:" + (b.termine ? "#2e7d32" : "#e67e22") + "'>" + (b.termine ? "✔ terminé" : pc + " %") + "</b></div>" + barre(b.ratio) +
-          "<div class='info'>" + nf + " / " + b.lots.length + " lot(s) terminé(s)" + (pp !== null ? " · produit " + pp + " % · livré " + pl + " % (" + gnf(b.produit) + " / " + gnf(b.commande) + ")" : "") + (b.dernier ? " · dernier scan " + dateCourte(b.dernier) : "") + "</div>";
-        if (ouvert) t += b.lots.map(function (x) {
-          var p2 = x.fini >= x.nb ? 100 : Math.round(x.ratio * 100);
-          return "<div style='border-top:1px solid var(--bord);margin-top:8px;padding-top:8px'><div class='ligne' style='justify-content:space-between'><b>" + "&nbsp;".repeat(Math.max(0, x.niveau) * 2) + esc(x.cle) + "</b><span style='flex:0;white-space:nowrap;font-weight:700'>" + p2 + " %</span></div>" +
-            "<div class='info'>" + esc(x.designation) + (x.quantite ? " · " + gnf(x.quantite) : "") + " · " + x.fini + "/" + x.nb + " étapes" + (x.dernier ? " · " + esc(x.dernier.poste) + " " + esc(x.dernier.evenement) + " (" + esc(x.dernier.operateur) + ", " + dateCourte(x.dernier.date) + ")" : "") + "</div>" + barre(x.fini >= x.nb ? 1 : x.ratio) +
-            "<div style='display:flex;flex-wrap:wrap;gap:4px'>" + x.etapes.map(function (e) { return "<span title='" + esc(e.texte) + "' style='font-size:12px;padding:3px 8px;border-radius:12px;color:#fff;background:" + C[e.st] + "'>" + (e.st === "ok" ? "✓ " : e.st === "cours" ? "● " : "○ ") + esc(e.nom) + (e.st === "cours" && e.texte && e.texte.length < 30 ? " · " + esc(e.texte) : "") + "</span>"; }).join("") + "</div></div>";
+        "<div class='info'>" + (R ? F.length + " BDC · données du " + dateCourte(R.genere) : "") + (msg ? " · " + esc(msg) : "") +
+        " · <span style='color:#2e7d32'>✓ fait</span> <span style='color:#e67e22'>● en cours</span> <span style='color:#999'>○ à faire</span></div></div>";
+      h += "<div class='carte pleine' style='padding:4px 0'>" + (F.map(function (b) {
+        var kb = "b|" + b.bdc, ob = !!AVC.ouv[kb] || !!q, pc = b.termine ? 100 : Math.round(b.ratio * 100);
+        var nf = b.lots.filter(function (x) { return pcLot(x) >= 100; }).length;
+        var t = "<div data-k='" + esc(kb) + "' style='cursor:pointer;padding:10px 12px;border-bottom:1px solid var(--bord)'>" +
+          "<div class='ligne' style='gap:8px;align-items:center'><span style='flex:0 0 14px'>" + (ob ? "▼" : "▶") + "</span><b style='flex:1;min-width:0'>📄 " + esc(b.bdc) + "</b><b style='flex:0;white-space:nowrap;color:" + couleur(pc) + "'>" + (b.termine ? "✔" : pc + " %") + "</b></div>" +
+          "<div class='ligne' style='gap:8px;align-items:center;margin:6px 0 0 22px'>" + barre(pc) + "</div>" +
+          "<div class='info' style='margin-left:22px'>" + nf + " / " + b.lots.length + " lot(s) terminé(s)" + (b.commande ? " · livré " + gnf(b.livre) + " / " + gnf(b.commande) : "") + (b.dernier ? " · dernier scan " + dateCourte(b.dernier) : "") + "</div></div>";
+        if (!ob) return t;
+        var G = groupes(b.lots), caches = 0;
+        t += G.map(function (g) {
+          var vis = g.lots.filter(function (x) { return (AVC.lotsFinis || pcLot(x) < 100) && trouve(x); });
+          if (!vis.length) { caches++; return ""; }
+          var kg = kb + "|" + g.cle, og = !!AVC.ouv[kg] || !!q;
+          var r = "<div data-k='" + esc(kg) + "' style='cursor:pointer;padding:8px 12px 8px 34px;border-bottom:1px solid var(--bord);background:var(--fond)'>" +
+            "<div class='ligne' style='gap:8px;align-items:center'><span style='flex:0 0 14px'>" + (og ? "▼" : "▶") + "</span><b style='flex:0 0 auto'>" + esc(g.cle) + "</b>" +
+            "<span class='info' style='flex:0 0 auto;margin:0'>(" + g.lots.length + " lot" + (g.lots.length > 1 ? "s" : "") + (g.finis ? ", " + g.finis + " ✔" : "") + ")</span>" + barre(g.pc) +
+            "<b style='flex:0 0 44px;text-align:right;color:" + couleur(g.pc) + "'>" + g.pc + " %</b></div></div>";
+          if (og) r += vis.map(function (x) {
+            var kl = kg + "|" + x.cle, p2 = pcLot(x), od = !!AVC.det[kl];
+            return "<div data-d='" + esc(kl) + "' style='cursor:pointer;padding:6px 12px 6px " + (56 + Math.max(0, niv(x) - 1) * 12) + "px;border-bottom:1px solid var(--bord)'>" +
+              "<div class='ligne' style='gap:8px;align-items:center'><b style='flex:0 0 46px'>" + esc(x.cle) + "</b><span style='flex:1;white-space:nowrap'>" + pastilles(x) + "</span>" +
+              "<b style='flex:0 0 44px;text-align:right;color:" + couleur(p2) + "'>" + p2 + " %</b></div>" +
+              (od ? "<div class='info' style='margin:4px 0 0'>" + esc(x.designation) + (x.quantite ? " · " + gnf(x.quantite) : "") + " · " + x.fini + "/" + x.nb + " étapes" +
+                (x.dernier ? "<br>Dernier : " + esc(x.dernier.poste) + " " + esc(x.dernier.evenement) + " (" + esc(x.dernier.operateur) + ", " + dateCourte(x.dernier.date) + ")" : "") + "<br>" +
+                x.etapes.map(function (e) { return "<span style='color:" + C[e.st] + "'>" + (e.st === "ok" ? "✓" : e.st === "cours" ? "●" : "○") + " " + esc(e.nom) + (e.st === "cours" && e.texte ? " · " + esc(e.texte) : "") + "</span>"; }).join(" &nbsp; ") + "</div>" : "") + "</div>";
+          }).join("");
+          return r;
         }).join("");
-        return t + "</div>";
-      }).join("") || "<p class='info' style='padding:0 4px'>" + (R ? "Aucun BDC en cours." : "Réseau nécessaire.") + "</p>";
+        if (caches) t += "<div class='info' style='padding:6px 12px 8px 34px;border-bottom:1px solid var(--bord)'>✔ " + caches + " groupe(s) terminé(s) masqué(s)</div>";
+        return t;
+      }).join("") || "<p class='info' style='padding:0 12px'>" + (R ? "Aucun BDC en cours." : "Réseau nécessaire.") + "</p>") + "</div>";
       $("vueListe").innerHTML = h; montrer("vueListe");
       $("avQ").onchange = function () { AVC.q = $("avQ").value; dessiner(""); };
       $("avT").onchange = function () { AVC.termines = $("avT").checked; dessiner(""); };
-      Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-b]"), function (el) { el.onclick = function () { var b = el.getAttribute("data-b"); bdcOuvert = bdcOuvert === b ? "" : b; dessiner(""); }; });
+      $("avL").onchange = function () { AVC.lotsFinis = $("avL").checked; dessiner(""); };
+      Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-k]"), function (el) { el.onclick = function () { var k = el.getAttribute("data-k"); AVC.ouv[k] = !AVC.ouv[k]; dessiner(""); }; });
+      Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-d]"), function (el) { el.onclick = function () { var k = el.getAttribute("data-d"); AVC.det[k] = !AVC.det[k]; dessiner(""); }; });
     }
     dessiner(AVC.data ? "mise à jour…" : "⏳ chargement…");
     api({ api: "suiviAtelier", vue: "avancement" }, 90000).then(function (r) { AVC.data = r; dessiner(""); }, function (e) { dessiner("⛔ " + e.message + " (réseau nécessaire)"); });
