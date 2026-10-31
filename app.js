@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-05 HZ";
+  var VERSION_APP = "2026-11-05 IB";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -1130,8 +1130,8 @@
     var A = $("fnActions"), peutValider = (d.statut === "En attente Walid" && (role === "Walid" || role === "DG")) || (d.statut === "En attente DG" && role === "DG");
     if (peutValider) {
       var nG = d.groupe ? F.demandes.filter(function (x) { return x.groupe === d.groupe && x.statut === d.statut; }).length : 0;
-      A.innerHTML = "<div class='carte'><h3>Votre décision</h3>" + (nG > 1 ? "<div class='info'>🔗 Règlement groupé : la décision s'applique aux " + nG + " factures du groupe (" + esc(F.demandes.filter(function (x) { return x.groupe === d.groupe; }).map(function (x) { return x.no; }).join(", ")) + ").</div>" : "") + "<label>Commentaire (obligatoire pour refuser ou faire corriger)</label><textarea id='fnCom' rows='2'></textarea>" +
-        "<button class='bouton' id='fnVal' style='background:var(--vert)'>✅ Valider</button><button class='bouton alerte' id='fnCor'>✏️ À corriger</button><button class='bouton' id='fnRef' style='background:var(--rouge)'>⛔ Refuser</button><div id='fnMsg' class='info'></div></div>";
+      A.innerHTML = "<div class='carte'><h3>Votre décision</h3>" + (nG > 1 ? "<div class='info'>🔗 Règlement groupé : la décision s'applique aux " + nG + " factures du groupe (" + esc(F.demandes.filter(function (x) { return x.groupe === d.groupe; }).map(function (x) { return x.no; }).join(", ")) + ").</div>" : "") + "<label>Commentaire / correction demandée (obligatoire pour refuser ou renvoyer)</label><textarea id='fnCom' rows='2'></textarea>" +
+        "<button class='bouton' id='fnVal' style='background:var(--vert)'>✅ Valider</button><button class='bouton alerte' id='fnCor'>↩️ Retour pour correction</button><button class='bouton' id='fnRef' style='background:var(--rouge)'>⛔ Refuser</button><div id='fnMsg' class='info'></div></div>";
       [["fnVal", "valider"], ["fnCor", "corriger"], ["fnRef", "refuser"]].forEach(function (x) {
         $(x[0]).onclick = function () {
           var com = $("fnCom").value.trim();
@@ -1176,7 +1176,8 @@
         envoyerFin("executer", x, "Paiement " + d.no, d.no);
       };
     } else if ((d.demandeur === moi || (d.demandeur === F.auto && role)) && ["En attente Walid", "En attente DG", "À corriger"].indexOf(d.statut) >= 0) {
-      A.innerHTML = "<div class='carte'>" + (d.statut === "À corriger" && d.demandeur === moi ? "<button class='bouton' id='fnMod'>✏️ Corriger et renvoyer</button>" : "") +
+      var avantVal = d.statut === "En attente Walid" && !d.walid && !d.dg;
+      A.innerHTML = "<div class='carte'>" + (d.demandeur === moi && (d.statut === "À corriger" || avantVal) ? "<button class='bouton' id='fnMod'>✏️ " + (d.statut === "À corriger" ? "Corriger et renvoyer" : "Modifier ma demande (avant validation)") + "</button>" : "") +
         "<button class='bouton second' id='fnAnn'>Annuler la demande</button></div>";
       if ($("fnMod")) $("fnMod").onclick = function () { formulaireFin(d); };
       $("fnAnn").onclick = function () { if (confirm("Annuler " + d.no + " ?")) envoyerFin("annuler", { no: d.no, version: d.version }, "Annulation " + d.no, d.no); };
@@ -1764,7 +1765,7 @@
     var R = S.rh; if (!R || !R.direction) return 0;
     return R.evenements.filter(function (e) { return e.statut === "En attente Walid" && !rhAttente(e.no).length; }).length;
   }
-  var COUL_EV = { "En attente Walid": "#e65100", "Validé": "#2e7d32", "Refusé": "#c62828", "Annulé": "#777" };
+  var COUL_EV = { "À corriger": "#b26a00", "En attente Walid": "#e65100", "Validé": "#2e7d32", "Refusé": "#c62828", "Annulé": "#777" };
   function envoyerRH(op, donnees, titre, suite) {
     var it = { type: "rh", op: op, jeton: nouveauJeton(), horodatage: Date.now(), agent: S.agent.nom, code: S.agent.code, donnees: donnees, titre: titre, resume: "RH", essais: 0 };
     soumettre(it).then(function (r) {
@@ -1845,11 +1846,23 @@
       "<button class='bouton second' id='rhFiche'>Fiche de " + esc(e.personnel) + "</button>";
     $("vueListe").innerHTML = h; montrer("vueListe");
     $("rhFiche").onclick = function () { ficheRH(e.personnel); };
-    if (e.statut !== "En attente Walid" || rhAttente(e.no).length) return;
-    var A = $("rhAct");
+    if (["En attente Walid", "À corriger"].indexOf(e.statut) < 0 || rhAttente(e.no).length) return;
+    var A = $("rhAct"), auteur = nomRH(e.par) === nomRH(R.agent);
+    if (auteur && (e.statut === "À corriger" || !R.direction)) {
+      A.innerHTML = "<div class='carte'>" + (e.statut === "À corriger" && e.decision ? "<div style='color:#b26a00;font-weight:700'>↩️ Correction demandée par " + esc(e.decision.a) + " : " + esc(e.decision.c) + "</div>" : "") +
+        "<button class='bouton' id='rhMod'>✏️ " + (e.statut === "À corriger" ? "Corriger et renvoyer" : "Modifier") + "</button><button class='bouton second' id='rhAnn'>Annuler cet événement</button></div>";
+      $("rhMod").onclick = function () { formulaireEvRH(e.personnel, e); };
+      $("rhAnn").onclick = function () { if (confirm("Annuler " + e.no + " ?")) envoyerRH("annuler", { no: e.no, version: e.version }, "Annulation " + e.no, function () { ouvrirEvRH(e.no); }); };
+      return;
+    }
+    if (e.statut !== "En attente Walid") return;
     if (R.direction) {
-      A.innerHTML = "<div class='carte'><h3>Votre décision</h3><label>Commentaire (obligatoire pour refuser)</label><input id='rhCom'>" +
-        "<button class='bouton' id='rhVal' style='background:var(--vert)'>✅ Valider (inscrit dans Base)</button><button class='bouton' id='rhRef' style='background:var(--rouge)'>⛔ Refuser</button><div id='rhMsg' class='info'></div></div>";
+      A.innerHTML = "<div class='carte'><h3>Votre décision</h3><label>Commentaire (obligatoire pour refuser ou renvoyer)</label><input id='rhCom'>" +
+        "<button class='bouton' id='rhVal' style='background:var(--vert)'>✅ Valider (inscrit dans Base)</button><button class='bouton alerte' id='rhCor'>↩️ Retour pour correction</button><button class='bouton' id='rhRef' style='background:var(--rouge)'>⛔ Refuser</button><div id='rhMsg' class='info'></div></div>";
+      $("rhCor").onclick = function () {
+        var c = $("rhCom").value.trim(); if (!c) { $("rhMsg").textContent = "⛔ Indiquez la correction demandée."; return; }
+        envoyerRH("decider", { no: e.no, version: e.version, decision: "corriger", commentaire: c }, "Retour " + e.no, function () { ouvrirEvRH(e.no); });
+      };
       $("rhVal").onclick = function () { envoyerRH("decider", { no: e.no, version: e.version, decision: "valider", commentaire: $("rhCom").value.trim() }, "Validation " + e.no, function () { ouvrirEvRH(e.no); }); };
       $("rhRef").onclick = function () {
         var c = $("rhCom").value.trim(); if (!c) { $("rhMsg").textContent = "⛔ Commentaire obligatoire."; return; }
@@ -1915,9 +1928,9 @@
     });
   }
 
-  function formulaireEvRH(nom) {
+  function formulaireEvRH(nom, ev) {
     var R = S.rh, T = R.types, types = Object.keys(T);
-    $("titre").textContent = "Événement RH";
+    $("titre").textContent = ev ? "Corriger " + ev.no : "Événement RH";
     var actifs = R.personnel.filter(function (p) { return p.actif; });
     $("vueListe").innerHTML = "<div class='carte'><h3>➕ Événement RH</h3>" +
       "<label>Agent</label><select id='reP'><option value=''>— choisir —</option>" + actifs.map(function (p) { return "<option" + (nomRH(p.nom) === nomRH(nom) ? " selected" : "") + ">" + esc(p.nom) + "</option>"; }).join("") + "</select>" +
@@ -1938,8 +1951,14 @@
       if (!(q > 0)) { $("reM").textContent = "⛔ Quantité."; return; }
       if (!dt) { $("reM").textContent = "⛔ Date d'effet."; return; }
       if (!confirm(t + " · " + p + " : " + q + " — " + dt.split("-").reverse().join("/") + " ?")) return;
+      if (ev) { envoyerRH("modifierEv", { no: ev.no, type: t, quantite: q, effet: dt, commentaire: $("reC").value.trim() }, "Correction " + ev.no, function () { ouvrirEvRH(ev.no); }); return; }
       envoyerRH("evenement", { personnel: p, type: t, quantite: q, effet: dt, commentaire: $("reC").value.trim() }, t + " · " + p, function (r) { if (r.no) ouvrirEvRH(r.no); else ficheRH(p); });
     };
+    if (ev) {   // correction : valeurs actuelles, agent non modifiable
+      $("reP").value = ev.personnel; $("reP").disabled = true; $("reT").value = ev.type; $("reQ").value = ev.qte; $("reC").value = ev.com || "";
+      if (ev.effet) { var de = new Date(ev.effet); $("reD").value = de.getFullYear() + "-" + ("0" + (de.getMonth() + 1)).slice(-2) + "-" + ("0" + de.getDate()).slice(-2); }
+      $("reEnv").textContent = "📤 Renvoyer"; maj();
+    }
   }
   function moisCourant() { return cleMois(Date.now()); }
   function formulaireSalaireRH(p) {
@@ -2483,7 +2502,7 @@
       h += "<div class='carte'><label>Commentaire</label><input id='miCom'>";
       if (ass) h += (m.statut !== "En cours" && m.statut !== "À clôturer" ? "<button class='bouton second' id='miCours'>▶ Je commence (en cours)</button>" : "") +
         (m.statut !== "À clôturer" ? "<button class='bouton' id='miSig' style='background:#6a1b9a'>✅ Signaler terminée (à clôturer)</button>" : "<div class='info'>Signalée terminée : en attente de clôture par DG / WALID.</div>");
-      if (dir) h += "<div class='ligne'><button class='bouton' id='miFin' style='background:var(--vert)'>🏁 Clôturer : terminée</button><button class='bouton' id='miAnn' style='background:var(--rouge)'>⛔ Annuler</button></div>";
+      if (dir) h += "<div class='ligne'><button class='bouton' id='miFin' style='background:var(--vert)'>🏁 Clôturer : terminée</button>" + (m.statut === "À clôturer" && !ass ? "<button class='bouton alerte' id='miRet'>↩️ Retour (pas terminée)</button>" : "") + "<button class='bouton' id='miAnn' style='background:var(--rouge)'>⛔ Annuler</button></div>";
       h += "<button class='bouton second' id='miCm'>💬 Ajouter le commentaire</button>" + (cre || dir ? "<button class='bouton second' id='miMod'>✏️ Modifier</button>" : "") + "<div class='info' id='miMsg'></div></div>";
     }
     h += "<div class='carte'><h3>Historique</h3>" + m.historique.slice().reverse().map(function (x) { return "<div class='info'>" + dateCourte(x.q) + " · " + esc(x.a) + " · " + esc(x.act) + (x.c ? " — " + esc(x.c) : "") + "</div>"; }).join("") + "</div>";
@@ -2500,6 +2519,7 @@
       envoyerMis("statut", { id: m.id, version: m.version, statut: "À clôturer", commentaire: com() }, "À clôturer " + m.id, retour);
     };
     if ($("miFin")) $("miFin").onclick = function () { if (confirm("Clôturer « " + m.titre + " » (terminée) ?" + (m.rec ? "\nLa suivante (" + m.rec.toLowerCase() + ") sera créée." : ""))) envoyerMis("statut", { id: m.id, version: m.version, statut: "Terminée", commentaire: com() }, "Clôture " + m.id, retour); };
+    if ($("miRet")) $("miRet").onclick = function () { if (!com()) { $("miMsg").textContent = "⛔ Indiquez dans le commentaire ce qui reste à faire."; return; } envoyerMis("statut", { id: m.id, version: m.version, statut: "En cours", commentaire: com() }, "Retour " + m.id, retour); };
     if ($("miAnn")) $("miAnn").onclick = function () { if (!com()) { $("miMsg").textContent = "⛔ Indiquez la raison dans le commentaire."; return; } if (confirm("Annuler « " + m.titre + " » ?")) envoyerMis("statut", { id: m.id, version: m.version, statut: "Annulée", commentaire: com() }, "Annulation " + m.id, retour); };
     if ($("miCm")) $("miCm").onclick = function () { if (!com()) { $("miMsg").textContent = "⛔ Écrivez le commentaire."; return; } envoyerMis("commenter", { id: m.id, commentaire: com() }, "Commentaire " + m.id, retour); };
     if ($("miMod")) $("miMod").onclick = function () { formulaireMis(m); };
@@ -2930,20 +2950,8 @@
   }
   // Nouveautés de cette version (affichées après une mise à jour réussie) : à mettre à jour avec chaque version.
   var NOUVEAUTES = [
-    "Commercial : échéance de paiement facultative (aucune, 15 jours, 1 à 6 mois ou date), déclarée à la facture ou modifiée ensuite.",
-    "Fournisseurs : la direction peut supprimer un compte vide et marquer un projet « achevé » (ses comptes soldés sont masqués).",
-    "Fournisseurs : plus de compte général ; chaque compte a une société bénéficiaire (+ projet facultatif).",
-    "Caisses et comptes : seuls ceux de la devise de l'opération sont proposés.",
-    "Caisses et comptes : seuls ceux de la société payeuse sont proposés (comptes personnels : payeur « DG »).",
-    "Finances › Nouvelle demande : achats et règlements fournisseurs se font depuis 🏭 Fournisseurs.",
-    "🔔 « À résoudre » : demandes, corrections, validations, RH, stock, missions, retards — une ligne ne disparaît qu'une fois l'opération close.",
-    "Relevé fournisseur lisible sur téléphone (Facturé · Payé · Solde).",
-    "Finances : le DG peut valider avant Walid (sa validation suffit).",
-    "Finances : Walid ou le DG modifient une demande avant validation ; après validation, le DG modifie et Walid demande une correction.",
-    "Mise à jour guidée : progression à l'écran, puis ce panneau de confirmation.",
-    "Notification de mise à jour : un toucher lance directement la mise à jour.",
-    "Notifications : un toucher ouvre l'opération ; historique 🔔 dans l'en-tête.",
-    "Finances : « À traiter » montre tout ce qui n'est pas clos ; ‹ revient à l'écran précédent."
+    "Notifications : l'icône de droite montre la rubrique (💰 👥 🤝 🎯 📦).",
+    "Demandes : le demandeur corrige avant validation ; le valideur peut « ↩️ Retour pour correction » (motif) au lieu de refuser — Finances, RH, Stock, Missions."
   ];
   var MAJ = { pct: 0, etape: "", encours: false };
   function court(v) { return String(v || "").split(" ").pop().replace(/^duocore-.*-/, ""); }
@@ -3013,12 +3021,14 @@
   function panneauMajReussie(av) {
     var o = document.createElement("div");
     o.id = "panneauMaj";
-    o.style.cssText = "position:fixed;inset:0;z-index:130;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:16px";
-    o.innerHTML = "<div class='carte' style='max-width:460px;width:100%;text-align:center'><div style='font-size:46px'>✅</div><h3 style='justify-content:center'>DuoCore est à jour</h3>" +
+    o.style.cssText = "position:fixed;inset:0;z-index:130;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:12px";
+    o.onclick = function (e) { if (e.target === o) o.remove(); };   // toucher en dehors = fermer
+    o.innerHTML = "<div class='carte' style='max-width:460px;width:100%;max-height:85vh;display:flex;flex-direction:column;text-align:center;margin:0'>" +
+      "<div style='overflow-y:auto;flex:1;min-height:0'><div style='font-size:38px'>✅</div><h3 style='justify-content:center'>DuoCore est à jour</h3>" +
       "<div>Version <b>" + esc(court(VERSION_APP)) + "</b> installée" + (av.de ? " (avant : " + esc(court(av.de)) + ")" : "") + ".</div>" +
-      (NOUVEAUTES.length ? "<div style='text-align:left;margin-top:12px'><b>Nouveautés</b><ul style='padding-left:20px;margin:6px 0'>" + NOUVEAUTES.map(function (x) { return "<li>" + esc(x) + "</li>"; }).join("") + "</ul></div>" : "") +
+      (NOUVEAUTES.length ? "<div style='text-align:left;margin-top:10px;font-size:14px'><b>Nouveautés</b><ul style='padding-left:20px;margin:6px 0'>" + NOUVEAUTES.map(function (x) { return "<li>" + esc(x) + "</li>"; }).join("") + "</ul></div>" : "") +
       (av.attente ? "<div class='info' id='pmEnv' style='margin-top:8px'>📤 Envoi des " + av.attente + " saisie(s) en attente…</div>" : "") +
-      "<button class='bouton' id='pmOk' style='margin-top:14px'>OK</button></div>";
+      "</div><button class='bouton' id='pmOk' style='margin-top:10px;flex:0 0 auto'>OK</button></div>";
     document.body.appendChild(o);
     $("pmOk").onclick = function () { o.remove(); };
     if (av.attente) lancerEnvoi().then(function () {
@@ -3207,7 +3217,8 @@
   function afficherStockVal(id) {
     $("titre").textContent = "Sortie de stock";
     function dessiner(msg) {
-      var K = S.stockv, L = K ? K.sorties : [], C = { "En attente": "#e65100", "Validée": "#2e7d32", "Refusée": "#c62828" };
+      var K = S.stockv, L = K ? K.sorties : [], C = { "En attente": "#e65100", "À corriger": "#b26a00", "Validée": "#2e7d32", "Refusée": "#c62828", "Annulée": "#777" }, moiS = S.agent && S.agent.nom;
+      function qteDe(x) { var m = String(x.resume).split(" · "); return m[1] || ""; }
       var fsS = S.formulaires && S.formulaires.formulaires && S.formulaires.formulaires.stock;
       var h = "<div class='carte pleine'><h3>📦 Sortie de stock (hors production)</h3>" +
         (fsS ? "<button class='bouton' id='skNouv'" + (fsS.erreur ? " disabled" : "") + ">➕ Nouvelle sortie de stock</button>" : "") +
@@ -3217,20 +3228,34 @@
         return "<div class='carte'" + (x.no === id ? " style='border-color:var(--cuivre)'" : "") + "><div class='ligne' style='justify-content:space-between'><b>" + esc(x.no) + " · " + esc(x.agent) + "</b>" +
           "<span style='flex:0;white-space:nowrap;font-weight:700;color:" + (C[x.statut] || "#999") + "'>" + esc(x.statut) + "</span></div><div>" + esc(x.resume) + "</div>" +
           "<div class='info'>Saisie le " + dateCourte(x.saisi) + (x.par ? " · " + esc(x.statut.toLowerCase()) + " par " + esc(x.par) + " le " + dateCourte(x.le) : "") + (x.motif ? " — " + esc(x.motif) : "") + "</div>" +
-          (K.direction && x.statut === "En attente" ? "<input data-m='" + i + "' placeholder='Motif (obligatoire pour refuser)'><div class='ligne'><button class='bouton' data-v='" + i + "' style='background:var(--vert)'>✅ Valider</button><button class='bouton' data-r='" + i + "' style='background:var(--rouge)'>⛔ Refuser</button></div>" : "") + "</div>";
+          (String(x.agent).toUpperCase() === String(moiS).toUpperCase() && (x.statut === "En attente" || x.statut === "À corriger") ?
+            "<div class='ligne'><div><label>Quantité de sortie</label><input data-q='" + i + "' inputmode='decimal' value='" + esc(qteDe(x)) + "'></div><div><label>Projet</label><input data-p='" + i + "'></div></div>" +
+            "<div class='ligne'><button class='bouton' data-c='" + i + "'>✏️ " + (x.statut === "À corriger" ? "Corriger et renvoyer" : "Modifier") + "</button><button class='bouton second' data-a='" + i + "'>Annuler</button></div>" : "") +
+          (K.direction && x.statut === "En attente" ? "<input data-m='" + i + "' placeholder='Motif (obligatoire pour refuser ou renvoyer)'><button class='bouton alerte' data-k='" + i + "'>↩️ Retour pour correction</button><div class='ligne'><button class='bouton' data-v='" + i + "' style='background:var(--vert)'>✅ Valider</button><button class='bouton' data-r='" + i + "' style='background:var(--rouge)'>⛔ Refuser</button></div>" : "") + "</div>";
       }).join("") || "<p class='info' style='padding:0 4px'>Aucune sortie de stock.</p>";
       $("vueListe").innerHTML = h; montrer("vueListe");
       if ($("skNouv")) $("skNouv").onclick = function () { ouvrirFormulaire("stock"); };
       function decider(i, dec) {
         var x = L[i], m = (document.querySelector("[data-m='" + i + "']") || {}).value || "";
-        if (dec === "refuser" && !m.trim()) { alert("⛔ Indiquez le motif du refus."); return; }
-        if (!confirm((dec === "valider" ? "Valider " : "Refuser ") + x.no + " : " + x.resume + " ?")) return;
+        if ((dec === "refuser" || dec === "corriger") && !m.trim()) { alert("⛔ Indiquez le motif."); return; }
+        if (!confirm((dec === "valider" ? "Valider " : dec === "corriger" ? "Renvoyer pour correction " : "Refuser ") + x.no + " : " + x.resume + " ?")) return;
         dessiner("⏳ envoi…");
         api({ api: "stockAValider", no: x.no, decision: dec, motif: m.trim() }).then(function (r) { alert("✅ " + r.titre + "\n" + (r.message || "")); return rafraichirStockVal(); },
           function (e) { alert("⛔ " + e.message + " (réseau nécessaire)"); }).then(function () { dessiner(""); });
       }
       Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-v]"), function (b) { b.onclick = function () { decider(+b.getAttribute("data-v"), "valider"); }; });
       Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-r]"), function (b) { b.onclick = function () { decider(+b.getAttribute("data-r"), "refuser"); }; });
+      Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-k]"), function (b) { b.onclick = function () { decider(+b.getAttribute("data-k"), "corriger"); }; });
+      function agir(i, dec) {
+        var x = L[i], q = (document.querySelector("[data-q='" + i + "']") || {}).value || "", pr = (document.querySelector("[data-p='" + i + "']") || {}).value;
+        if (dec === "modifier" && !(parseFloat(String(q).replace(",", ".")) > 0)) { alert("⛔ Quantité."); return; }
+        if (!confirm((dec === "modifier" ? "Envoyer la correction de " : "Annuler ") + x.no + " ?")) return;
+        dessiner("⏳ envoi…");
+        var c = { api: "stockAValider", no: x.no, decision: dec, quantite: q }; if (pr) c.projet = pr;
+        api(c).then(function (r) { alert("✅ " + r.titre + "\n" + (r.message || "")); return rafraichirStockVal(); }, function (e) { alert("⛔ " + e.message + " (réseau nécessaire)"); }).then(function () { dessiner(""); });
+      }
+      Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-c]"), function (b) { b.onclick = function () { agir(+b.getAttribute("data-c"), "modifier"); }; });
+      Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-a]"), function (b) { b.onclick = function () { agir(+b.getAttribute("data-a"), "annuler"); }; });
     }
     dessiner(S.stockv ? "mise à jour…" : "chargement…");
     rafraichirStockVal().then(function () { dessiner(""); }, function (e) { dessiner("⛔ " + e.message); });

@@ -1,8 +1,8 @@
 // Service worker : garde l'application sur le téléphone pour qu'elle s'ouvre sans réseau.
 // Changer VERSION à chaque mise à jour des fichiers de l'application.
-var VERSION = "duocore-2026-11-05-HZ";
+var VERSION = "duocore-2026-11-05-IB";
 var FICHIERS = ["./", "index.html", "app.js", "config.js", "manifest.webmanifest",
-  "icone-192.png", "icone-512.png", "icone-maskable-512.png", "apple-touch-icon.png"];
+  "icone-192.png", "icone-512.png", "notif-finances.png", "notif-rh.png", "notif-commercial.png", "notif-missions.png", "notif-stockval.png", "notif-maj.png", "notif-accueil.png", "notif-planif.png", "icone-maskable-512.png", "apple-touch-icon.png"];
 var JSQR = "https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js";
 
 // Installation : fichiers téléchargés un par un (progression envoyée à l'app : barre de mise à jour).
@@ -61,7 +61,7 @@ self.addEventListener("push", function (e) {
   var titre = d.titre || "DuoCore";
   e.waitUntil(Promise.all([
     garderNotif(titre, d),
-    self.registration.showNotification(titre, { body: d.texte || "", icon: "icone-192.png", badge: "icone-192.png", tag: d.tag || undefined, renotify: !!d.tag, data: d }),
+    self.registration.showNotification(titre, { body: d.texte || "", icon: "notif-" + (["finances", "rh", "commercial", "missions", "stockval", "maj", "planif"].indexOf(d.vue) >= 0 ? d.vue : "accueil") + ".png", badge: "icone-192.png", tag: d.tag || undefined, renotify: !!d.tag, data: d }),
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(function (cl) { cl.forEach(function (c) { c.postMessage({ type: "notif", data: d }); }); })
   ]));
 });
