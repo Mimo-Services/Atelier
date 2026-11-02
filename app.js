@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-06 IE";
+  var VERSION_APP = "2026-11-08 IK";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -1362,7 +1362,7 @@
         "<div id='ffAvB'><label>Société bénéficiaire de l'avance</label><select id='ffAvS'>" + opts(["AB", "M2S", "CASAFINO"], (fourSrc && fourSrc.societe) || "AB") + "</select></div></div>" +
       "<div id='ffObjB'><label>Objet</label><input id='ffObj' value='" + esc(src.objet || "") + "'></div>" +
       "<div id='ffModeB'><label>Mode de paiement</label><select id='ffMode'></select></div>" +
-      "<div class='ligne' id='ffCptB'><div><label id='ffCptL'>Compte</label><select id='ffCpt'></select></div><div id='ffCtpB'><label id='ffCtpL'>Vers</label><select id='ffCtp'></select></div></div>" +
+      "<div class='ligne' id='ffCptB'><div><label id='ffCptL'>Compte</label><select id='ffCpt'></select></div><div id='ffCtpB'><label id='ffCtpL'>Vers</label><select id='ffCtp'></select></div></div><div class='info' id='ffIcI' style='display:none'></div>" +
       "<div class='ligne'><div style='flex:2'><label>Montant</label><input id='ffMt' inputmode='decimal' value='" + esc(src.montant || "") + "'></div><div><label>Devise</label><select id='ffDev'>" + opts(["GNF", "USD", "EURO", "TND"], src.devise || "GNF") + "</select></div></div>" +
       "<div id='ffTauxB'><label>Taux (1 unité = … GNF)</label><input id='ffTaux' inputmode='decimal' value='" + esc(src.taux && src.devise !== "GNF" ? src.taux : "") + "'></div>" +
       "<div id='ffGnf' class='info'></div>" +
@@ -1445,15 +1445,21 @@
         else if (op === "Transfert entre caisses") { srcL = CA; dstL = CA; lS = "Depuis la caisse"; lD = "Vers la caisse"; }
         else if (op === F.opRemb) { srcL = F.comptes.filter(function (c) { return ["AB", "M2S", "CASAFINO"].indexOf(c.societe) >= 0; }); dstL = srcL; lS = "Depuis un compte de la société qui rembourse"; lD = "Vers un compte de la société remboursée"; }
       }
-      function remplir(id, L, val, vide) { var cur = $(id).value || val || ""; $(id).innerHTML = (vide ? "<option value=''>" + vide + "</option>" : "") + L.map(function (c) { return "<option" + (c.nom === cur ? " selected" : "") + ">" + esc(c.nom) + "</option>"; }).join(""); }
+      function remplir(id, L, val, vide, lib) { var cur = $(id).value || val || ""; $(id).innerHTML = (vide ? "<option value=''>" + vide + "</option>" : "") + L.map(function (c) { return "<option value='" + esc(c.nom) + "'" + (c.nom === cur ? " selected" : "") + ">" + esc(lib ? lib(c) : c.nom) + "</option>"; }).join(""); }
       // Seuls les caisses / comptes de la société payeuse (et ceux sans société) sont proposés.
       var payeur = achat ? payeurAchat(t) : v("ffSoc"), deLui = function (c) { return !c.societe || c.societe === payeur; };
-      srcL = srcL.filter(function (c) { return deLui(c) && (c.devise || "GNF") === dev; }); if (dstL && op !== F.opRemb) dstL = dstL.filter(deLui);
+      // Retrait / transfert vers la caisse d'une autre société : proposé (après les siennes) → avance en 🔁 Inter-sociétés.
+      var versAutre = t === "Mouvement de trésorerie" && (op === "Retrait" || op === "Transfert entre caisses");
+      srcL = srcL.filter(function (c) { return deLui(c) && (c.devise || "GNF") === dev; });
+      if (dstL && versAutre) dstL = dstL.filter(deLui).concat(dstL.filter(function (c) { return !deLui(c) && ["AB", "M2S", "CASAFINO", "DG"].indexOf(c.societe) >= 0; }));
+      else if (dstL && op !== F.opRemb) dstL = dstL.filter(deLui);
       if (op === F.opRemb && dstL) dstL = dstL.filter(function (c) { return c.societe && c.societe !== payeur; });
-      remplir("ffCpt", srcL, src.compte, "— choisir —"); remplir("ffCtp", dstL || [], src.contrepartie, op === "Virement" ? "— bénéficiaire externe —" : "— choisir —");
+      remplir("ffCpt", srcL, src.compte, "— choisir —"); remplir("ffCtp", dstL || [], src.contrepartie, op === "Virement" ? "— bénéficiaire externe —" : "— choisir —", versAutre ? function (c) { return c.nom + (deLui(c) ? "" : " · " + c.societe + " (avance inter-sociétés)"); } : null);
       $("ffCptL").textContent = lS; $("ffCtpL").textContent = lD;
       vis("ffCptB", t !== "Facture d'achat"); vis("ffCtpB", !!dstL);
       var cpt = F.comptes.filter(function (c) { return c.nom === v("ffCpt"); })[0], dst = F.comptes.filter(function (c) { return c.nom === v("ffCtp"); })[0];
+      var icAv = versAutre && dst && dst.societe && dst.societe !== payeur;
+      vis("ffIcI", !!icAv); if (icAv) $("ffIcI").textContent = "🔁 " + dst.nom + " appartient à " + dst.societe + " : avance de " + payeur + " à " + dst.societe + ", inscrite comme dette de " + dst.societe + " dans Inter-sociétés.";
       // (la devise n'est plus imposée par le compte : la liste des comptes suit la devise choisie)
       var devR = dst && dst.devise && dst.devise !== dev ? dst.devise : "";
       vis("ffChqI", t === "Mouvement de trésorerie" && op === "Dépôt de chèque");
@@ -2950,8 +2956,7 @@
   }
   // Nouveautés de cette version (affichées après une mise à jour réussie) : à mettre à jour avec chaque version.
   var NOUVEAUTES = [
-    "📊 État d'avancement en arbre : BDC ▶ groupe de lots (A, B, C…) ▶ lots, pastilles ✓ ● ○ par étape ; touchez un lot pour le détail.",
-    "Lots terminés masqués par défaut (case « afficher les lots terminés »)."
+    "🔁 Retrait / transfert vers la caisse d'une autre société (ex. AB → Caisse M2S) : avance inscrite automatiquement en Inter-sociétés."
   ];
   var MAJ = { pct: 0, etape: "", encours: false };
   function court(v) { return String(v || "").split(" ").pop().replace(/^duocore-.*-/, ""); }
