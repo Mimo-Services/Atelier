@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-08 IK";
+  var VERSION_APP = "2026-11-08 IL";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -1014,6 +1014,7 @@
     var F = S.fin, role = F && F.role;
     if (finAttente(d.no).length) return false;
     if (role && ((d.statut === "En attente Walid" && role === "Walid") || (d.statut === "En attente DG" && role === "DG"))) return true;
+    if (d.proposition && !d.proposition.etat) return role === "DG";
     if (d.demandeur === F.auto && d.statut === "À exécuter" && (role || F.comptable || F.rh)) return true;
     return d.demandeur === (S.agent && S.agent.nom) && (d.statut === "À corriger" || d.statut === "À exécuter");
   }
@@ -1140,6 +1141,8 @@
           envoyerFin("decider", { no: d.no, version: d.version, decision: x[1], commentaire: com }, (x[1] === "valider" ? "Validation " : x[1] === "refuser" ? "Refus " : "Correction ") + d.no, d.no);
         };
       });
+    } else if (d.statut === "À exécuter" && d.proposition && !d.proposition.etat) {
+      A.innerHTML = "";   // exécution suspendue : la carte de la proposition s'affiche plus bas
     } else if (d.statut === "À exécuter" && (d.demandeur === moi || role || (d.demandeur === F.auto && (F.comptable || F.rh)))) {
       var auto = d.demandeur === F.auto;
       // Salaire automatique : mode, compte payeur et, si sa devise diffère de celle du salaire, montant payé et taux.
@@ -1187,15 +1190,44 @@
     if (d.type !== "Opération constatée" && ((avantV && role) || (apresV && role === "DG"))) {
       A.insertAdjacentHTML("beforeend", "<div class='carte'><button class='bouton second' id='fnDirMod'>✏️ Modifier (" + esc(role) + ")</button><div class='info'>" + (avantV ? "Avant validation : Walid ou le DG corrigent directement." : "Après validation : seul le DG modifie.") + "</div></div>");
       $("fnDirMod").onclick = function () { formulaireDirection(d); };
-    } else if (apresV && role === "Walid") {
-      A.insertAdjacentHTML("beforeend", "<div class='carte'><label>Correction souhaitée (envoyée au DG)</label><input id='fnDcM'><button class='bouton second' id='fnDc'>📝 Demander une correction au DG</button></div>");
-      $("fnDc").onclick = function () { var c = $("fnDcM").value.trim(); if (!c) { alert("⛔ Indiquez la correction souhaitée."); return; } envoyerFin("demanderCorrection", { no: d.no, version: d.version, commentaire: c }, "Correction demandée " + d.no, d.no); };
+    } else if (role === "Walid" && d.statut === "À exécuter" && !(d.proposition && !d.proposition.etat)) {
+      A.insertAdjacentHTML("beforeend", "<div class='carte'><h3>Changer l'opération (accord du DG)</h3><div class='ligne'><button class='bouton second' id='fnPm'>✏️ Demander une modification</button>" +
+        "<button class='bouton second' id='fnPa'>🗑️ Demander l'annulation</button></div><div class='info'>Modification : montant, comptes, objet… <b>sans changer la pièce jointe</b>. " +
+        "Si la pièce doit changer (autre chèque) : demandez l'annulation, puis refaites la demande avec la nouvelle pièce.</div></div>");
+      $("fnPm").onclick = function () { formulaireDirection(d, true); };
+      $("fnPa").onclick = function () {
+        var m = prompt("Annulation de " + d.no + " : motif (ex. chèque à remplacer) ?"); if (m === null) return;
+        if (!m.trim()) { alert("⛔ Motif obligatoire."); return; }
+        envoyerFin("proposerAnnul", { no: d.no, version: d.version, commentaire: m.trim() }, "Annulation demandée " + d.no, d.no);
+      };
+    }
+    // Proposition de Walid : le DG accepte ou refuse ; tout le monde voit l'état.
+    var PR = d.proposition;
+    if (PR) {
+      var LIBC = { montant: "Montant", taux: "Taux", mode: "Mode", compte: "Compte", contrepartie: "Vers", beneficiaire: "Bénéficiaire", categorie: "Catégorie", objet: "Objet", refFacture: "Réf. facture", echeance: "Échéance" };
+      function vx(k, x) { return x === undefined || x === "" ? "—" : k === "montant" ? gnf(x) + " " + d.devise : k === "echeance" ? (x ? dateCourte(x) : "—") : String(x); }
+      var enAtt = !PR.etat, rows = PR.type === "modif" ? Object.keys(PR.modif || {}).map(function (k) { return "<tr><td>" + esc(LIBC[k] || k) + "</td><td style='color:#c62828;text-decoration:line-through'>" + esc(vx(k, (PR.avant || {})[k])) + "</td><td style='color:#2e7d32;font-weight:700'>" + esc(vx(k, PR.modif[k])) + "</td></tr>"; }).join("") : "";
+      var h = "<div class='carte'><h3>" + (PR.type === "modif" ? "✏️ Modification proposée" : "🗑️ Annulation demandée") + " par " + esc(PR.par) + " · " + dateCourte(PR.q) + "</h3>" +
+        "<div class='info'>Motif : " + esc(PR.motif) + "</div>" + (rows ? "<table class='tab' style='width:100%;margin:6px 0'><tr><th></th><th>Avant</th><th>Proposé</th></tr>" + rows + "</table>" : "") +
+        (enAtt ? (role === "DG" ? "<label>Commentaire (obligatoire si refus)</label><input id='fnPrC'><div class='ligne'><button class='bouton' id='fnPrOk'>✅ Accepter</button><button class='bouton second' id='fnPrNo'>⛔ Refuser</button></div>"
+                                : "<div class='info'>⏳ En attente de la réponse du DG — exécution suspendue.</div>")
+               : "<div class='info'>" + (PR.etat === "acceptée" ? "✅" : "⛔") + " " + esc(PR.etat) + " par " + esc((PR.rep || {}).par || "DG") + ((PR.rep || {}).c ? " — " + esc(PR.rep.c) : "") + "</div>") +
+        (PR.type === "annul" && PR.etat === "acceptée" && d.statut === "Annulée" && (role === "Walid" || role === "DG") ? "<button class='bouton' id='fnRefaire'>🔁 Refaire la demande (nouvelle pièce)</button>" : "") + "</div>";
+      A.insertAdjacentHTML(enAtt ? "afterbegin" : "beforeend", h);
+      if ($("fnPrOk")) {
+        $("fnPrOk").onclick = function () { if (confirm("Accepter " + (PR.type === "modif" ? "la modification" : "l'annulation") + " de " + d.no + " ?")) envoyerFin("repondreProposition", { no: d.no, version: d.version, accepter: true, commentaire: $("fnPrC").value.trim() }, "Proposition acceptée " + d.no, d.no); };
+        $("fnPrNo").onclick = function () { var c = $("fnPrC").value.trim(); if (!c) { alert("⛔ Indiquez le motif du refus."); return; } envoyerFin("repondreProposition", { no: d.no, version: d.version, accepter: false, commentaire: c }, "Proposition refusée " + d.no, d.no); };
+      }
+      if ($("fnRefaire")) $("fnRefaire").onclick = function () {
+        var c = JSON.parse(JSON.stringify(d)); ["no", "version", "pieces", "preuves", "statut", "historique", "walid", "dg", "proposition", "execute", "ligneBase", "validations", "solde"].forEach(function (k) { delete c[k]; });
+        c.objet = d.objet ? d.objet + " (remplace " + d.no + ")" : "Remplace " + d.no; formulaireFin(c);
+      };
     }
   }
   /* Formulaire de modification par la direction (champs principaux ; trace dans l'historique, demandeur notifié). */
-  function formulaireDirection(d) {
+  function formulaireDirection(d, proposition) {
     var F = S.fin;
-    $("titre").textContent = "Modifier " + d.no;
+    $("titre").textContent = (proposition ? "Proposer une modification · " : "Modifier ") + d.no;
     function opts(L, v, vide) { return (vide ? "<option value=''>" + vide + "</option>" : "") + L.map(function (x) { return "<option" + (x === v ? " selected" : "") + ">" + esc(x) + "</option>"; }).join(""); }
     var cpts = F.comptes.map(function (c) { return c.nom; }), modes = d.type === "Règlement fournisseur" ? ["Espèces", "Chèque", "Virement"] : d.type === "Paiement RH" ? ["Espèces", "Virement"] : [];
     var fact = d.type === "Facture d'achat";
@@ -1209,8 +1241,9 @@
       "<label>Catégorie</label><select id='dmCa'>" + opts(F.categories || [], d.categorie, "—") + "</select>" +
       "<label>Objet</label><input id='dmOb' value='" + esc(d.objet || "") + "'>" +
       (fact ? "<label>Réf. facture</label><input id='dmRf' value='" + esc(d.refFacture || "") + "'><label>Échéance</label><input id='dmEc' type='date' value='" + (d.echeance ? new Date(d.echeance).toISOString().slice(0, 10) : "") + "'>" : "") +
-      "<label>Motif de la modification</label><input id='dmCo'>" +
-      "<button class='bouton' id='dmEnv'>💾 Enregistrer la modification</button><div class='info' id='dmMsg'></div></div>";
+      "<label>Motif de la modification" + (proposition ? " (obligatoire)" : "") + "</label><input id='dmCo'>" +
+      (proposition ? "<div class='info'>📎 La pièce jointe reste celle de la demande. Le DG verra l'avant / après et acceptera ou refusera ; l'exécution est suspendue en attendant.</div>" : "") +
+      "<button class='bouton' id='dmEnv'>" + (proposition ? "📤 Envoyer la proposition au DG" : "💾 Enregistrer la modification") + "</button><div class='info' id='dmMsg'></div></div>";
     montrer("vueListe");
     $("dmEnv").onclick = function () {
       function v(id) { return $(id) ? $(id).value : undefined; }
@@ -1218,6 +1251,11 @@
       var m = { montant: n(v("dmMt")), taux: n(v("dmTx")), mode: v("dmMo"), compte: v("dmCp"), contrepartie: v("dmCt"), beneficiaire: v("dmBe"), categorie: v("dmCa"), objet: v("dmOb"), refFacture: v("dmRf"), echeance: v("dmEc") };
       Object.keys(m).forEach(function (k) { if (m[k] === undefined) delete m[k]; });
       if (!(m.montant > 0)) { $("dmMsg").textContent = "⛔ Montant."; return; }
+      if (proposition) {
+        if (!String(v("dmCo") || "").trim()) { $("dmMsg").textContent = "⛔ Motif obligatoire."; return; }
+        if (!confirm("Envoyer au DG la proposition de modification de " + d.no + " ?")) return;
+        envoyerFin("proposerModif", { no: d.no, version: d.version, modif: m, commentaire: v("dmCo") }, "Modification proposée " + d.no, d.no); return;
+      }
       if (!confirm("Enregistrer la modification de " + d.no + " ?")) return;
       envoyerFin("modifierDirection", { no: d.no, version: d.version, modif: m, commentaire: v("dmCo") }, "Modification " + d.no, d.no);
     };
@@ -2956,7 +2994,9 @@
   }
   // Nouveautés de cette version (affichées après une mise à jour réussie) : à mettre à jour avec chaque version.
   var NOUVEAUTES = [
-    "🔁 Retrait / transfert vers la caisse d'une autre société (ex. AB → Caisse M2S) : avance inscrite automatiquement en Inter-sociétés."
+    "Demande « À exécuter » : Walid propose une modification (pièce inchangée) ou une annulation ; le DG accepte / refuse (avant → après).",
+    "Annulation acceptée : bouton « 🔁 Refaire la demande » pré-rempli, avec la nouvelle pièce.",
+    "🔁 Retrait / transfert vers la caisse d'une autre société : avance inscrite en Inter-sociétés."
   ];
   var MAJ = { pct: 0, etape: "", encours: false };
   function court(v) { return String(v || "").split(" ").pop().replace(/^duocore-.*-/, ""); }
@@ -3338,8 +3378,8 @@
     var L = [], moi = S.agent && S.agent.nom;
     if (!S.agent) return L;
     if (S.fin && droitFin()) S.fin.demandes.filter(finOuverte).forEach(function (d) {
-      var h = d.historique || [], der = h[h.length - 1] || {}, corr = /Correction demandée au DG/.test(der.act || "") && S.fin.role === "DG";
-      L.push({ rub: "💰", t: d.no + " · " + libelleFin(d), s: statutFin(d) + " · " + gnf(d.montant) + " " + d.devise + " · " + d.demandeur + (corr ? " · 📝 correction demandée : " + (der.c || "") : ""),
+      var h = d.historique || [], der = h[h.length - 1] || {}, corr = ((d.proposition && !d.proposition.etat) || /Correction demandée au DG/.test(der.act || "")) && S.fin.role === "DG";
+      L.push({ rub: "💰", t: d.no + " · " + libelleFin(d), s: statutFin(d) + " · " + gnf(d.montant) + " " + d.devise + " · " + d.demandeur + (corr ? " · 📝 " + (d.proposition && d.proposition.type === "annul" ? "annulation" : "modification") + " demandée : " + (der.c || "") : ""),
                moi: finATraiter(d) || corr, q: d.date, ouvrir: function () { afficherFinances(); ouvrirDemandeFin(d.no); } });
     });
     if (S.rh && S.rh.direction && droitRH()) S.rh.evenements.filter(function (e) { return e.statut === "En attente Walid"; }).forEach(function (e) {
