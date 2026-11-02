@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-08 IL";
+  var VERSION_APP = "2026-11-09 IM";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -62,6 +62,7 @@
     var d = new Date(t), z = function (n) { return (n < 10 ? "0" : "") + n; };
     return z(d.getDate()) + "/" + z(d.getMonth() + 1) + " " + z(d.getHours()) + ":" + z(d.getMinutes());
   }
+  function jourFr(t) { var d = new Date(t), z = function (n) { return (n < 10 ? "0" : "") + n; }; return z(d.getDate()) + "/" + z(d.getMonth() + 1) + "/" + d.getFullYear(); }
   function C() { return (S.donnees && S.donnees.constantes) || {}; }
   function dans(liste, x) { return (liste || []).indexOf(x) !== -1; }
   function attendre(p, ms) {
@@ -1061,7 +1062,8 @@
         var att = finAttente(d.no).length, moiA = finATraiter(d);
         return "<div class='carte" + (att ? " att" : "") + "' data-no='" + esc(d.no) + "' style='cursor:pointer'><div class='ligne' style='justify-content:space-between'><b>" + esc(d.no) + " · " + esc(libelleFin(d)) + "</b>" +
           "<b style='flex:0;white-space:nowrap'>" + gnf(d.montant) + " " + esc(d.devise) + "</b></div>" +
-          "<div class='info'>" + esc(d.fournisseur || d.objet || d.compte || "") + (d.pourCompte ? " · <b>pour " + esc(d.pourCompte) + "</b>" : "") + " · " + esc(d.demandeur) + " · " + dateCourte(d.date) + "</div>" +
+          "<div class='info'>" + esc(d.fournisseur || d.objet || d.compte || "") + (d.pourCompte ? " · <b>pour " + esc(d.pourCompte) + "</b>" : "") + " · " + esc(d.demandeur) + " · " + dateCourte(d.date) +
+            (d.dateEffet && !(d.type === "Paiement RH" && d.motifRH === "SALAIRE (RH)") && (!d.execute || isoJour(d.dateEffet) !== isoJour(d.execute)) ? " · effet " + jourFr(d.dateEffet) : "") + "</div>" +
           "<div style='color:" + (COUL_ST[d.statut] || "#999") + ";font-weight:700;font-size:14px'>" + (moiA ? "👉 " : "") + esc(statutFin(d)) + (moiA ? " · à vous" : "") + (att ? " · ⏳ action en attente d'envoi" : "") +
           (d.solde ? " · reste " + gnf(d.solde.reste) + " GNF" : "") + "</div></div>";
       }).join("") || "<p class='info' style='padding:0 4px'>Rien ici.</p>";
@@ -1114,7 +1116,9 @@
       ligne("Personnel", esc(d.personnel) + (d.motifRH ? " · " + esc(d.motifRH) : "")) +
       ligne("Achat", d.achat ? esc(d.achat.nature + " · " + (d.achat.article || d.achat.designation || (d.achat.articles || []).join(", ")) + (d.achat.quantite ? " · qté " + d.achat.quantite : "")) + (d.achatId ? " [" + esc(d.achatId) + "]" : "") : "") +
       ligne("Pour le compte de", d.pourCompte ? "<b>" + esc(d.pourCompte) + "</b> (dette envers " + esc(d.societe) + ")" : "") + ligne("Bénéficiaire", esc(d.beneficiaire)) + ligne("Catégorie", esc(d.categorie)) + ligne(d.type === "Paiement RH" ? "Équivalent" : "Reçu", d.recu ? gnf(d.recu) + " " + esc(d.deviseRecue) : "") +
-      ligne("Mois", d.dateEffet ? moisLib(d.dateEffet) : "") +
+      (d.type === "Paiement RH" && d.motifRH === "SALAIRE (RH)" ? ligne("Mois", d.dateEffet ? moisLib(d.dateEffet) : "")
+        : ligne("Date d'effet", d.dateEffet ? "<b>" + jourFr(d.dateEffet) + "</b>" : d.statut === "Exécutée" ? "= date d'exécution" : "")) +
+      ligne("Exécutée le", d.execute ? dateCourte(d.execute) : "") +
       ligne("Base", d.ligneBase ? "ligne " + esc(d.ligneBase) : "") + ligne("Société", esc(d.societe)) + ligne("Échéance", d.echeance ? dateCourte(d.echeance).split(" ")[0] : "") +
       ligne("Demandeur", esc(d.demandeur) + " · " + dateCourte(d.date)) +
       (d.solde ? ligne("Réglé / reste", gnf(d.solde.regle) + " / <b>" + gnf(d.solde.reste) + " GNF</b>" + (d.solde.engage ? "<br><small>dont " + gnf(d.solde.engage) + " en cours</small>" : "")) : "") +
@@ -1152,7 +1156,8 @@
           "<div id='fnPmB'><label id='fnPmL'>Montant payé</label><input id='fnPmt' inputmode='decimal'></div><div id='fnPtB'><label>Taux (1 unité = … GNF)</label><input id='fnPt' inputmode='decimal'></div>" +
           "<div class='info' id='fnPi'></div>" : "") +
         "<div class='info'>" + (d.type === "Dépense de caisse" ? "Justificatif facultatif." : sansPreuveFin(d) ? "Pas de pièce à joindre (la photo du chèque de la demande fait foi) : justificatif facultatif." : "Photo de la preuve obligatoire : reçu, talon de chèque, avis de virement…") + "</div>" +
-        champFichiers("fnPr") + "<label>Commentaire</label><input id='fnCom'><button class='bouton' id='fnExe'>🧾 Clôturer : paiement effectué</button><div id='fnMsg' class='info'></div></div>";
+        champFichiers("fnPr") + (d.type === "Paiement RH" && d.motifRH === "SALAIRE (RH)" ? "" : "<label>Date d'effet <small>(vide = aujourd'hui, date d'exécution)</small></label><input id='fnEff' type='date' value='" + (d.dateEffet ? isoJour(d.dateEffet) : "") + "'>") +
+        "<label>Commentaire</label><input id='fnCom'><button class='bouton' id='fnExe'>🧾 Clôturer : paiement effectué</button><div id='fnMsg' class='info'></div></div>";
       lierFichiers("fnPr");
       function nbx(x) { x = String(x || "").replace(/[\s  ]/g, "").replace(",", "."); return parseFloat(x) || 0; }
       function cptP() { return F.comptes.filter(function (c) { return c.nom === $("fnPc").value; })[0]; }
@@ -1168,6 +1173,7 @@
       if (auto) { $("fnPm").onchange = majP; $("fnPc").onchange = majP; majP(); }
       $("fnExe").onclick = function () {
         var f = FICH.fnPr || [], x = { no: d.no, version: d.version, commentaire: $("fnCom").value.trim(), fichiers: f };
+        if ($("fnEff")) x.dateEffet = $("fnEff").value;
         if (auto) {
           var c = cptP();
           if (!c) { $("fnMsg").textContent = "⛔ Choisissez le compte payeur."; return; }
@@ -1204,8 +1210,8 @@
     // Proposition de Walid : le DG accepte ou refuse ; tout le monde voit l'état.
     var PR = d.proposition;
     if (PR) {
-      var LIBC = { montant: "Montant", taux: "Taux", mode: "Mode", compte: "Compte", contrepartie: "Vers", beneficiaire: "Bénéficiaire", categorie: "Catégorie", objet: "Objet", refFacture: "Réf. facture", echeance: "Échéance" };
-      function vx(k, x) { return x === undefined || x === "" ? "—" : k === "montant" ? gnf(x) + " " + d.devise : k === "echeance" ? (x ? dateCourte(x) : "—") : String(x); }
+      var LIBC = { montant: "Montant", taux: "Taux", mode: "Mode", compte: "Compte", contrepartie: "Vers", beneficiaire: "Bénéficiaire", categorie: "Catégorie", objet: "Objet", refFacture: "Réf. facture", echeance: "Échéance", dateEffet: "Date d'effet" };
+      function vx(k, x) { return x === undefined || x === "" ? "—" : k === "montant" ? gnf(x) + " " + d.devise : k === "echeance" || k === "dateEffet" ? (x ? jourFr(x) : "—") : String(x); }
       var enAtt = !PR.etat, rows = PR.type === "modif" ? Object.keys(PR.modif || {}).map(function (k) { return "<tr><td>" + esc(LIBC[k] || k) + "</td><td style='color:#c62828;text-decoration:line-through'>" + esc(vx(k, (PR.avant || {})[k])) + "</td><td style='color:#2e7d32;font-weight:700'>" + esc(vx(k, PR.modif[k])) + "</td></tr>"; }).join("") : "";
       var h = "<div class='carte'><h3>" + (PR.type === "modif" ? "✏️ Modification proposée" : "🗑️ Annulation demandée") + " par " + esc(PR.par) + " · " + dateCourte(PR.q) + "</h3>" +
         "<div class='info'>Motif : " + esc(PR.motif) + "</div>" + (rows ? "<table class='tab' style='width:100%;margin:6px 0'><tr><th></th><th>Avant</th><th>Proposé</th></tr>" + rows + "</table>" : "") +
@@ -1240,6 +1246,7 @@
       (!fact ? "<label>Bénéficiaire (chèque / virement)</label><input id='dmBe' value='" + esc(d.beneficiaire || "") + "'>" : "") +
       "<label>Catégorie</label><select id='dmCa'>" + opts(F.categories || [], d.categorie, "—") + "</select>" +
       "<label>Objet</label><input id='dmOb' value='" + esc(d.objet || "") + "'>" +
+      (d.type === "Paiement RH" && d.motifRH === "SALAIRE (RH)" ? "" : "<label>Date d'effet <small>(vide = date d'exécution)</small></label><input id='dmEf' type='date' value='" + (d.dateEffet ? isoJour(d.dateEffet) : "") + "'>") +
       (fact ? "<label>Réf. facture</label><input id='dmRf' value='" + esc(d.refFacture || "") + "'><label>Échéance</label><input id='dmEc' type='date' value='" + (d.echeance ? new Date(d.echeance).toISOString().slice(0, 10) : "") + "'>" : "") +
       "<label>Motif de la modification" + (proposition ? " (obligatoire)" : "") + "</label><input id='dmCo'>" +
       (proposition ? "<div class='info'>📎 La pièce jointe reste celle de la demande. Le DG verra l'avant / après et acceptera ou refusera ; l'exécution est suspendue en attendant.</div>" : "") +
@@ -1248,7 +1255,7 @@
     $("dmEnv").onclick = function () {
       function v(id) { return $(id) ? $(id).value : undefined; }
       var n = function (x) { return x === undefined ? undefined : parseFloat(String(x).replace(/[\s  ]/g, "").replace(",", ".")) || 0; };
-      var m = { montant: n(v("dmMt")), taux: n(v("dmTx")), mode: v("dmMo"), compte: v("dmCp"), contrepartie: v("dmCt"), beneficiaire: v("dmBe"), categorie: v("dmCa"), objet: v("dmOb"), refFacture: v("dmRf"), echeance: v("dmEc") };
+      var m = { montant: n(v("dmMt")), taux: n(v("dmTx")), mode: v("dmMo"), compte: v("dmCp"), contrepartie: v("dmCt"), beneficiaire: v("dmBe"), categorie: v("dmCa"), objet: v("dmOb"), refFacture: v("dmRf"), echeance: v("dmEc"), dateEffet: v("dmEf") };
       Object.keys(m).forEach(function (k) { if (m[k] === undefined) delete m[k]; });
       if (!(m.montant > 0)) { $("dmMsg").textContent = "⛔ Montant."; return; }
       if (proposition) {
@@ -1428,6 +1435,7 @@
       (F.role === "DG" && !src.no ? "<div id='ffXB' class='carte' style='margin-top:10px'><h3>💳 Exécution directe (DG)</h3><div class='info'>Votre saisie est validée d'office. Joignez la preuve du paiement : elle est exécutée tout de suite (inscrite dans BASE). Sans preuve, elle reste « À exécuter ».</div>" +
         champFichiers("ffX").replace("Photos / PDF", "Preuve du paiement") + "</div>" : "") +
       "<div id='ffRegle' class='carte' style='margin-top:10px'></div>" +
+      "<div id='ffEffB'><label>Date d'effet <small>(facultative : vide = date d'exécution)</small></label><input id='ffEff' type='date' value='" + (src.dateEffet && !(src.type === "Paiement RH" && src.motifRH === "SALAIRE (RH)") ? isoJour(src.dateEffet) : "") + "'></div>" +
       "<label>Commentaire</label><input id='ffCom'>" +
       "<button class='bouton' id='ffEnv'>📤 Envoyer</button><div id='ffMsg' class='info' style='white-space:pre-line'></div></div>";
     $("vueListe").innerHTML = h; montrer("vueListe"); lierFichiers("ffP"); if ($("ffXB")) lierFichiers("ffX");
@@ -1505,6 +1513,7 @@
       // Paie RH : mois du salaire ; équivalent dans la devise du salaire si le compte est dans une autre devise.
       var mot = v("ffMotRH"), devSal = t === "Paiement RH" ? (F.devisesPersonnel || {})[v("ffPers")] || "" : "";
       vis("ffMoisB", t === "Paiement RH" && mot === "SALAIRE (RH)");
+      vis("ffEffB", !(t === "Paiement RH" && mot === "SALAIRE (RH)") && t !== "Facture d'achat");
       vis("ffEqB", !!devSal && devSal !== dev && ["SALAIRE (RH)", "AVANCE (RH)", "PRIME SUR SALAIRE (RH)"].indexOf(mot) >= 0);
       $("ffEqL").textContent = "Équivalent en " + devSal + " (devise du salaire de " + v("ffPers") + ")";
       vis("ffBenB", (t === "Règlement fournisseur" && mode && mode !== "Espèces") || (t === "Mouvement de trésorerie" && op === "Virement" && !v("ffCtp")));
@@ -1590,7 +1599,7 @@
         refFacture: achat && avecF ? v("ffRef") : "", echeance: t === "Facture d'achat" ? v("ffEch") : "", objet: v("ffObj"), montant: nb(v("ffMt")), devise: v("ffDev"), taux: nb(v("ffTaux")),
         mode: on("ffModeB") ? v("ffMode") : t === "Dépense de caisse" ? "Espèces" : "", compte: t === "Facture d'achat" ? "" : v("ffCpt"), contrepartie: on("ffCtpB") ? v("ffCtp") : "",
         beneficiaire: on("ffBenB") ? v("ffBen") : "", commentaire: v("ffCom"), personnel: t === "Paiement RH" ? v("ffPers") : "", motifRH: t === "Paiement RH" ? v("ffMotRH") : "",
-        categorie: achat && /^📦/.test(v("ffDest")) ? (/importée/.test(v("ffDest")) ? "Fourniture Importee" : "Fourniture Locale") : on("ffCatB") ? v("ffCat") : "", recu: on("ffRecuB") ? nb(v("ffRecu")) : on("ffEqB") ? nb(v("ffEq")) : 0, moisEffet: on("ffMoisB") ? v("ffMois") : "", fourTel: v("ffTel"), fourNif: v("ffNif"), fourRib: v("ffRib") };
+        categorie: achat && /^📦/.test(v("ffDest")) ? (/importée/.test(v("ffDest")) ? "Fourniture Importee" : "Fourniture Locale") : on("ffCatB") ? v("ffCat") : "", recu: on("ffRecuB") ? nb(v("ffRecu")) : on("ffEqB") ? nb(v("ffEq")) : 0, moisEffet: on("ffMoisB") ? v("ffMois") : "", dateEffet: on("ffEffB") ? v("ffEff") : "", fourTel: v("ffTel"), fourNif: v("ffNif"), fourRib: v("ffRib") };
       var reglF = t === "Règlement fournisseur" && !achat && !estAvance();
       if (reglF) {
         var RC = regCoches();
@@ -2994,8 +3003,8 @@
   }
   // Nouveautés de cette version (affichées après une mise à jour réussie) : à mettre à jour avec chaque version.
   var NOUVEAUTES = [
-    "Demande « À exécuter » : Walid propose une modification (pièce inchangée) ou une annulation ; le DG accepte / refuse (avant → après).",
-    "Annulation acceptée : bouton « 🔁 Refaire la demande » pré-rempli, avec la nouvelle pièce.",
+    "📅 Date d'effet de chaque opération (en plus de la date d'exécution) : à la demande, ajustable à la clôture ; inscrite dans BASE.",
+    "Demande « À exécuter » : Walid propose une modification (pièce inchangée) ou une annulation ; le DG accepte / refuse.",
     "🔁 Retrait / transfert vers la caisse d'une autre société : avance inscrite en Inter-sociétés."
   ];
   var MAJ = { pct: 0, etape: "", encours: false };
