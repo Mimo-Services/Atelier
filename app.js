@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-09 IM";
+  var VERSION_APP = "2026-11-11 JB";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -1382,6 +1382,9 @@
       return C2;
     }
     var h = "<div class='carte'><label>Type</label><select id='ffType'>" + opts(types, srcAchat ? "Achat fournisseur" : src.type || types[0]) + "</select>" +
+      // Devise de l'opération : choisie dès le départ ; hors GNF, taux de change obligatoire (valorisation en GNF).
+      "<div class='ligne'><div><label>Devise de l'opération</label><select id='ffDev'>" + opts(["GNF", "USD", "EURO", "TND"], src.devise || "GNF") + "</select></div>" +
+      "<div id='ffTauxB' style='flex:2'><label id='ffTauxL'>Taux de change (1 unité = … GNF)</label><input id='ffTaux' inputmode='decimal' placeholder='obligatoire' value='" + esc(src.taux && src.devise !== "GNF" ? src.taux : "") + "'></div></div>" +
       "<div id='ffAchatB'><div class='ligne'><div><label>Pièce</label><select id='ffPiece'>" + opts(["Avec facture", "Sans facture (reçu ou rien)"], A1.piece) + "</select></div>" +
       "<div><label>Paiement</label><select id='ffPay'>" + opts(["Payé maintenant", "À payer plus tard"], A1.pay) + "</select></div></div>" +
       "<label>Destination</label><select id='ffDest'>" + opts(["📦 Stock · fourniture locale (Suivi Achats)", "📦 Stock · fourniture importée (Suivi Achats)", "💸 Charge ou prestation (passe directement)"], A1.dest) + "</select></div>" +
@@ -1408,8 +1411,7 @@
       "<div id='ffObjB'><label>Objet</label><input id='ffObj' value='" + esc(src.objet || "") + "'></div>" +
       "<div id='ffModeB'><label>Mode de paiement</label><select id='ffMode'></select></div>" +
       "<div class='ligne' id='ffCptB'><div><label id='ffCptL'>Compte</label><select id='ffCpt'></select></div><div id='ffCtpB'><label id='ffCtpL'>Vers</label><select id='ffCtp'></select></div></div><div class='info' id='ffIcI' style='display:none'></div>" +
-      "<div class='ligne'><div style='flex:2'><label>Montant</label><input id='ffMt' inputmode='decimal' value='" + esc(src.montant || "") + "'></div><div><label>Devise</label><select id='ffDev'>" + opts(["GNF", "USD", "EURO", "TND"], src.devise || "GNF") + "</select></div></div>" +
-      "<div id='ffTauxB'><label>Taux (1 unité = … GNF)</label><input id='ffTaux' inputmode='decimal' value='" + esc(src.taux && src.devise !== "GNF" ? src.taux : "") + "'></div>" +
+      "<label id='ffMtL'>Montant</label><input id='ffMt' inputmode='decimal' value='" + esc(src.montant || "") + "'>" +
       "<div id='ffGnf' class='info'></div>" +
       "<div id='ffChqI' class='info'>Chèque client (recouvrement) : à déclarer en COMMERCIAL › Recouvrement, pas ici.</div>" +
       "<div id='ffRecuB'><label id='ffRecuL'>Montant reçu</label><input id='ffRecu' inputmode='decimal' value='" + esc(src.recu || "") + "'></div>" +
@@ -1429,7 +1431,7 @@
       "<div id='ffAFr'><label>Type de frais</label><select id='ffATF'>" + opts(AC.typesFrais || [], A0.typeFrais, "— choisir —") + "</select>" +
       "<label>Articles concernés (le frais est réparti au prorata)</label><div id='ffAOuv'>" + (AC.ouverts.length ? AC.ouverts.map(function (o, i) {
         return "<label style='font-weight:400'><input type='checkbox' class='ffAO' value='" + esc(o.libelle) + "' style='width:auto'" + ((A0.articles || []).indexOf(o.libelle) >= 0 ? " checked" : "") + "> " + esc(o.libelle) + "</label>"; }).join("") : "<div class='info'>Aucun achat ouvert.</div>") + "</div></div>" +
-      "<div id='ffAFact' class='info'></div></div>" +
+      "<div id='ffAFact' class='info'></div><div id='ffAGnf' class='info'></div></div>" +
       "<div id='ffBenB'><label>Bénéficiaire du chèque / virement</label><input id='ffBen' value='" + esc(src.beneficiaire || "") + "'></div>" +
       champFichiers("ffP") + (src.pieces && src.pieces.length ? "<div class='info'>Déjà jointes : " + src.pieces.length + " pièce(s).</div>" : "") +
       (F.role === "DG" && !src.no ? "<div id='ffXB' class='carte' style='margin-top:10px'><h3>💳 Exécution directe (DG)</h3><div class='info'>Votre saisie est validée d'office. Joignez la preuve du paiement : elle est exécutée tout de suite (inscrite dans BASE). Sans preuve, elle reste « À exécuter ».</div>" +
@@ -1573,7 +1575,9 @@
         $("ffAFact").textContent = t === "Facture d'achat" ? "Les détails de l'article servent au 1er règlement de cette facture ; les tranches suivantes s'ajoutent à son coût." : "";
       }
       var g = nb(v("ffMt")) * (dev === "GNF" ? 1 : nb(v("ffTaux")));
-      $("ffGnf").textContent = dev !== "GNF" && g ? "= " + gnf(g) + " GNF" : "";
+      $("ffGnf").textContent = dev !== "GNF" ? (nb(v("ffTaux")) > 0 ? "Valorisation : " + gnf(nb(v("ffMt"))) + " " + dev + " × " + gnf(nb(v("ffTaux"))) + " = " + gnf(g) + " GNF" : "⚠ Indiquez le taux de change " + dev + " → GNF (en haut).") : "";
+      $("ffMtL").textContent = "Montant (" + dev + ")"; $("ffTauxL").textContent = "Taux de change : 1 " + dev + " = … GNF";
+      $("ffAGnf").textContent = on("ffAchB") && dev !== "GNF" ? (nb(v("ffTaux")) > 0 ? "Valorisation du stock (CUMP) : " + gnf(g) + " GNF au taux " + gnf(nb(v("ffTaux"))) : "Valorisation du stock : taux de change requis.") : "";
       // Règle de validation (aperçu ; le serveur décide).
       var gros = g >= (F.seuil || 5000000), regle;
       if (t === "Opération constatée") regle = "aucune (constatée, inscrite directement)";
