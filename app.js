@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-12 JG";
+  var VERSION_APP = "2026-11-12 JJ";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -3370,7 +3370,8 @@
   }
 
   /* ---------- 📊 Répartition (DG, WALID) : événements, factures (cascade), commissions par bénéficiaire, balances, paramètres ---------- */
-  var REPV = { onglet: "ev", ouv: {}, fiche: null, rat: null, pay: null };
+  var REPV = { onglet: "ev", ouv: {}, fiche: null, rat: null, pay: null, clos: false, grp: false };
+  function repEvClos(D) { var c = {}; (D.evs || []).forEach(function (e) { if (e.clos) c[e.id] = 1; }); return c; }
   function droitRep() { return !!(S.agent && ["DG", "WALID"].indexOf(String(S.agent.nom).toUpperCase()) >= 0); }
   function rafraichirRep(corps) {
     if (!S.url) return Promise.reject(new Error("adresse du serveur inconnue"));
@@ -3396,21 +3397,22 @@
         : x.ty === "Commission d'attribution" ? b("attr", "Commission d'attribution", "Commission d'attribution", false) : b("nr", "Versements sans type", "", false);
       o.mv.push({ d: x.d, lib: "Versé · " + (x.mo || "").substring(0, 70), du: 0, v: x.m, ev: x.ev, src: x.src, ty: x.ty });
     });
-    // Emna soldée : période close (factures réglées jusqu'à la date ; versements de leurs événements ou datés avant).
-    var CL = D.cloture, fin = CL ? CL.date + 86399000 : 0, evC = {};
-    if (CL) F.forEach(function (f) { if (f.t[0] <= fin && f.ev) evC[f.ev] = 1; });
+    // Événements clôturés (situation soldée / 🔒) : regroupés en une ligne « Report ». Emna : solde reporté (à payer) ;
+    // démarchage, Trésor, attribution : soldés à la clôture (report 0).
+    var EC = repEvClos(D), fin = D.p && D.p.soldeAu ? D.p.soldeAu + 86399000 : 0;
     return Object.keys(B).map(function (k) {
       var o = B[k]; o.mv.sort(function (a, c) { return a.d - c.d || (c.du - a.du); });
-      if (k === "emna" && CL) {
-        o.mv.forEach(function (m) { m.c = m.du ? m.d <= fin : (m.ev ? !!evC[m.ev] : m.d <= fin); });
-        o.mv.sort(function (a, c) { return (c.c ? 1 : 0) - (a.c ? 1 : 0) || a.d - c.d; });
-        var i = o.mv.filter(function (m) { return m.c; }).length;
-        o.mv.splice(i, 0, { d: CL.date, lib: "🔒 Clôture : " + (CL.ajust < 0 ? "trop-versé absorbé " : "reste dû soldé ") + gnf(Math.abs(CL.ajust)) + " → remise à 0", du: 0, v: 0, raz: true });
+      var clos = o.mv.filter(function (m) { return m.ev ? !!EC[m.ev] : (fin && m.d <= fin); }), ouv = o.mv.filter(function (m) { return clos.indexOf(m) < 0; });
+      if (clos.length) {
+        var rep = clos.reduce(function (t, m) { return t + m.du - m.v; }, 0), garde = k === "emna";
+        o.hist = clos;
+        o.mv = [{ d: clos[clos.length - 1].d, lib: "🔒 Report des événements clôturés (" + clos.filter(function (m) { return m.v; }).length + " versement(s))" + (garde ? (rep >= 0 ? " — reste dû à payer" : " — avance") : " — soldé à la clôture"),
+          du: garde && rep > 0 ? rep : 0, v: garde && rep < 0 ? -rep : 0, report: true }].concat(ouv);
       }
       var s = 0; o.mv.forEach(function (m) { if (m.raz) s = 0; else s += m.du - m.v; m.solde = s; });
       o.tDu = o.mv.reduce(function (t, m) { return t + m.du; }, 0); o.tV = o.mv.reduce(function (t, m) { return t + m.v; }, 0); o.solde = s;
       return o;
-    }).sort(function (a, c) { return (a.id === "emna" ? 0 : a.du ? 1 : 2) - (c.id === "emna" ? 0 : c.du ? 1 : 2) || c.tV - a.tV; });
+    }).filter(function (o) { return o.mv.length; }).sort(function (a, c) { return (a.id === "emna" ? 0 : a.du ? 1 : 2) - (c.id === "emna" ? 0 : c.du ? 1 : 2) || c.tV - a.tV; });
   }
   function afficherRepartition(onglet) {
     if (onglet) REPV.onglet = onglet;
@@ -3432,6 +3434,18 @@
       Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-rat]"), function (el) { el.onclick = function (e) { e.stopPropagation(); REPV.rat = REPV.rat === el.getAttribute("data-rat") ? null : el.getAttribute("data-rat"); dessiner(""); }; });
       if ($("rtOk")) $("rtOk").onclick = function () { envoyer({ op: "rattacher", src: REPV.rat, ev: $("rtEv").value, type: $("rtTy").value }, function () { REPV.rat = null; }); };
       if ($("pyOk")) $("pyOk").onclick = payer;
+      if ($("evCl")) $("evCl").onchange = function () { REPV.clos = $("evCl").checked; dessiner(""); };
+      if ($("evNv")) $("evNv").onclick = function () { REPV.grp = !REPV.grp; dessiner(""); };
+      if ($("evGrOk")) $("evGrOk").onclick = function () {
+        var L = Array.prototype.filter.call(document.querySelectorAll(".evGr"), function (c) { return c.checked; }).map(function (c) { return { id: c.getAttribute("data-id"), d: +c.getAttribute("data-d") }; });
+        if (L.length < 2) { alert("⛔ Cochez au moins deux règlements."); return; }
+        if (!confirm("Regrouper " + L.length + " règlement(s) en un seul événement ?")) return;
+        envoyer({ op: "grouper", regl: L }, function () { REPV.grp = false; });
+      };
+      Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-evc]"), function (b) { b.onclick = function () { var ev = b.getAttribute("data-evc");
+        if (confirm("Clôturer " + ev + " ?\n\n• Ses factures disparaissent des Paramètres et des listes.\n• Démarchage, Trésor et attribution de l'événement sont considérés soldés.\n• Le solde d'Emna est reporté (à payer).")) envoyer({ op: "cloturerEv", ev: ev }); }; });
+      Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-evr]"), function (b) { b.onclick = function () { var ev = b.getAttribute("data-evr"); if (confirm("Rouvrir " + ev + " ?")) envoyer({ op: "rouvrirEv", ev: ev }); }; });
+      Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-evd]"), function (b) { b.onclick = function () { var ev = b.getAttribute("data-evd"); if (confirm("Dégrouper " + ev + " (un événement par jour et par client) ?")) envoyer({ op: "degrouper", ev: ev }); }; });
       if ($("rpFermer")) $("rpFermer").onclick = function () { REPV.fiche = null; dessiner(""); };
       Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-gl]"), function (b) { b.onclick = function () { var k = b.getAttribute("data-gl"); envoyer({ op: "param", glob: +k, valeur: $("gl" + k).value }); }; });
       Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-pr]"), function (b) { b.onclick = function () {
@@ -3459,19 +3473,33 @@
     }
     // 📅 Événements
     function vueEv(R, D) {
-      return D.evs.map(function (e) {
+      var EC = repEvClos(D), nC = D.evs.filter(function (e) { return e.clos; }).length;
+      var tete = "<div class='carte pleine'><div class='ligne' style='flex-wrap:wrap;gap:6px;align-items:center'><button class='bouton' id='evNv' style='flex:0 0 auto;width:auto;margin:0'>➕ Nouvel événement</button>" +
+        "<label style='font-weight:400;flex:1'><input type='checkbox' id='evCl' style='width:auto'" + (REPV.clos ? " checked" : "") + "> afficher les " + nC + " événement(s) clôturé(s)</label></div>";
+      if (REPV.grp) {
+        var RG = D.factures.filter(function (f) { return !f.prev && f.ev && !EC[f.ev]; });
+        tete += "<div class='info'>Cochez les règlements à regrouper en un seul événement (date = dernier règlement).</div>" + (RG.map(function (f, i) {
+          return "<label style='font-weight:400;display:block;padding:4px 0;border-top:1px solid var(--bord)'><input type='checkbox' class='evGr' data-id='" + esc(f.t[1]) + "' data-d='" + f.rd + "' style='width:auto'> " +
+            jourFr(f.rd) + " · " + esc(f.t[1]) + " · " + gnf(f.t[3]) + " <small class='info'>(" + esc(f.ev) + ")</small></label>"; }).join("") || "<p class='info'>Aucun règlement dans un événement ouvert.</p>") +
+          "<button class='bouton' id='evGrOk'>✅ Créer l'événement</button>";
+      }
+      tete += "</div>";
+      return tete + D.evs.filter(function (e) { return REPV.clos || !e.clos; }).map(function (e) {
         var F = D.factures.filter(function (f) { return !f.prev && f.ev === e.id; }), C = D.com.filter(function (x) { return x.ev === e.id && !x.hors; });
         function s(i) { return F.reduce(function (t, f) { return t + (+f.t[i] || 0); }, 0); }
         function v(ty) { return C.filter(function (x) { return x.ty === ty; }).reduce(function (t, x) { return t + x.m; }, 0); }
         var ht = s(4), tot = C.reduce(function (t, x) { return t + x.m; }, 0), o = !!REPV.ouv["e" + e.id];
-        return "<div class='carte'><div data-o='e" + esc(e.id) + "' style='cursor:pointer'><div class='ligne' style='justify-content:space-between'><b>" + (o ? "▼ " : "▶ ") + esc(e.id) + " · " + jourFr(e.date) + " · " + esc(e.client) + "</b><b style='flex:0;white-space:nowrap'>" + gnf(ht) + " HT</b></div>" +
+        return "<div class='carte'" + (e.clos ? " style='opacity:.75'" : "") + "><div data-o='e" + esc(e.id) + "' style='cursor:pointer'><div class='ligne' style='justify-content:space-between'><b>" + (o ? "▼ " : "▶ ") + (e.clos ? "🔒 " : "") + esc(e.id) + " · " + jourFr(e.date) + " · " + esc(e.client) + "</b><b style='flex:0;white-space:nowrap'>" + gnf(ht) + " HT</b></div>" +
           "<div class='info'>" + esc(e.factures.join(", ")) + "</div>" +
           "<table style='width:100%;font-size:13px;margin-top:4px'>" +
           "<tr><td>Démarchage externe</td><td style='text-align:right'>dû " + gnf(s(5)) + "</td><td style='text-align:right'>versé " + gnf(v("Démarchage externe")) + "</td></tr>" +
           "<tr><td>Emna (interne)</td><td style='text-align:right'>dû " + gnf(s(12)) + "</td><td style='text-align:right'>versé " + gnf(v("Commission interne")) + "</td></tr>" +
           "<tr><td>Trésor · Attribution</td><td></td><td style='text-align:right'>versé " + gnf(v("Commission directe (Trésor)") + v("Commission d'attribution")) + "</td></tr>" +
           "<tr style='font-weight:700'><td>Total versé</td><td></td><td style='text-align:right'>" + gnf(tot) + " · " + (ht ? Math.round(tot / ht * 1000) / 10 : 0) + " %</td></tr></table></div>" +
-          (o ? "<div style='margin-top:6px'><b>Versements</b>" + (C.map(function (x) { return ligneCom(D, x); }).join("") || "<p class='info'>Aucun.</p>") + "</div>" : "") + "</div>";
+          (o ? "<div style='margin-top:6px'><b>Versements</b>" + (C.map(function (x) { return ligneCom(D, x); }).join("") || "<p class='info'>Aucun.</p>") + "</div>" +
+            "<div class='ligne' style='gap:6px;flex-wrap:wrap'>" + (e.clos ? "<span class='info' style='flex:1'>🔒 Clôturé (" + esc(e.closPar) + ")</span>" + (e.closPar !== "situation soldée" ? "<button class='bouton second' data-evr='" + esc(e.id) + "' style='width:auto;flex:0 0 auto'>↩️ Rouvrir</button>" : "")
+              : "<button class='bouton' data-evc='" + esc(e.id) + "' style='width:auto;flex:0 0 auto'>🔒 Clôturer l'événement</button>") +
+            (e.groupe && !e.clos ? "<button class='bouton second' data-evd='" + esc(e.id) + "' style='width:auto;flex:0 0 auto'>✂️ Dégrouper</button>" : "") + "</div>" : "") + "</div>";
       }).join("") + (function () {
         var sans = D.com.filter(function (x) { return !x.ev && !x.hors; }), o = !!REPV.ouv.sans;
         return sans.length ? "<div class='carte' style='border-color:#e67e22'><div data-o='sans' style='cursor:pointer'><b>" + (o ? "▼" : "▶") + " ⚠️ " + sans.length + " versement(s) sans événement</b></div>" + (o ? sans.map(function (x) { return ligneCom(D, x); }).join("") : "") + "</div>" : "";
@@ -3492,7 +3520,7 @@
         }
       }
       function liste(pv, titre) {
-        var L = D.factures.map(function (f, i) { return { f: f, i: i }; }).filter(function (z) { return z.f.prev === pv; });
+        var EC = repEvClos(D), L = D.factures.map(function (f, i) { return { f: f, i: i }; }).filter(function (z) { return z.f.prev === pv && (REPV.clos || !EC[z.f.ev]); });
         if (!pv) L.reverse();
         var tot = L.reduce(function (s, z) { return s + z.f.t[15]; }, 0);
         return "<div class='carte pleine'><h3>" + titre + " <small class='info'>(" + L.length + " · bénéfice libre " + gnf(tot) + ")</small></h3>" + L.map(function (z) {
@@ -3501,7 +3529,8 @@
             "<div class='info'>" + jourFr(t[0]) + (z.f.ev ? " · " + esc(z.f.ev) : "") + " · externe " + gnf(t[5]) + " · Emna " + gnf(t[12]) + " · marge nette " + gnf(t[13]) + "</div></div>";
         }).join("") + "</div>";
       }
-      return liste(false, "✅ Factures réglées") + liste(true, "⏳ Prévisionnel (factures engagées)");
+      return "<div class='carte pleine'><label style='font-weight:400'><input type='checkbox' id='evCl' style='width:auto'" + (REPV.clos ? " checked" : "") + "> afficher les factures des événements clôturés</label></div>" +
+        liste(false, "✅ Factures réglées (événements ouverts)") + liste(true, "⏳ Prévisionnel (factures engagées)");
     }
     // 💼 Commissions par bénéficiaire
     function vueCom(R, D) {
@@ -3512,14 +3541,16 @@
           var pay = REPV.pay = { benef: o, ev: "" };
           return "<div class='carte pleine'><div class='ligne' style='justify-content:space-between'><h3>👤 " + esc(o.nom) + "</h3><button class='bouton second' id='rpFermer' style='flex:0 0 auto;width:auto;padding:6px 12px;margin:0'>✕</button></div>" +
             "<div class='info'>" + esc(o.type) + (o.du ? " · dû " + gnf(o.tDu) : "") + " · versé " + gnf(o.tV) + (o.du ? " · <b>" + (o.solde >= 0 ? "reste dû " + gnf(o.solde) : "avance " + gnf(-o.solde)) + "</b>" : "") + "</div>" +
-            "<div class='carte' style='background:var(--fond)'><b>💸 Payer</b><div class='ligne'><div><label>Événement</label><select id='pyEv'>" + evOpts(D, (D.evs[D.evs.length - 1] || {}).id) + "</select></div>" +
+            "<div class='carte' style='background:var(--fond)'><b>💸 Payer</b><div class='ligne'><div><label>Événement</label><select id='pyEv'>" + evOpts(D, (function () {
+              var rp = o.mv[0] && o.mv[0].report && o.mv[0].du > 0, Lc = D.evs.filter(function (e) { return rp ? e.clos : !e.clos; }).sort(function (a, b) { return a.date - b.date; });   // report à payer → dernier événement clôturé
+              return ((Lc.length ? Lc : D.evs)[(Lc.length ? Lc : D.evs).length - 1] || {}).id; })()) + "</select></div>" +
             "<div><label>Montant</label><input id='pyMt' inputmode='decimal' value='" + (o.du && o.solde > 0 ? Math.round(o.solde) : "") + "'></div></div>" +
             "<div class='ligne'><div><label>Payé par</label><select id='pyMo'>" + repOpts(["Banque (virement / chèque)", "Caisse (espèces)"], "Banque (virement / chèque)") + "</select></div><div><label>Société</label><select id='pySo'>" + repOpts(["AB", "M2S"], "AB") + "</select></div></div>" +
             "<button class='bouton' id='pyOk'>💸 Préparer la demande Finances</button><div class='info'>La demande s'ouvre pré-remplie (type, catégorie Commission, montant, événement) ; elle suit la validation habituelle. Une fois exécutée, le versement est rattaché tout seul à l'événement.</div></div>" +
             "<table style='width:100%;font-size:13px'><tr style='color:#888;text-align:left'><th>Date</th><th>Mouvement</th><th style='text-align:right'>Dû</th><th style='text-align:right'>Versé</th><th style='text-align:right'>Solde</th></tr>" +
             o.mv.map(function (m) {
               var x = m.src ? D.com.filter(function (c) { return c.src === m.src; })[0] : null;
-              return "<tr style='border-top:1px solid var(--bord)" + (m.raz ? ";font-weight:700;color:#1155cc" : "") + "'><td style='white-space:nowrap'>" + jourFr(m.d) + "</td><td>" + esc(m.lib) + (m.ev ? " <small>(" + esc(m.ev) + ")</small>" : "") +
+              return "<tr style='border-top:1px solid var(--bord)" + (m.report ? ";font-weight:700;color:#1155cc" : "") + "'><td style='white-space:nowrap'>" + jourFr(m.d) + "</td><td>" + esc(m.lib) + (m.ev ? " <small>(" + esc(m.ev) + ")</small>" : "") +
                 (x ? " <button class='bouton second' data-rat='" + esc(x.src) + "' style='padding:2px 6px;width:auto;display:inline-block'>🔗</button>" + blocRat(D, x) : "") + "</td><td style='text-align:right'>" + (m.du ? gnf(m.du) : "") + "</td><td style='text-align:right'>" + (m.v ? gnf(m.v) : "") +
                 "</td><td style='text-align:right'>" + (o.du ? gnf(m.solde) : "") + "</td></tr>";
             }).join("") + "</table></div>";
@@ -3528,7 +3559,7 @@
       return B.map(function (o) {
         return "<div class='carte' data-f='b:" + esc(o.id) + "' style='cursor:pointer'><div class='ligne' style='justify-content:space-between'><b>👤 " + esc(o.nom) + "</b>" +
           (o.du ? "<b style='flex:0;white-space:nowrap;color:" + (o.solde > 0 ? "#c62828" : "#2e7d32") + "'>" + (o.solde >= 0 ? "reste " + gnf(o.solde) : "avance " + gnf(-o.solde)) + "</b>" : "<b style='flex:0;white-space:nowrap'>" + gnf(o.tV) + "</b>") + "</div>" +
-          "<div class='info'>" + esc(o.type || "à typer") + (o.du ? " · dû " + gnf(o.tDu) : "") + " · versé " + gnf(o.tV) + " · " + o.mv.filter(function (m) { return m.v; }).length + " versement(s)" + (o.id === "emna" && D.cloture ? " · soldée au " + jourFr(D.cloture.date) : "") + "</div></div>";
+          "<div class='info'>" + esc(o.type || "à typer") + (o.du ? " · dû " + gnf(o.tDu) : "") + " · versé " + gnf(o.tV) + " · " + o.mv.filter(function (m) { return m.v; }).length + " versement(s)" + "" + "</div></div>";
       }).join("");
     }
     function payer() {
@@ -3765,7 +3796,8 @@
     if (S.fin && droitFin()) S.fin.demandes.filter(finOuverte).forEach(function (d) {
       var h = d.historique || [], der = h[h.length - 1] || {}, corr = ((d.proposition && !d.proposition.etat) || /Correction demandée au DG/.test(der.act || "")) && S.fin.role === "DG";
       L.push({ rub: "💰", t: d.no + " · " + libelleFin(d), s: statutFin(d) + " · " + gnf(d.montant) + " " + d.devise + " · " + d.demandeur + (corr ? " · 📝 " + (d.proposition && d.proposition.type === "annul" ? "annulation" : "modification") + " demandée : " + (der.c || "") : ""),
-               moi: finATraiter(d) || corr, q: d.date, ouvrir: function () { afficherFinances(); ouvrirDemandeFin(d.no); } });
+               moi: finATraiter(d) || corr, q: d.date, ouvrir: function () { afficherFinances(); ouvrirDemandeFin(d.no); },
+               sal: d.type === "Paiement RH" && d.motifRH === "SALAIRE (RH)" && d.demandeur === S.fin.auto ? { mois: d.dateEffet || d.date, statut: statutFin(d), mt: d.montant, dev: d.devise, nom: d.personnel } : null });
     });
     if (S.rh && S.rh.direction && droitRH()) S.rh.evenements.filter(function (e) { return e.statut === "En attente Walid"; }).forEach(function (e) {
       L.push({ rub: "👥", t: e.type + " · " + e.personnel, s: "Événement RH à valider · " + e.no, moi: true, q: e.date || 0, ouvrir: function () { afficherRH(); if (typeof ouvrirEvRH === "function") ouvrirEvRH(e.no); } });
@@ -3794,7 +3826,24 @@
       if (ch) return ecrire("notifs", L);
     }).then(majCloche, function () {});
   }
-  var CLOCHE = { onglet: "resoudre" };
+  var CLOCHE = { onglet: "resoudre", ouv: {} };
+  // « À résoudre » par rubrique ; salaires automatiques d'un même mois et même étape regroupés en une ligne.
+  var RUBS_NOTIF = [["💰", "Finances"], ["👥", "RH"], ["📦", "Magasins · sorties de stock"], ["🎯", "Missions"], ["🤝", "Commercial"]];
+  function groupesNotifs(A) {
+    var MOIS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
+    return RUBS_NOTIF.map(function (rb) {
+      var L = A.filter(function (x) { return x.rub === rb[0]; }), sal = {}, out = [];
+      L.forEach(function (x) {
+        if (!x.sal) { out.push(x); return; }
+        var d = new Date(x.sal.mois), k = d.getFullYear() + "-" + d.getMonth() + "|" + x.sal.statut;
+        if (!sal[k]) { sal[k] = { rub: rb[0], moi: false, q: x.q, enfants: [], titre: "Salaires de " + MOIS[d.getMonth()] + " " + d.getFullYear(), statut: x.sal.statut, tot: {} }; out.push(sal[k]); }
+        var g = sal[k]; g.enfants.push(x); g.moi = g.moi || x.moi; g.tot[x.sal.dev] = (g.tot[x.sal.dev] || 0) + (+x.sal.mt || 0);
+      });
+      out.forEach(function (g) { if (g.enfants) { g.t = g.titre + " · " + g.enfants.length + " " + g.statut.toLowerCase(); g.s = Object.keys(g.tot).map(function (dv) { return gnf(g.tot[dv]) + " " + dv; }).join(" + ") + " · " + g.enfants.map(function (e) { return e.sal.nom; }).join(", "); } });
+      out.sort(function (a, b) { return (b.moi ? 1 : 0) - (a.moi ? 1 : 0) || (b.q || 0) - (a.q || 0); });
+      return { rub: rb[0], lib: rb[1], L: out, n: L.length, moi: L.filter(function (x) { return x.moi; }).length };
+    }).filter(function (g) { return g.n; });
+  }
   function afficherNotifs() {
     lire("notifs").then(function (L) {
       L = L || [];
@@ -3803,11 +3852,27 @@
       var ong = "<div class='onglets' style='margin-top:8px'><button data-cl='resoudre' class='" + (CLOCHE.onglet === "resoudre" ? "actif" : "") + "'>À résoudre (" + A.length + (nm ? " · 👉 " + nm : "") + ")</button><button data-cl='recues' class='" + (CLOCHE.onglet === "recues" ? "actif" : "") + "'>Reçues</button></div>";
       if (CLOCHE.onglet === "resoudre") {
         $("vueListe").innerHTML = "<div class='carte pleine'><h3>🔔 Notifications</h3>" + ong + "<div class='info'>Opérations en cours (données du téléphone) : une ligne disparaît quand l'opération est close. 👉 = action attendue de vous.</div></div>" +
-          (A.map(function (x, i) {
-            return "<div class='carte' data-ar='" + i + "' style='cursor:pointer" + (x.moi ? ";border-color:var(--cuivre)" : "") + "'><b>" + x.rub + " " + (x.moi ? "👉 " : "") + esc(x.t) + "</b><div class='info'>" + esc(x.s) + "</div></div>";
-          }).join("") || "<p class='info' style='padding:0 4px'>Rien à résoudre. 🎉</p>");
+          (function () {
+            var GR = groupesNotifs(A), IT = [];
+            function ligne(x, retrait) { IT.push(x); var i = IT.length - 1;
+              return "<div data-ar='" + i + "' style='cursor:pointer;padding:8px 10px " + "8px " + (retrait ? 26 : 10) + "px;border-top:1px solid var(--bord)" + (x.moi ? ";border-left:3px solid var(--cuivre)" : "") + "'><b>" + (x.moi ? "👉 " : "") + esc(x.t) + "</b><div class='info' style='margin:0'>" + esc(x.s) + "</div></div>"; }
+            return GR.map(function (g) {
+              var o = CLOCHE.ouv[g.rub] !== undefined ? CLOCHE.ouv[g.rub] : g.moi > 0;
+              return "<div class='carte pleine' style='padding:0;overflow:hidden" + (g.moi ? ";border-color:var(--cuivre)" : "") + "'><div data-gr='" + g.rub + "' style='cursor:pointer;padding:12px'><div class='ligne' style='justify-content:space-between'><b>" + (o ? "▼ " : "▶ ") + g.rub + " " + esc(g.lib) + "</b>" +
+                "<b style='flex:0;white-space:nowrap'>" + g.n + (g.moi ? " · 👉 " + g.moi : "") + "</b></div></div>" +
+                (o ? g.L.map(function (x) {
+                  if (!x.enfants) return ligne(x);
+                  var kg = "s|" + x.t, os = !!CLOCHE.ouv[kg];
+                  return "<div data-gr='" + esc(kg) + "' style='cursor:pointer;padding:8px 10px;border-top:1px solid var(--bord)" + (x.moi ? ";border-left:3px solid var(--cuivre)" : "") + "'><b>" + (os ? "▼ " : "▶ ") + (x.moi ? "👉 " : "") + "🧾 " + esc(x.t) + "</b><div class='info' style='margin:0'>" + esc(x.s) + "</div></div>" +
+                    (os ? x.enfants.map(function (e) { return ligne(e, true); }).join("") : "");
+                }).join("") : "") + "</div>";
+            }).join("") || "<p class='info' style='padding:0 4px'>Rien à résoudre. 🎉</p>";
+            CLOCHE.items = IT;
+          })();
         montrer("vueListe");
-        Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-ar]"), function (el) { el.onclick = function () { A[+el.getAttribute("data-ar")].ouvrir(); }; });
+        Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-ar]"), function (el) { el.onclick = function () { CLOCHE.items[+el.getAttribute("data-ar")].ouvrir(); }; });
+        Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-gr]"), function (el) { el.onclick = function () { var k = el.getAttribute("data-gr"), A0 = groupesNotifs(A).filter(function (g) { return g.rub === k; })[0];
+          var cur = CLOCHE.ouv[k] !== undefined ? CLOCHE.ouv[k] : (A0 ? A0.moi > 0 : false); CLOCHE.ouv[k] = !cur; afficherNotifs(); }; });
         Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-cl]"), function (b) { b.onclick = function () { CLOCHE.onglet = b.getAttribute("data-cl"); afficherNotifs(); }; });
         return;
       }
