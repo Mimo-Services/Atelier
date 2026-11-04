@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-12 JK";
+  var VERSION_APP = "2026-11-12 JM";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -1165,12 +1165,32 @@
       ligne("Exécutée le", d.execute ? dateCourte(d.execute) : "") +
       ligne("Base", d.ligneBase ? "ligne " + esc(d.ligneBase) : "") + ligne("Société", esc(d.societe)) + ligne("Échéance", d.echeance ? dateCourte(d.echeance).split(" ")[0] : "") +
       ligne("Demandeur", esc(d.demandeur) + " · " + dateCourte(d.date)) +
-      (d.solde ? ligne("Réglé / reste", gnf(d.solde.regle) + " / <b>" + gnf(d.solde.reste) + " GNF</b>" + (d.solde.engage ? "<br><small>dont " + gnf(d.solde.engage) + " en cours</small>" : "")) : "") +
+      (d.solde ? ligne("Réglé / reste", gnf(d.solde.regle) + " / <b>" + gnf(d.solde.reste) + " GNF</b>" + (d.solde.engage ? "<br><small>dont " + gnf(d.solde.engage) + " en cours</small>" : "") + (d.solde.avance ? "<br><small>dont " + gnf(d.solde.avance) + " d'avance imputée (" + esc((d.solde.avances || []).join(", ")) + ")</small>" : "")) : "") +
       ligne("Walid", trace(d.walid)) + (d.validations.indexOf("DG") >= 0 ? ligne("DG", trace(d.dg)) : "") + "</table></div>" +
       htmlPieces(d, d.pieces, "Pièces", "P") + htmlPieces(d, d.preuves, "Preuves", "R") +
       "<div class='carte'><h3>Historique</h3>" + d.historique.map(function (x) { return "<div class='info'>" + dateCourte(x.q) + " · " + esc(x.a) + " · " + esc(x.act) + (x.c ? " — " + esc(x.c) : "") + "</div>"; }).join("") + "</div>" +
-      "<div id='fnActions'></div>";
+      "<div id='fnActions'></div><div id='fnImput'></div>";
     $("vueListe").innerHTML = h; montrer("vueListe");
+    // 🔗 Avance fournisseur exécutée : imputation sur une facture non soldée du même compte (sans nouveau paiement).
+    if (d.type === "Règlement fournisseur" && !d.facture && d.statut === "Exécutée" && (role || d.demandeur === moi)) (function () {
+      var IM = d.imputations || [], deja = IM.reduce(function (t, x) { return t + (+x.mt || 0); }, 0), reste = Math.round(d.gnf - deja);
+      var FA = (F.factures || []).filter(function (f) { return String(f.fournisseur).toLowerCase() === String(d.fournisseur).toLowerCase() && (f.devise || "GNF") === (d.devise || "GNF") && f.reste > 0; });
+      $("fnImput").innerHTML = "<div class='carte'><h3>🔗 Avance : imputation sur facture</h3>" +
+        "<div class='info'>Avance " + gnf(d.gnf) + " · imputé " + gnf(deja) + " · <b>reste à imputer " + gnf(reste) + " GNF</b></div>" +
+        IM.map(function (x, i) { return "<div class='ligne' style='justify-content:space-between;align-items:center;border-top:1px solid var(--bord);padding:4px 0'><span>→ " + esc(x.facture) + " : " + gnf(x.mt) + " <small class='info'>(" + esc(x.par || "") + ")</small></span><button class='bouton second' data-imr='" + i + "' style='width:auto;flex:0 0 auto;padding:4px 10px'>Retirer</button></div>"; }).join("") +
+        (reste > 0 ? (FA.length ? "<div class='ligne'><div style='flex:2'><label>Facture non soldée</label><select id='imF'>" + FA.map(function (f) { return "<option value='" + esc(f.no) + "' data-r='" + f.reste + "'>" + esc(f.no) + " · " + esc(f.ref || "") + " · reste " + gnf(f.reste) + "</option>"; }).join("") + "</select></div>" +
+          "<div><label>Montant</label><input id='imM' inputmode='decimal'></div></div><button class='bouton' id='imOk'>🔗 Imputer sur la facture</button>" : "<p class='info'>Aucune facture non soldée sur ce compte fournisseur.</p>") : "") + "</div>";
+      function maxi() { var o = $("imF").options[$("imF").selectedIndex]; $("imM").value = Math.min(reste, +o.getAttribute("data-r")); }
+      if ($("imF")) { $("imF").onchange = maxi; maxi(); }
+      if ($("imOk")) $("imOk").onclick = function () {
+        var mt = parseFloat(String($("imM").value).replace(/\s/g, "").replace(",", "."));
+        if (!(mt > 0)) { alert("⛔ Montant."); return; }
+        if (!confirm("Imputer " + gnf(mt) + " de l'avance " + d.no + " sur la facture " + $("imF").value + " ?")) return;
+        envoyerFin("imputer", { no: d.no, version: d.version, facture: $("imF").value, montant: mt }, "Imputation " + d.no, d.no);
+      };
+      Array.prototype.forEach.call($("fnImput").querySelectorAll("[data-imr]"), function (b) { b.onclick = function () { var x = IM[+b.getAttribute("data-imr")];
+        if (confirm("Retirer l'imputation de " + gnf(x.mt) + " sur " + x.facture + " ?")) envoyerFin("imputer", { no: d.no, version: d.version, facture: x.facture, montant: 0 }, "Imputation retirée " + d.no, d.no); }; });
+    })();
     Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-p]"), function (b) {
       b.onclick = function () { var k = b.getAttribute("data-p"), src = k.charAt(0) === "R" ? d.preuves : d.pieces;
         voirPiece(d.no, src[+k.substring(1)], $("pv" + k.charAt(0))); };
