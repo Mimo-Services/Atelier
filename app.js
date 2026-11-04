@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-12 JE";
+  var VERSION_APP = "2026-11-12 JF";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -344,10 +344,10 @@
     tuile("manuel", "🔢", "Lot sans QR", S.recents.length ? "Derniers lots" : "");
     if (S.agent && S.url) { tuile("journal", "🧾", "Journal Prod", "Vérifier les scans"); tuile("avancement", "📊", "État d'avancement", "BDC et lots"); }
     Object.keys(fs).forEach(function (k) {
-      if (k === "stock" && droitStockVal()) return;   // fusionnée : tuile « Sortie de stock » = saisie + liste des demandes
+      if (k === "stock") return;   // dans la rubrique « Magasins » (Sortie Stock M2S)
       tuile("form:" + k, k === "stock" ? "📦" : "🧾", k === "stock" ? "Sortie de stock" : fs[k].nom || fs[k].titre || k, fs[k].erreur ? "indisponible" : k === "stock" ? "Nouvelle saisie" : "");
     });
-    if (droitStockVal()) { var nS = stockNbAttente(); tuile("stockval", "📦", "Sortie de stock", S.stockv && S.stockv.direction ? "Saisie, à valider" : "Saisie, mes demandes", nS ? { badge: nS, bcls: S.stockv && S.stockv.direction ? "rouge" : "orange" } : {}); }
+    if (droitStockVal() || fs.stock) { var nS = stockNbAttente(); tuile("magasins", "🏬", "Magasins", "Stock, Sortie Stock M2S, transferts", nS ? { badge: nS, bcls: S.stockv && S.stockv.direction ? "rouge" : "orange" } : {}); }
     if (droitFin() || droitRH() || droitCom() || droitTreso() || droitMis()) section("Gestion");
     if (droitFin()) {
       var nF = finNbATraiter();
@@ -386,6 +386,7 @@
         else if (id === "missions") afficherMis();
         else if (id === "treso") afficherTreso();
         else if (id === "stockval") afficherStockVal();
+        else if (id === "magasins") afficherMagasins("");
         else if (id === "journal") afficherJournal();
         else if (id === "avancement") afficherAvancement();
         else if (id === "planif") { if (modePC()) afficherPlanifPC(); else afficherPlanif(); }
@@ -402,7 +403,7 @@
     if ($("btnConnexion")) $("btnConnexion").onclick = pageConnexion;
     if ($("btnDeconnexion")) $("btnDeconnexion").onclick = function () {
       if (S.file.some(function (x) { return x.type === "form"; }) && !confirm("Des saisies sont en attente d'envoi : elles partiront quand même. Changer d'agent ?")) return;
-      S.agent = null; S.formulaires = null; S.planif = null; S.fin = null; S.rh = null; S.com = null; S.mis = null; S.treso = null; S.stockv = null; ecrire("stockv", null); TRV.releves = {}; ecrire("treso", null); FOUR.liste = null; FOUR.fiches = {}; ecrire("four", null); ecrire("com", null); ecrire("mis", null); ecrire("agent", null); ecrire("formulaires", null); ecrire("planif", null); ecrire("fin", null); ecrire("rh", null); montrer("vueAccueil");
+      S.agent = null; S.formulaires = null; S.planif = null; S.fin = null; S.rh = null; S.com = null; S.mis = null; S.treso = null; S.stockv = null; ecrire("stockv", null); S.mag = null; ecrire("mag", null); TRV.releves = {}; ecrire("treso", null); FOUR.liste = null; FOUR.fiches = {}; ecrire("four", null); ecrire("com", null); ecrire("mis", null); ecrire("agent", null); ecrire("formulaires", null); ecrire("planif", null); ecrire("fin", null); ecrire("rh", null); montrer("vueAccueil");
     };
 
     var d = S.donnees;
@@ -1155,7 +1156,7 @@
       ligne("Fournisseur", esc(d.fournisseur)) + ligne("Facture", d.facture ? esc(d.facture) : d.refFacture ? "Réf. " + esc(d.refFacture) : "") +
       ligne("Objet", esc(d.objet)) + ligne("Mode", esc(d.mode)) + ligne("Compte", esc(d.compte) + (d.contrepartie ? " → " + esc(d.contrepartie) : "")) +
       ligne("Personnel", esc(d.personnel) + (d.motifRH ? " · " + esc(d.motifRH) : "")) +
-      ligne("Achat", d.achat ? esc(d.achat.nature + " · " + (d.achat.article || d.achat.designation || (d.achat.articles || []).join(", ")) + (d.achat.quantite ? " · qté " + d.achat.quantite : "")) + (d.achatId ? " [" + esc(d.achatId) + "]" : "") : "") +
+      ligne("Achat", d.achat ? esc(d.achat.nature + " · " + (d.achat.article || d.achat.designation || (d.achat.articles || []).join(", ")) + (d.achat.quantite ? " · qté " + d.achat.quantite : "") + (d.achat.magasin ? " · 🏬 " + d.achat.magasin : "")) + (d.achatId ? " [" + esc(d.achatId) + "]" : "") : "") +
       ligne("Pour le compte de", d.pourCompte ? "<b>" + esc(d.pourCompte) + "</b> (dette envers " + esc(d.societe) + ")" : "") + ligne("Bénéficiaire", esc(d.beneficiaire)) + ligne("Catégorie", esc(d.categorie)) + ligne(d.type === "Paiement RH" ? "Équivalent" : "Reçu", d.recu ? gnf(d.recu) + " " + esc(d.deviseRecue) : "") +
       (d.type === "Paiement RH" && d.motifRH === "SALAIRE (RH)" ? ligne("Mois", d.dateEffet ? moisLib(d.dateEffet) : "")
         : ligne("Date d'effet", d.dateEffet ? "<b>" + jourFr(d.dateEffet) + "</b>" : d.statut === "Exécutée" ? "= date d'exécution" : "")) +
@@ -1461,6 +1462,7 @@
       // Achat d'article (Fourniture Locale / Importée) → Suivi Achats
       "<div id='ffAchB' class='carte' style='margin-top:10px'><h3>📦 Achat (Suivi Achats)</h3>" +
       "<label>Nature</label><select id='ffAN'>" + opts(["Article existant", "Nouvel article", "Frais"], A0.nature, "— choisir —") + "</select>" +
+      "<div id='ffAMagB'><label>🏬 Magasin de destination</label><select id='ffAMag'></select></div>" +
       "<div id='ffAEx'><div class='ligne'><div><label>Catégorie d'article</label><select id='ffACat'>" + opts(AC.categories, A0.categorie, "— choisir —") + "</select></div>" +
       "<div style='flex:2'><label>Article</label><select id='ffAArt'></select></div></div></div>" +
       "<div id='ffANv'><label>Désignation du nouvel article</label><input id='ffADes' value='" + esc(A0.designation || "") + "'>" +
@@ -1608,6 +1610,16 @@
       var cat = achat && stock ? catStock : on("ffCatB") ? v("ffCat") : "";
       // Bloc achat : catégorie Fourniture (sauf règlement d'une facture qui porte déjà l'achat).
       vis("ffAchB", (achat ? stock : on("ffCatB") && (cat === "Fourniture Locale" || cat === "Fourniture Importee")) && t !== "Opération constatée" && !(achat && v("ffSoc") === "CASAFINO") && !(on("ffPcB") && v("ffPc") === "CASAFINO"));
+      // Magasin de destination : par défaut celui de la société bénéficiaire (sinon le magasin de la production).
+      var MG = AC.magasins || [], socB = v("ffSoc");
+      vis("ffAMagB", on("ffAchB") && v("ffAN") !== "Frais" && MG.length > 0);
+      if (MG.map(function (m) { return m.nom; }).join("|") !== $("ffAMag").getAttribute("data-l")) {
+        var mDef = A0.magasin || (MG.filter(function (m) { return m.societe === socB && m.nom === AC.magDefaut; })[0] || MG.filter(function (m) { return m.societe === socB; })[0] || {}).nom || AC.magDefaut;
+        $("ffAMag").innerHTML = MG.map(function (m) { return "<option" + (m.nom === mDef ? " selected" : "") + ">" + esc(m.nom) + "</option>"; }).join("");
+        $("ffAMag").setAttribute("data-l", MG.map(function (m) { return m.nom; }).join("|")); $("ffAMag").setAttribute("data-s", socB);
+      } else if ($("ffAMag").getAttribute("data-s") !== socB && !A0.magasin) {   // société changée : magasin par défaut de la nouvelle société
+        var m2 = MG.filter(function (m) { return m.societe === socB; })[0]; if (m2) $("ffAMag").value = m2.nom; $("ffAMag").setAttribute("data-s", socB);
+      }
       if (on("ffAchB")) {
         var n = v("ffAN"); vis("ffAEx", n === "Article existant"); vis("ffANv", n === "Nouvel article"); vis("ffAQt", n === "Article existant" || n === "Nouvel article"); vis("ffAFr", n === "Frais");
         var ca = v("ffACat"), artCur = $("ffAArt").value || A0.article || "";
@@ -1659,7 +1671,8 @@
       if (estAvance()) s.facture = "";
       if (on("ffAchB")) s.achat = { nature: v("ffAN"), categorie: v("ffACat"), article: v("ffAArt"), designation: v("ffADes"), catNouvel: v("ffACatN"),
         carac: { y: v("ffAY"), x: v("ffAX"), kg: v("ffAKg"), unites: v("ffAU"), metres: v("ffAM") }, quantite: nb(v("ffAQ")), expediteur: v("ffAExp"), typeFrais: v("ffATF"),
-        articles: Array.prototype.filter.call(document.querySelectorAll(".ffAO"), function (c) { return c.checked; }).map(function (c) { return c.value; }) };
+        articles: Array.prototype.filter.call(document.querySelectorAll(".ffAO"), function (c) { return c.checked; }).map(function (c) { return c.value; }),
+        magasin: on("ffAMagB") ? v("ffAMag") : "" };
       var A = s.achat;
       var err = t === "Paiement RH" && !s.personnel ? "personnel" : t === "Paiement RH" && !s.motifRH ? "motif RH" : on("ffModeB") && !s.mode ? "mode de paiement" :
         !s.compte && t !== "Facture d'achat" ? "compte" : on("ffCatB") && !s.categorie && t !== "Facture d'achat" ? "catégorie" : on("ffRecuB") && !(s.recu > 0) ? "montant reçu" : on("ffEqB") && !(s.recu > 0) ? "équivalent dans la devise du salaire" : on("ffMoisB") && !s.moisEffet ? "mois du salaire" :
@@ -3354,6 +3367,94 @@
     api({ api: "suiviAtelier", vue: "avancement" }, 90000).then(function (r) { AVC.data = r; dessiner(""); }, function (e) { dessiner("⛔ " + e.message + " (réseau nécessaire)"); });
   }
 
+  /* ---------- 🏬 Magasins : stock par magasin, Sortie Stock M2S, sorties des autres magasins, transferts, création ---------- */
+  var MAG = { ouv: {}, vue: "" };
+  function optsM(L, v, vide) { return (vide ? "<option value=''>" + vide + "</option>" : "") + L.map(function (x) { return "<option" + (x === v ? " selected" : "") + ">" + esc(x) + "</option>"; }).join(""); }
+  function afficherMagasins(vue) {
+    $("titre").textContent = "Magasins";
+    if (vue !== undefined) MAG.vue = vue || "";
+    var fsS = S.formulaires && S.formulaires.formulaires && S.formulaires.formulaires.stock;
+    function dessiner(msg) {
+      var K = S.mag, L = K ? K.magasins : [], dir = !!(K && K.direction), nS = stockNbAttente();
+      var h = "<div class='carte pleine'><h3>🏬 Magasins</h3>" +
+        "<div class='ligne' style='flex-wrap:wrap'>" +
+        (droitStockVal() || fsS ? "<button class='bouton' id='mgM2S'>📦 Sortie Stock M2S" + (nS ? " (" + nS + ")" : "") + "</button>" : "") +
+        "<button class='bouton second' id='mgSort'>📤 Sortie (autre magasin)</button>" +
+        (dir ? "<button class='bouton second' id='mgTr'>🔁 Transfert</button><button class='bouton second' id='mgNv'>➕ Nouveau magasin</button>" : "") + "</div>" +
+        "<div class='info'>" + (K ? L.length + " magasin(s) · données du " + dateCourte(K.recu || K.genere) : "") + (msg ? " · " + esc(msg) : "") + "</div></div>";
+      if (MAG.vue) h += formulaireMag(MAG.vue, K);
+      h += L.map(function (m, i) {
+        var o = !!MAG.ouv[m.nom];
+        return "<div class='carte'><div data-o='" + i + "' style='cursor:pointer'><div class='ligne' style='justify-content:space-between'><b>" + (o ? "▼" : "▶") + " 🏬 " + esc(m.nom) + (m.actif ? "" : " <small>(inactif)</small>") + "</b>" +
+          "<b style='flex:0;white-space:nowrap'>" + gnf(m.valeur) + " GNF</b></div>" +
+          "<div class='info'>" + esc(m.societe || "—") + (m.projet ? " · " + esc(m.projet) : "") + " · " + m.articles.length + " article(s) en stock" + (m.defaut ? " · magasin de la production" : "") + "</div></div>" +
+          (o ? (m.articles.length ? "<table style='width:100%;border-collapse:collapse;font-size:13px;margin-top:6px'><tr style='text-align:left;color:#888'><th>Article</th><th style='text-align:right'>Qté</th><th style='text-align:right'>CUMP</th><th style='text-align:right'>Valeur</th></tr>" +
+            m.articles.map(function (a) { return "<tr style='border-top:1px solid var(--bord)'><td style='padding:3px 0'>" + esc(a.nom) + "</td><td style='text-align:right'>" + gnf(a.qte) + "</td><td style='text-align:right'>" + gnf(a.cmp) + "</td><td style='text-align:right'>" + gnf(a.val) + "</td></tr>"; }).join("") + "</table>"
+            : "<p class='info'>Aucun article en stock.</p>") : "") + "</div>";
+      }).join("") || "<p class='info' style='padding:0 4px'>" + (K ? "Aucun magasin." : "Réseau nécessaire.") + "</p>";
+      $("vueListe").innerHTML = h; montrer("vueListe");
+      if ($("mgM2S")) $("mgM2S").onclick = function () { if (droitStockVal()) afficherStockVal(); else ouvrirFormulaire("stock"); };
+      $("mgSort").onclick = function () { MAG.vue = MAG.vue === "sortie" ? "" : "sortie"; dessiner(""); };
+      if ($("mgTr")) $("mgTr").onclick = function () { MAG.vue = MAG.vue === "transfert" ? "" : "transfert"; dessiner(""); };
+      if ($("mgNv")) $("mgNv").onclick = function () { MAG.vue = MAG.vue === "creer" ? "" : "creer"; dessiner(""); };
+      Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-o]"), function (el) { el.onclick = function () { var m = L[+el.getAttribute("data-o")]; MAG.ouv[m.nom] = !MAG.ouv[m.nom]; dessiner(""); }; });
+      if (MAG.vue) lierFormMag(MAG.vue, K, dessiner);
+    }
+    dessiner(S.mag ? "mise à jour…" : "chargement…");
+    rafraichirMag().then(function () { dessiner(""); }, function (e) { dessiner("⛔ " + e.message + " (réseau nécessaire)"); });
+  }
+  var rafMg = null;
+  function rafraichirMag() {
+    if (!S.url) return Promise.reject(new Error("adresse du serveur inconnue"));
+    if (rafMg) return rafMg;
+    rafMg = api({ api: "magasins" }).then(function (r) { r.recu = Date.now(); S.mag = r; ecrire("mag", r); rafMg = null; }, function (e) { rafMg = null; throw e; });
+    return rafMg;
+  }
+  function formulaireMag(vue, K) {
+    var L = K ? K.magasins.filter(function (m) { return m.actif; }) : [], noms = L.map(function (m) { return m.nom; });
+    if (vue === "creer") return "<div class='carte'><h3>➕ Nouveau magasin</h3>" +
+      "<div class='ligne'><div><label>Société</label><select id='mfSoc'>" + optsM(["AB", "M2S", "CASAFINO"], "AB") + "</select></div><div style='flex:2'><label>Projet (facultatif)</label><input id='mfPr' placeholder='ex. Dépôt Nongo'></div></div>" +
+      "<label>Nom du magasin <small>(facultatif : « Société · Projet »)</small></label><input id='mfNom'>" +
+      "<button class='bouton' id='mfOk'>✅ Créer le magasin</button><div id='mfMsg' class='info'></div></div>";
+    var sortie = vue === "sortie", srcL = sortie ? noms.filter(function (n) { return n !== (K && K.defaut); }) : noms;
+    return "<div class='carte'><h3>" + (sortie ? "📤 Sortie d'un magasin" : "🔁 Transfert entre magasins") + "</h3>" +
+      (sortie ? "<div class='info'>Pour le magasin de la production, utilisez « 📦 Sortie Stock M2S ».</div>" : "") +
+      "<div class='ligne'><div><label>" + (sortie ? "Magasin" : "Depuis") + "</label><select id='mfMag'>" + optsM(srcL, srcL[0], srcL.length ? "" : "— aucun —") + "</select></div>" +
+      (sortie ? "" : "<div><label>Vers</label><select id='mfVers'></select></div>") + "</div>" +
+      "<label>Article</label><select id='mfArt'></select><div id='mfDisp' class='info'></div>" +
+      "<div class='ligne'><div><label>Quantité</label><input id='mfQ' inputmode='decimal'></div>" + (sortie ? "<div style='flex:2'><label>Projet / affectation</label><input id='mfPr'></div>" : "") + "</div>" +
+      "<label>Motif</label><input id='mfMot'>" +
+      "<button class='bouton' id='mfOk'>" + (sortie ? "📤 Envoyer la sortie" : "🔁 Transférer") + "</button><div id='mfMsg' class='info'></div></div>";
+  }
+  function lierFormMag(vue, K, dessiner) {
+    var jeton = nouveauJeton();
+    function v(id) { return $(id) ? $(id).value.trim() : ""; }
+    function envoyer(c, ok) {
+      $("mfOk").disabled = true; $("mfMsg").textContent = "⏳ envoi…"; c.api = "magasins"; c.jeton = jeton;
+      api(c).then(function (r) { alert("✅ " + r.titre + "\n" + (r.message || "")); MAG.vue = ""; return rafraichirMag().then(function () { if (ok) ok(); dessiner(""); }); },
+        function (e) { $("mfOk").disabled = false; $("mfMsg").textContent = "⛔ " + e.message; });
+    }
+    if (vue === "creer") { $("mfOk").onclick = function () { envoyer({ op: "creer", societe: v("mfSoc"), projet: v("mfPr"), nom: v("mfNom") }); }; return; }
+    var L = K ? K.magasins : [];
+    function maj() {
+      var m = L.filter(function (x) { return x.nom === v("mfMag"); })[0], A = m ? m.articles : [], cur = $("mfArt").value;
+      $("mfArt").innerHTML = optsM(A.map(function (a) { return a.nom; }), cur, A.length ? "— choisir —" : "— aucun article en stock —");
+      var a = A.filter(function (x) { return x.nom === v("mfArt"); })[0];
+      $("mfDisp").textContent = a ? "Disponible : " + gnf(a.qte) + " · CUMP " + gnf(a.cmp) + " GNF" : "";
+      if ($("mfVers")) { var cv = $("mfVers").value, dl = L.filter(function (x) { return x.actif && x.nom !== v("mfMag"); }).map(function (x) { return x.nom; }); $("mfVers").innerHTML = optsM(dl, cv, "— choisir —"); }
+    }
+    $("mfMag").onchange = maj; $("mfArt").onchange = maj; maj();
+    $("mfOk").onclick = function () {
+      var q = parseFloat(v("mfQ").replace(/\s/g, "").replace(",", "."));
+      if (!v("mfMag") || !v("mfArt")) { $("mfMsg").textContent = "⛔ Choisissez le magasin et l'article."; return; }
+      if (!(q > 0)) { $("mfMsg").textContent = "⛔ Quantité."; return; }
+      if (vue === "transfert" && !v("mfVers")) { $("mfMsg").textContent = "⛔ Magasin de destination."; return; }
+      if (!confirm((vue === "sortie" ? "Sortie de " : "Transfert de ") + q + " × " + v("mfArt") + (vue === "sortie" ? " depuis " + v("mfMag") : " : " + v("mfMag") + " → " + v("mfVers")) + " ?")) return;
+      envoyer(vue === "sortie" ? { op: "sortie", magasin: v("mfMag"), article: v("mfArt"), quantite: q, projet: v("mfPr"), motif: v("mfMot") }
+        : { op: "transfert", magasin: v("mfMag"), vers: v("mfVers"), article: v("mfArt"), quantite: q, motif: v("mfMot") }, function () { if (vue === "sortie") rafraichirStockVal().catch(function () {}); });
+    };
+  }
+
   /* ---------- 📦 Sorties de stock hors production : validation WALID ou DG ---------- */
   function droitStockVal() { var d = S.agent && S.formulaires && S.formulaires.droits; return !!(d && (d.stock || ["DG", "WALID"].indexOf(String(S.agent.nom).toUpperCase()) >= 0)); }
   var rafStk = null;
@@ -3366,12 +3467,12 @@
   }
   function stockNbAttente() { return S.stockv ? S.stockv.sorties.filter(function (x) { return x.statut === "En attente"; }).length : 0; }
   function afficherStockVal(id) {
-    $("titre").textContent = "Sortie de stock";
+    $("titre").textContent = "Sortie Stock M2S";
     function dessiner(msg) {
       var K = S.stockv, L = K ? K.sorties : [], C = { "En attente": "#e65100", "À corriger": "#b26a00", "Validée": "#2e7d32", "Refusée": "#c62828", "Annulée": "#777" }, moiS = S.agent && S.agent.nom;
       function qteDe(x) { var m = String(x.resume).split(" · "); return m[1] || ""; }
       var fsS = S.formulaires && S.formulaires.formulaires && S.formulaires.formulaires.stock;
-      var h = "<div class='carte pleine'><h3>📦 Sortie de stock (hors production)</h3>" +
+      var h = "<div class='carte pleine'><h3>📦 Sortie Stock M2S (hors production)</h3><div class='info'>Magasin de la production (M2S · Atelier). Les sorties des autres magasins en attente de validation figurent aussi ici.</div>" +
         (fsS ? "<button class='bouton' id='skNouv'" + (fsS.erreur ? " disabled" : "") + ">➕ Nouvelle sortie de stock</button>" : "") +
         "<h3 style='margin-top:14px'>📋 Liste des demandes</h3><div class='info'>" + (K && K.direction ? "Validation : WALID ou DG (un seul suffit) ; vos propres saisies sont validées d'office. " : "Vos sorties : elles n'entrent dans le stock qu'après validation par WALID ou le DG. ") +
         (K ? "Données du " + dateCourte(K.recu || K.genere) : "") + (msg ? " · " + esc(msg) : "") + "</div></div>";
@@ -3429,6 +3530,7 @@
     if (d.vue === "commercial" && droitCom()) { afficherCom(d.id); return true; }
     if (d.vue === "missions" && droitMis()) { afficherMis(d.id); return true; }
     if (d.vue === "stockval" && droitStockVal()) { afficherStockVal(d.id); return true; }
+    if (d.vue === "magasins") { afficherMagasins(""); return true; }
     montrer("vueAccueil"); return true;
   }
   function ouvrirDepuisNotif(d) {
@@ -3959,7 +4061,7 @@
   $("annulerScan").onclick = function () { montrer("vueAccueil"); };
   /* ‹ Retour : revient à l'écran précédent (pile de navigation), l'accueil seulement en bout de pile.
      Les formulaires sont transitoires : après un envoi, ‹ ne rouvre pas le formulaire vide. */
-  var NAV_ECRANS = ["afficherListe", "afficherFinances", "ouvrirDemandeFin", "formulaireFin", "afficherSoldes", "afficherSuiviAchats", "afficherRH", "ouvrirEvRH", "ficheRH", "formulaireEvRH", "formulaireSalaireRH", "formulaireDepartRH", "formulaireNouvelRH", "afficherPaieRH", "afficherCom", "ficheContratCom", "ficheFactureCom", "ficheClientCom", "formulaireContratCom", "formulaireBdcCom", "formulaireDocCom", "formulaireEncCom", "formulaireRelanceCom", "afficherMis", "ficheMis", "formulaireMis", "afficherFournisseurs", "ficheFourMere", "formulaireFourMere", "formulaireCompteFour", "afficherInterco", "ficheFournisseur", "afficherTreso", "ficheTreso", "afficherJournal", "afficherAvancement", "afficherStockVal", "afficherFiches", "ouvrirFormulaire", "afficherNotifs"];
+  var NAV_ECRANS = ["afficherListe", "afficherFinances", "ouvrirDemandeFin", "formulaireFin", "afficherSoldes", "afficherSuiviAchats", "afficherRH", "ouvrirEvRH", "ficheRH", "formulaireEvRH", "formulaireSalaireRH", "formulaireDepartRH", "formulaireNouvelRH", "afficherPaieRH", "afficherCom", "ficheContratCom", "ficheFactureCom", "ficheClientCom", "formulaireContratCom", "formulaireBdcCom", "formulaireDocCom", "formulaireEncCom", "formulaireRelanceCom", "afficherMis", "ficheMis", "formulaireMis", "afficherFournisseurs", "ficheFourMere", "formulaireFourMere", "formulaireCompteFour", "afficherInterco", "ficheFournisseur", "afficherTreso", "ficheTreso", "afficherJournal", "afficherAvancement", "afficherStockVal", "afficherMagasins", "afficherFiches", "ouvrirFormulaire", "afficherNotifs"];
   var NAV_FN = {};
   NAV_FN.afficherListe = afficherListe;
   NAV_FN.afficherFinances = afficherFinances;
@@ -3998,6 +4100,7 @@
   NAV_FN.afficherJournal = afficherJournal;
   NAV_FN.afficherAvancement = afficherAvancement;
   NAV_FN.afficherStockVal = afficherStockVal;
+  NAV_FN.afficherMagasins = afficherMagasins;
   NAV_FN.afficherFiches = afficherFiches;
   NAV_FN.ouvrirFormulaire = ouvrirFormulaire;
   NAV_FN.afficherNotifs = afficherNotifs;
@@ -4039,6 +4142,7 @@
   afficherJournal = NAV_FN.afficherJournal;
   afficherAvancement = NAV_FN.afficherAvancement;
   afficherStockVal = NAV_FN.afficherStockVal;
+  afficherMagasins = NAV_FN.afficherMagasins;
   afficherFiches = NAV_FN.afficherFiches;
   ouvrirFormulaire = NAV_FN.ouvrirFormulaire;
   afficherNotifs = NAV_FN.afficherNotifs;
