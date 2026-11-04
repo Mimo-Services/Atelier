@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-11 JB";
+  var VERSION_APP = "2026-11-12 JE";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -68,7 +68,48 @@
   function attendre(p, ms) {
     return Promise.race([p, new Promise(function (ok, ko) { setTimeout(function () { ko(new Error("délai")); }, ms); })]);
   }
+  /* Écran d'attente : pendant un échange avec le serveur lancé par l'opérateur (clic, touche), tout est bloqué
+     et le logo DuoCore tourne. « Annuler l'attente » après 30 s (l'opération continue / reste en file). */
+  var GESTE = 0, OCC = { n: 0, el: null, t: null, t30: null };
+  ["pointerdown", "touchstart", "keydown"].forEach(function (ev) { document.addEventListener(ev, function (e) { if (!OCC.el || !OCC.el.contains(e.target)) GESTE = Date.now(); }, true); });
+  function occupe(msg) {
+    if (!OCC.el) {
+      var st = document.createElement("style");
+      st.textContent = "@keyframes dcTour{to{transform:rotate(360deg)}}#dcOcc{position:fixed;inset:0;z-index:99999;display:none;align-items:center;justify-content:center;background:rgba(20,24,40,0);transition:background .2s}" +
+        "#dcOcc.vis{background:rgba(20,24,40,.55)}#dcOcc .bx{opacity:0;transition:opacity .2s;background:var(--tuile,#fff);color:var(--texte,#222);border:1px solid var(--bord,#ddd);border-radius:16px;padding:22px 26px;text-align:center;min-width:220px;max-width:80vw;box-shadow:0 8px 30px rgba(0,0,0,.3)}" +
+        "#dcOcc.vis .bx{opacity:1}#dcOcc img{width:72px;height:72px;border-radius:16px;animation:dcTour 1.2s linear infinite}#dcOcc p{margin:12px 0 0;font-weight:600}#dcOcc small{display:block;margin-top:4px;color:#888}";
+      document.head.appendChild(st);
+      OCC.el = document.createElement("div"); OCC.el.id = "dcOcc";
+      OCC.el.innerHTML = "<div class='bx'><img src='icone-192.png' alt=''><p id='dcOccM'></p><small id='dcOccS'>Merci de patienter…</small>" +
+        "<button class='bouton second' id='dcOccA' style='display:none;margin-top:12px'>Annuler l'attente</button></div>";
+      document.body.appendChild(OCC.el);
+      OCC.el.querySelector("#dcOccA").onclick = function () { OCC.n = 0; cacher(); };
+    }
+    function cacher() { clearTimeout(OCC.t); clearTimeout(OCC.t30); OCC.el.className = ""; OCC.el.style.display = "none"; }
+    OCC.n++;
+    OCC.el.querySelector("#dcOccM").textContent = msg || "Communication avec le serveur…";
+    if (OCC.n === 1) {
+      OCC.el.style.display = "flex"; OCC.el.querySelector("#dcOccA").style.display = "none";
+      OCC.el.querySelector("#dcOccS").textContent = "Merci de patienter…";
+      if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+      OCC.t = setTimeout(function () { OCC.el.className = "vis"; }, 250);   // pas de clignotement pour les réponses rapides
+      OCC.t30 = setTimeout(function () { OCC.el.querySelector("#dcOccA").style.display = ""; OCC.el.querySelector("#dcOccS").textContent = "Le serveur tarde : vous pouvez annuler l'attente (l'opération continue ou reste en file d'attente)."; }, 30000);
+    }
+    var fait = false;
+    return function () { if (fait) return; fait = true; OCC.n = Math.max(0, OCC.n - 1); if (!OCC.n) cacher(); };
+  }
+  function messageAttente(url, options) {
+    var b = String(options.body || ""), m = b.match(/"api":"(\w+)"/), a = m ? m[1] : "";
+    if (!a) return /api=donnees/.test(url) ? "Mise à jour des données…" : "Communication avec le serveur…";
+    if (/Envoyer$|^repondre$|^declarer$/.test(a) || /"decision":/.test(b)) return "Envoi en cours…";
+    if (/Pdf$|^finExport$|^finReleve$|^tresoReleve$/.test(a)) return "Préparation du document…";
+    return "Chargement…";
+  }
   function requete(url, options, ms) {
+    var fin = navigator.onLine !== false && Date.now() - GESTE < 1500 ? occupe(messageAttente(url, options)) : null;
+    return requeteBrute(url, options, ms).then(function (j) { if (fin) fin(); return j; }, function (e) { if (fin) fin(); throw e; });
+  }
+  function requeteBrute(url, options, ms) {
     url = avecAppareil(url, options);
     var ctl = window.AbortController ? new AbortController() : null;
     if (ctl) options.signal = ctl.signal;
@@ -3245,6 +3286,23 @@
       G.forEach(function (g) { g.pc = Math.round(g.lots.reduce(function (t, x) { return t + pcLot(x); }, 0) / g.lots.length); g.finis = g.lots.filter(function (x) { return pcLot(x) >= 100; }).length; });
       return G;
     }
+    // Récapitulatif par étape (tous lots et sous-lots) : réalisé / restant en lots, passages et unités.
+    function recapEtapes(b) {
+      if (!b.recap || !b.recap.length) return "";
+      function rr(f, p, u) { return "<b>" + gnf(f) + "</b> <span style='color:#999'>/ " + gnf(Math.max(0, p - f)) + "</span>" + (u ? " <small>" + esc(u) + "</small>" : ""); }
+      return "<div style='margin:8px 0 0 22px;overflow-x:auto' onclick='event.stopPropagation()'><table style='width:100%;border-collapse:collapse;font-size:12.5px'>" +
+        "<tr style='color:var(--muet,#888);text-align:left'><th style='padding:2px 6px'>Étape</th><th style='padding:2px 6px'>Lots<br><small>réalisés / restants</small></th>" +
+        "<th style='padding:2px 6px'>Passages<br><small>réalisés / restants</small></th><th style='padding:2px 6px'>Unités<br><small>réalisées / restantes</small></th><th style='padding:2px 6px;width:22%'></th></tr>" +
+        b.recap.map(function (e) {
+          var pc = e.valid ? (e.lots ? Math.round(e.lotsF / e.lots * 100) : 0) : e.uP ? Math.round(e.uF / e.uP * 100) : (e.pP ? Math.round(e.pF / e.pP * 100) : 0);
+          if (e.lotsF >= e.lots) pc = 100;
+          return "<tr style='border-top:1px solid var(--bord)'><td style='padding:3px 6px;white-space:nowrap'><span style='color:" + couleur(pc) + "'>" + (pc >= 100 ? "✓" : pc > 0 ? "●" : "○") + "</span> " + esc(e.nom) + "</td>" +
+            "<td style='padding:3px 6px;white-space:nowrap'>" + rr(e.lotsF, e.lots) + "</td>" +
+            "<td style='padding:3px 6px;white-space:nowrap'>" + (e.valid ? "—" : rr(e.pF, e.pP)) + "</td>" +
+            "<td style='padding:3px 6px;white-space:nowrap'>" + (e.valid || !e.uP ? "—" : rr(e.uF, e.uP, e.unite)) + "</td>" +
+            "<td style='padding:3px 6px'><div class='ligne' style='gap:6px;align-items:center'>" + barre(pc) + "<small style='flex:0 0 34px;text-align:right'>" + pc + "%</small></div></td></tr>";
+        }).join("") + "</table></div>";
+    }
     function dessiner(msg) {
       var R = AVC.data, L = R ? R.bdcs : [], q = AVC.q.trim().toLowerCase();
       function trouve(x) { return !q || (x.cle + " " + x.designation).toLowerCase().indexOf(q) >= 0; }
@@ -3260,7 +3318,7 @@
         var t = "<div data-k='" + esc(kb) + "' style='cursor:pointer;padding:10px 12px;border-bottom:1px solid var(--bord)'>" +
           "<div class='ligne' style='gap:8px;align-items:center'><span style='flex:0 0 14px'>" + (ob ? "▼" : "▶") + "</span><b style='flex:1;min-width:0'>📄 " + esc(b.bdc) + "</b><b style='flex:0;white-space:nowrap;color:" + couleur(pc) + "'>" + (b.termine ? "✔" : pc + " %") + "</b></div>" +
           "<div class='ligne' style='gap:8px;align-items:center;margin:6px 0 0 22px'>" + barre(pc) + "</div>" +
-          "<div class='info' style='margin-left:22px'>" + nf + " / " + b.lots.length + " lot(s) terminé(s)" + (b.commande ? " · livré " + gnf(b.livre) + " / " + gnf(b.commande) : "") + (b.dernier ? " · dernier scan " + dateCourte(b.dernier) : "") + "</div></div>";
+          "<div class='info' style='margin-left:22px'>" + nf + " / " + b.lots.length + " lot(s) terminé(s)" + (b.commande ? " · livré " + gnf(b.livre) + " / " + gnf(b.commande) : "") + (b.dernier ? " · dernier scan " + dateCourte(b.dernier) : "") + "</div>" + recapEtapes(b) + "</div>";
         if (!ob) return t;
         var G = groupes(b.lots), caches = 0;
         t += G.map(function (g) {
