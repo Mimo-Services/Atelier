@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-12 JM";
+  var VERSION_APP = "2026-11-12 JN";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -97,6 +97,21 @@
     }
     var fait = false;
     return function () { if (fait) return; fait = true; OCC.n = Math.max(0, OCC.n - 1); if (!OCC.n) cacher(); };
+  }
+  // Les fenêtres de question (alert / confirm / prompt) masquent l'écran d'attente.
+  ["alert", "confirm", "prompt"].forEach(function (f) { var nat = window[f]; window[f] = function () { if (OCC.el && OCC.n) { OCC.n = 0; clearTimeout(OCC.t); clearTimeout(OCC.t30); OCC.el.className = ""; OCC.el.style.display = "none"; } return nat.apply(window, arguments); }; });
+  /* PC : PDF affiché dans DuoCore (aperçu + télécharger / imprimer / partager), sans passer par les téléchargements. */
+  function voirPdfBlob(blob, nom) {
+    var u = URL.createObjectURL(blob), o = document.createElement("div");
+    o.style.cssText = "position:fixed;inset:0;z-index:99990;background:rgba(20,24,40,.7);display:flex;flex-direction:column;padding:12px";
+    o.innerHTML = "<div class='ligne' style='gap:8px;margin-bottom:8px;align-items:center'><b style='flex:1;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>📄 " + esc(nom) + "</b>" +
+      "<a class='bouton second' href='" + u + "' download='" + esc(nom) + "' style='flex:0 0 auto;width:auto;margin:0'>⬇️ Télécharger</a>" +
+      "<button class='bouton second' id='pdfImp' style='flex:0 0 auto;width:auto;margin:0'>🖨️ Imprimer</button>" +
+      "<button class='bouton' id='pdfFerm' style='flex:0 0 auto;width:auto;margin:0'>✕ Fermer</button></div>" +
+      "<iframe src='" + u + "' style='flex:1;border:0;border-radius:10px;background:#fff'></iframe>";
+    document.body.appendChild(o);
+    o.querySelector("#pdfFerm").onclick = function () { o.remove(); setTimeout(function () { URL.revokeObjectURL(u); }, 1000); };
+    o.querySelector("#pdfImp").onclick = function () { try { o.querySelector("iframe").contentWindow.print(); } catch (e) { window.open(u, "_blank"); } };
   }
   function messageAttente(url, options) {
     var b = String(options.body || ""), m = b.match(/"api":"(\w+)"/), a = m ? m[1] : "";
@@ -2965,7 +2980,8 @@
         $("ftPdf").disabled = true; $("ftPdf").textContent = "⏳ PDF…";
         api({ api: "finReleve", nom: f.nom, societe: soc, du: FOURF.du, au: FOURF.au }, 120000).then(function (r) {
           var blob = base64Blob(r.pdf), fi = new File([blob], r.nom, { type: "application/pdf" });
-          if (navigator.canShare && navigator.canShare({ files: [fi] }) && confirm("Partager le relevé ? (Annuler = l'ouvrir)")) navigator.share({ files: [fi], title: r.nom }).catch(function () {});
+          if (modePC()) voirPdfBlob(blob, r.nom);
+          else if (navigator.canShare && navigator.canShare({ files: [fi] }) && confirm("Partager le relevé ? (Annuler = l'ouvrir)")) navigator.share({ files: [fi], title: r.nom }).catch(function () {});
           else { var u = URL.createObjectURL(blob); if (!window.open(u, "_blank")) { var a = document.createElement("a"); a.href = u; a.download = r.nom; document.body.appendChild(a); a.click(); a.remove(); } }
           dessiner("");
         }, function (e) { alert("⛔ Relevé : " + e.message + " (réseau nécessaire)"); dessiner(""); });
@@ -3037,7 +3053,8 @@
         $("trPdf").disabled = true; $("trPdf").textContent = "⏳ PDF…";
         api({ api: "tresoPdf", compte: nom, du: TRV.du, au: TRV.au }, 120000).then(function (r) {
           var blob = base64Blob(r.pdf), fi = new File([blob], r.nom, { type: "application/pdf" });
-          if (navigator.canShare && navigator.canShare({ files: [fi] }) && confirm("Partager le relevé ? (Annuler = l'ouvrir)")) navigator.share({ files: [fi], title: r.nom }).catch(function () {});
+          if (modePC()) voirPdfBlob(blob, r.nom);
+          else if (navigator.canShare && navigator.canShare({ files: [fi] }) && confirm("Partager le relevé ? (Annuler = l'ouvrir)")) navigator.share({ files: [fi], title: r.nom }).catch(function () {});
           else { var u = URL.createObjectURL(blob); if (!window.open(u, "_blank")) { var a = document.createElement("a"); a.href = u; a.download = r.nom; document.body.appendChild(a); a.click(); a.remove(); } }
           dessiner("");
         }, function (e) { alert("⛔ Relevé : " + e.message); dessiner(""); });
