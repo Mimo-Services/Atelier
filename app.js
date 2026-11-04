@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-12 JF";
+  var VERSION_APP = "2026-11-12 JG";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -348,7 +348,7 @@
       tuile("form:" + k, k === "stock" ? "📦" : "🧾", k === "stock" ? "Sortie de stock" : fs[k].nom || fs[k].titre || k, fs[k].erreur ? "indisponible" : k === "stock" ? "Nouvelle saisie" : "");
     });
     if (droitStockVal() || fs.stock) { var nS = stockNbAttente(); tuile("magasins", "🏬", "Magasins", "Stock, Sortie Stock M2S, transferts", nS ? { badge: nS, bcls: S.stockv && S.stockv.direction ? "rouge" : "orange" } : {}); }
-    if (droitFin() || droitRH() || droitCom() || droitTreso() || droitMis()) section("Gestion");
+    if (droitFin() || droitRH() || droitCom() || droitTreso() || droitMis() || droitRep()) section("Gestion");
     if (droitFin()) {
       var nF = finNbATraiter();
       tuile("finances", "💰", "Finances", S.fin && S.fin.role ? "Validation " + S.fin.role : S.fin && S.fin.comptable ? "Comptabilité" : "Demandes, paiements", nF ? { badge: nF, bcls: "rouge", cls: "large" } : { cls: "large" });
@@ -362,6 +362,7 @@
       tuile("commercial", "🤝", "Commercial", "Contrats, BL, factures", nC ? { badge: "⏰" + nC, bcls: "rouge", cls: "large" } : { cls: "large" });
     }
     if (droitTreso()) tuile("treso", "🏦", "Trésorerie", S.formulaires.droits.validation === "Walid" || S.formulaires.droits.validation === "DG" ? "Tous les comptes" : "Vos comptes", { cls: "large" });
+    if (droitRep()) tuile("repartition", "📊", "Répartition", "Recouvrements, commissions", { cls: "large" });
     if (droitMis()) {
       var nM = misNbBadge();
       tuile("missions", "🎯", "Missions", S.mis && S.mis.direction ? "Équipe, clôture" : "Mes missions", nM ? { badge: nM, bcls: "rouge", cls: "large" } : { cls: "large" });
@@ -387,6 +388,7 @@
         else if (id === "treso") afficherTreso();
         else if (id === "stockval") afficherStockVal();
         else if (id === "magasins") afficherMagasins("");
+        else if (id === "repartition") afficherRepartition();
         else if (id === "journal") afficherJournal();
         else if (id === "avancement") afficherAvancement();
         else if (id === "planif") { if (modePC()) afficherPlanifPC(); else afficherPlanif(); }
@@ -403,7 +405,7 @@
     if ($("btnConnexion")) $("btnConnexion").onclick = pageConnexion;
     if ($("btnDeconnexion")) $("btnDeconnexion").onclick = function () {
       if (S.file.some(function (x) { return x.type === "form"; }) && !confirm("Des saisies sont en attente d'envoi : elles partiront quand même. Changer d'agent ?")) return;
-      S.agent = null; S.formulaires = null; S.planif = null; S.fin = null; S.rh = null; S.com = null; S.mis = null; S.treso = null; S.stockv = null; ecrire("stockv", null); S.mag = null; ecrire("mag", null); TRV.releves = {}; ecrire("treso", null); FOUR.liste = null; FOUR.fiches = {}; ecrire("four", null); ecrire("com", null); ecrire("mis", null); ecrire("agent", null); ecrire("formulaires", null); ecrire("planif", null); ecrire("fin", null); ecrire("rh", null); montrer("vueAccueil");
+      S.agent = null; S.formulaires = null; S.planif = null; S.fin = null; S.rh = null; S.com = null; S.mis = null; S.treso = null; S.stockv = null; ecrire("stockv", null); S.mag = null; ecrire("mag", null); S.rep = null; ecrire("rep", null); TRV.releves = {}; ecrire("treso", null); FOUR.liste = null; FOUR.fiches = {}; ecrire("four", null); ecrire("com", null); ecrire("mis", null); ecrire("agent", null); ecrire("formulaires", null); ecrire("planif", null); ecrire("fin", null); ecrire("rh", null); montrer("vueAccueil");
     };
 
     var d = S.donnees;
@@ -3367,6 +3369,216 @@
     api({ api: "suiviAtelier", vue: "avancement" }, 90000).then(function (r) { AVC.data = r; dessiner(""); }, function (e) { dessiner("⛔ " + e.message + " (réseau nécessaire)"); });
   }
 
+  /* ---------- 📊 Répartition (DG, WALID) : événements, factures (cascade), commissions par bénéficiaire, balances, paramètres ---------- */
+  var REPV = { onglet: "ev", ouv: {}, fiche: null, rat: null, pay: null };
+  function droitRep() { return !!(S.agent && ["DG", "WALID"].indexOf(String(S.agent.nom).toUpperCase()) >= 0); }
+  function rafraichirRep(corps) {
+    if (!S.url) return Promise.reject(new Error("adresse du serveur inconnue"));
+    var c = corps || {}; c.api = "repartition";
+    return api(c, 300000).then(function (r) { r.recu = Date.now(); S.rep = r; ecrire("rep", r); return r; });
+  }
+  function repPct(x) { return x === "" || x === null || x === undefined || isNaN(x) ? "" : (Math.round(x * 1000) / 10).toString().replace(".", ",") + " %"; }
+  function repOpts(L, v, vide) { return (vide !== undefined ? "<option value=''>" + vide + "</option>" : "") + L.map(function (x) { var val = typeof x === "object" ? x.v : x, lib = typeof x === "object" ? x.l : x; return "<option value='" + esc(val) + "'" + (val === v ? " selected" : "") + ">" + esc(lib) + "</option>"; }).join(""); }
+  // Bénéficiaires : Emna (interne), démarcheurs (par contrat, Paramétrage col. L), Trésor, attribution.
+  function repBenef(D) {
+    var F = D.factures.filter(function (f) { return !f.prev; }), B = {}, evB = {}, cB = {};
+    function b(id, nom, type, du) { return B[id] || (B[id] = { id: id, nom: nom, type: type, du: du, mv: [] }); }
+    F.forEach(function (f) { var n = f.benef || "Démarcheur (non précisé)"; if (f.ev && !evB[f.ev]) evB[f.ev] = n; if (!cB[f.t[2]]) cB[f.t[2]] = n; });
+    F.forEach(function (f) {
+      if (f.t[12]) b("emna", "Emna", "Commission interne", true).mv.push({ d: f.t[0], lib: "Dû · " + f.t[1], du: f.t[12], v: 0, ev: f.ev });
+      if (f.t[5]) { var n = f.benef || "Démarcheur (non précisé)"; b("ext:" + n, n, "Démarchage externe", true).mv.push({ d: f.t[0], lib: "Dû · " + f.t[1], du: f.t[5], v: 0, ev: f.ev }); }
+    });
+    D.com.forEach(function (x) {
+      if (x.hors) return;
+      var o = x.ty === "Commission interne" ? b("emna", "Emna", "Commission interne", true)
+        : x.ty === "Démarchage externe" ? (function () { var n = evB[x.ev] || cB[x.c] || "Démarcheur (non précisé)"; return b("ext:" + n, n, "Démarchage externe", true); })()
+        : x.ty === "Commission directe (Trésor)" ? b("tres", "Trésor (commission directe)", "Commission directe (Trésor)", false)
+        : x.ty === "Commission d'attribution" ? b("attr", "Commission d'attribution", "Commission d'attribution", false) : b("nr", "Versements sans type", "", false);
+      o.mv.push({ d: x.d, lib: "Versé · " + (x.mo || "").substring(0, 70), du: 0, v: x.m, ev: x.ev, src: x.src, ty: x.ty });
+    });
+    // Emna soldée : période close (factures réglées jusqu'à la date ; versements de leurs événements ou datés avant).
+    var CL = D.cloture, fin = CL ? CL.date + 86399000 : 0, evC = {};
+    if (CL) F.forEach(function (f) { if (f.t[0] <= fin && f.ev) evC[f.ev] = 1; });
+    return Object.keys(B).map(function (k) {
+      var o = B[k]; o.mv.sort(function (a, c) { return a.d - c.d || (c.du - a.du); });
+      if (k === "emna" && CL) {
+        o.mv.forEach(function (m) { m.c = m.du ? m.d <= fin : (m.ev ? !!evC[m.ev] : m.d <= fin); });
+        o.mv.sort(function (a, c) { return (c.c ? 1 : 0) - (a.c ? 1 : 0) || a.d - c.d; });
+        var i = o.mv.filter(function (m) { return m.c; }).length;
+        o.mv.splice(i, 0, { d: CL.date, lib: "🔒 Clôture : " + (CL.ajust < 0 ? "trop-versé absorbé " : "reste dû soldé ") + gnf(Math.abs(CL.ajust)) + " → remise à 0", du: 0, v: 0, raz: true });
+      }
+      var s = 0; o.mv.forEach(function (m) { if (m.raz) s = 0; else s += m.du - m.v; m.solde = s; });
+      o.tDu = o.mv.reduce(function (t, m) { return t + m.du; }, 0); o.tV = o.mv.reduce(function (t, m) { return t + m.v; }, 0); o.solde = s;
+      return o;
+    }).sort(function (a, c) { return (a.id === "emna" ? 0 : a.du ? 1 : 2) - (c.id === "emna" ? 0 : c.du ? 1 : 2) || c.tV - a.tV; });
+  }
+  function afficherRepartition(onglet) {
+    if (onglet) REPV.onglet = onglet;
+    $("titre").textContent = "Répartition";
+    var ONG = [["ev", "📅 Événements"], ["fac", "🧾 Factures"], ["com", "💼 Commissions"], ["bal", "⚖️ Balances"], ["par", "⚙️ Paramètres"]];
+    function ligneV(lib, v, cl) { return "<tr" + (cl ? " style='font-weight:700;border-top:1px solid var(--bord)'" : "") + "><td style='padding:3px 0'>" + lib + "</td><td style='text-align:right;white-space:nowrap'>" + v + "</td></tr>"; }
+    function dessiner(msg) {
+      var R = S.rep, D = R && R.data, h = "<div class='carte pleine'><h3>📊 Répartition des recouvrements</h3><div class='ligne' style='flex-wrap:wrap;gap:6px'>" +
+        ONG.map(function (o) { return "<button class='bouton" + (REPV.onglet === o[0] ? "" : " second") + "' data-g='" + o[0] + "' style='flex:0 0 auto;width:auto;padding:8px 12px;margin:0'>" + o[1] + "</button>"; }).join("") +
+        "<button class='bouton second' id='rpRec' style='flex:0 0 auto;width:auto;padding:8px 12px;margin:0'>🔄 Recalculer</button></div>" +
+        "<div class='info'>" + (D ? "Calculé le " + dateCourte(D.genere) : "") + (msg ? " · " + esc(msg) : "") + "</div></div>";
+      if (D) h += ({ ev: vueEv, fac: vueFac, com: vueCom, bal: vueBal, par: vuePar }[REPV.onglet])(R, D);
+      else h += "<p class='info'>" + (R ? "Aucune donnée : lancez 🔄 Recalculer." : "Réseau nécessaire.") + "</p>";
+      $("vueListe").innerHTML = h; montrer("vueListe");
+      Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-g]"), function (b) { b.onclick = function () { REPV.onglet = b.getAttribute("data-g"); REPV.fiche = null; dessiner(""); }; });
+      $("rpRec").onclick = function () { envoyer({ op: "recalculer" }); };
+      Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-o]"), function (el) { el.onclick = function () { var k = el.getAttribute("data-o"); REPV.ouv[k] = !REPV.ouv[k]; dessiner(""); }; });
+      Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-f]"), function (el) { el.onclick = function () { REPV.fiche = el.getAttribute("data-f"); dessiner(""); window.scrollTo(0, 0); }; });
+      Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-rat]"), function (el) { el.onclick = function (e) { e.stopPropagation(); REPV.rat = REPV.rat === el.getAttribute("data-rat") ? null : el.getAttribute("data-rat"); dessiner(""); }; });
+      if ($("rtOk")) $("rtOk").onclick = function () { envoyer({ op: "rattacher", src: REPV.rat, ev: $("rtEv").value, type: $("rtTy").value }, function () { REPV.rat = null; }); };
+      if ($("pyOk")) $("pyOk").onclick = payer;
+      if ($("rpFermer")) $("rpFermer").onclick = function () { REPV.fiche = null; dessiner(""); };
+      Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-gl]"), function (b) { b.onclick = function () { var k = b.getAttribute("data-gl"); envoyer({ op: "param", glob: +k, valeur: $("gl" + k).value }); }; });
+      Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-pr]"), function (b) { b.onclick = function () {
+        var row = +b.getAttribute("data-pr"), chg = [];
+        Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-row='" + row + "']"), function (inp) { if (inp.value !== inp.getAttribute("data-v")) chg.push({ col: +inp.getAttribute("data-col"), valeur: inp.value }); });
+        if (!chg.length) { alert("Aucune modification sur cette ligne."); return; }
+        var p = Promise.resolve();
+        chg.forEach(function (c, i) { p = p.then(function () { return rafraichirRep({ op: "param", row: row, col: c.col, valeur: c.valeur }).then(function (r) { if (i === chg.length - 1) alert("✅ " + (r.message || "Enregistré")); }); }); });
+        p.then(function () { dessiner(""); }, function (e) { alert("⛔ " + e.message); dessiner(""); });
+      }; });
+    }
+    function envoyer(c, ok) {
+      rafraichirRep(c).then(function (r) { if (ok) ok(); if (r.message) alert("✅ " + r.message); dessiner(""); }, function (e) { alert("⛔ " + e.message + " (réseau nécessaire)"); dessiner(""); });
+    }
+    function evOpts(D, v) { return repOpts(D.evs.map(function (e) { return { v: e.id, l: e.id + " · " + jourFr(e.date) + " · " + e.client }; }).concat([{ v: "Hors contrat", l: "Hors contrat (non réparti)" }]), v, "— sans événement —"); }
+    function blocRat(D, x) {
+      if (REPV.rat !== x.src) return "";
+      return "<div class='carte' style='margin:6px 0;background:var(--fond)'><b>🔗 Rattacher ce versement</b><div class='ligne'><div><label>Événement</label><select id='rtEv'>" + evOpts(D, x.ev) + "</select></div>" +
+        "<div><label>Type</label><select id='rtTy'>" + repOpts(S.rep.types, x.ty, "—") + "</select></div></div><button class='bouton' id='rtOk'>✅ Enregistrer</button></div>";
+    }
+    function ligneCom(D, x) {
+      return "<div style='padding:6px 0;border-top:1px solid var(--bord)'><div class='ligne' style='justify-content:space-between;gap:8px'><span style='flex:1;min-width:0'>" + jourFr(x.d) + " · " + esc(x.ty || "sans type") + (x.ev ? " · " + esc(x.ev) : x.hors ? " · hors contrat" : " · ⚠️ sans événement") +
+        "<br><small class='info'>" + esc((x.mo || "").substring(0, 90)) + " · " + esc(x.src) + "</small></span><b style='flex:0;white-space:nowrap'>" + gnf(x.m) + "</b>" +
+        "<button class='bouton second' data-rat='" + esc(x.src) + "' style='flex:0 0 auto;padding:4px 8px'>🔗</button></div>" + blocRat(D, x) + "</div>";
+    }
+    // 📅 Événements
+    function vueEv(R, D) {
+      return D.evs.map(function (e) {
+        var F = D.factures.filter(function (f) { return !f.prev && f.ev === e.id; }), C = D.com.filter(function (x) { return x.ev === e.id && !x.hors; });
+        function s(i) { return F.reduce(function (t, f) { return t + (+f.t[i] || 0); }, 0); }
+        function v(ty) { return C.filter(function (x) { return x.ty === ty; }).reduce(function (t, x) { return t + x.m; }, 0); }
+        var ht = s(4), tot = C.reduce(function (t, x) { return t + x.m; }, 0), o = !!REPV.ouv["e" + e.id];
+        return "<div class='carte'><div data-o='e" + esc(e.id) + "' style='cursor:pointer'><div class='ligne' style='justify-content:space-between'><b>" + (o ? "▼ " : "▶ ") + esc(e.id) + " · " + jourFr(e.date) + " · " + esc(e.client) + "</b><b style='flex:0;white-space:nowrap'>" + gnf(ht) + " HT</b></div>" +
+          "<div class='info'>" + esc(e.factures.join(", ")) + "</div>" +
+          "<table style='width:100%;font-size:13px;margin-top:4px'>" +
+          "<tr><td>Démarchage externe</td><td style='text-align:right'>dû " + gnf(s(5)) + "</td><td style='text-align:right'>versé " + gnf(v("Démarchage externe")) + "</td></tr>" +
+          "<tr><td>Emna (interne)</td><td style='text-align:right'>dû " + gnf(s(12)) + "</td><td style='text-align:right'>versé " + gnf(v("Commission interne")) + "</td></tr>" +
+          "<tr><td>Trésor · Attribution</td><td></td><td style='text-align:right'>versé " + gnf(v("Commission directe (Trésor)") + v("Commission d'attribution")) + "</td></tr>" +
+          "<tr style='font-weight:700'><td>Total versé</td><td></td><td style='text-align:right'>" + gnf(tot) + " · " + (ht ? Math.round(tot / ht * 1000) / 10 : 0) + " %</td></tr></table></div>" +
+          (o ? "<div style='margin-top:6px'><b>Versements</b>" + (C.map(function (x) { return ligneCom(D, x); }).join("") || "<p class='info'>Aucun.</p>") + "</div>" : "") + "</div>";
+      }).join("") + (function () {
+        var sans = D.com.filter(function (x) { return !x.ev && !x.hors; }), o = !!REPV.ouv.sans;
+        return sans.length ? "<div class='carte' style='border-color:#e67e22'><div data-o='sans' style='cursor:pointer'><b>" + (o ? "▼" : "▶") + " ⚠️ " + sans.length + " versement(s) sans événement</b></div>" + (o ? sans.map(function (x) { return ligneCom(D, x); }).join("") : "") + "</div>" : "";
+      })();
+    }
+    // 🧾 Factures + fiche cascade
+    function vueFac(R, D) {
+      if (REPV.fiche && REPV.fiche.indexOf("f") === 0) {
+        var f = D.factures[+REPV.fiche.substring(1)]; if (f) {
+          var t = f.t, x = f.taux;
+          return "<div class='carte pleine'><div class='ligne' style='justify-content:space-between'><h3>" + (f.prev ? "⏳ " : "") + esc(t[1]) + "</h3><button class='bouton second' id='rpFermer' style='flex:0 0 auto;width:auto;padding:6px 12px;margin:0'>✕</button></div>" +
+            "<div class='info'>" + esc(t[2]) + " · " + (f.prev ? "émise le " + jourFr(t[0]) + " (prévisionnel)" : "réglée le " + jourFr(t[0])) + (f.ev ? " · " + esc(f.ev) : "") + "</div><table style='width:100%;font-size:14px'>" +
+            ligneV("Montant (net à payer)", gnf(t[3])) + ligneV("HT (÷ diviseur)", gnf(t[4]), 1) +
+            ligneV("− Démarchage externe " + repPct(x.dem), gnf(t[5])) + ligneV("− Commission directe (Trésor)", gnf(t[6])) + ligneV("− Réserve fiscale " + repPct(x.fisc), gnf(t[7])) +
+            ligneV("− Attribution + charges AO", gnf(t[8])) + ligneV("− Amortissement stock (plafond " + repPct(x.plSt) + ")", gnf(t[9])) + ligneV("− Amortissement fonds de roulement (plafond " + repPct(x.plCh) + ")", gnf(t[10])) +
+            ligneV("▶ Marge brute", gnf(t[11]), 1) + ligneV("− Commission interne " + repPct(x.emna), gnf(t[12])) + ligneV("▶ Marge nette", gnf(t[13]), 1) +
+            ligneV("− Réserve fonds de roulement", gnf(t[14])) + ligneV("▶ Bénéfice libre", gnf(t[15]), 1) + "</table>" + (f.note ? "<div class='info'>" + esc(f.note) + "</div>" : "") + "</div>";
+        }
+      }
+      function liste(pv, titre) {
+        var L = D.factures.map(function (f, i) { return { f: f, i: i }; }).filter(function (z) { return z.f.prev === pv; });
+        if (!pv) L.reverse();
+        var tot = L.reduce(function (s, z) { return s + z.f.t[15]; }, 0);
+        return "<div class='carte pleine'><h3>" + titre + " <small class='info'>(" + L.length + " · bénéfice libre " + gnf(tot) + ")</small></h3>" + L.map(function (z) {
+          var t = z.f.t;
+          return "<div data-f='f" + z.i + "' style='cursor:pointer;padding:6px 0;border-top:1px solid var(--bord)'><div class='ligne' style='justify-content:space-between'><b>" + esc(t[1]) + "</b><b style='flex:0;white-space:nowrap'>" + gnf(t[4]) + " HT</b></div>" +
+            "<div class='info'>" + jourFr(t[0]) + (z.f.ev ? " · " + esc(z.f.ev) : "") + " · externe " + gnf(t[5]) + " · Emna " + gnf(t[12]) + " · marge nette " + gnf(t[13]) + "</div></div>";
+        }).join("") + "</div>";
+      }
+      return liste(false, "✅ Factures réglées") + liste(true, "⏳ Prévisionnel (factures engagées)");
+    }
+    // 💼 Commissions par bénéficiaire
+    function vueCom(R, D) {
+      var B = repBenef(D);
+      if (REPV.fiche && REPV.fiche.indexOf("b:") === 0) {
+        var o = B.filter(function (x) { return "b:" + x.id === REPV.fiche; })[0];
+        if (o) {
+          var pay = REPV.pay = { benef: o, ev: "" };
+          return "<div class='carte pleine'><div class='ligne' style='justify-content:space-between'><h3>👤 " + esc(o.nom) + "</h3><button class='bouton second' id='rpFermer' style='flex:0 0 auto;width:auto;padding:6px 12px;margin:0'>✕</button></div>" +
+            "<div class='info'>" + esc(o.type) + (o.du ? " · dû " + gnf(o.tDu) : "") + " · versé " + gnf(o.tV) + (o.du ? " · <b>" + (o.solde >= 0 ? "reste dû " + gnf(o.solde) : "avance " + gnf(-o.solde)) + "</b>" : "") + "</div>" +
+            "<div class='carte' style='background:var(--fond)'><b>💸 Payer</b><div class='ligne'><div><label>Événement</label><select id='pyEv'>" + evOpts(D, (D.evs[D.evs.length - 1] || {}).id) + "</select></div>" +
+            "<div><label>Montant</label><input id='pyMt' inputmode='decimal' value='" + (o.du && o.solde > 0 ? Math.round(o.solde) : "") + "'></div></div>" +
+            "<div class='ligne'><div><label>Payé par</label><select id='pyMo'>" + repOpts(["Banque (virement / chèque)", "Caisse (espèces)"], "Banque (virement / chèque)") + "</select></div><div><label>Société</label><select id='pySo'>" + repOpts(["AB", "M2S"], "AB") + "</select></div></div>" +
+            "<button class='bouton' id='pyOk'>💸 Préparer la demande Finances</button><div class='info'>La demande s'ouvre pré-remplie (type, catégorie Commission, montant, événement) ; elle suit la validation habituelle. Une fois exécutée, le versement est rattaché tout seul à l'événement.</div></div>" +
+            "<table style='width:100%;font-size:13px'><tr style='color:#888;text-align:left'><th>Date</th><th>Mouvement</th><th style='text-align:right'>Dû</th><th style='text-align:right'>Versé</th><th style='text-align:right'>Solde</th></tr>" +
+            o.mv.map(function (m) {
+              var x = m.src ? D.com.filter(function (c) { return c.src === m.src; })[0] : null;
+              return "<tr style='border-top:1px solid var(--bord)" + (m.raz ? ";font-weight:700;color:#1155cc" : "") + "'><td style='white-space:nowrap'>" + jourFr(m.d) + "</td><td>" + esc(m.lib) + (m.ev ? " <small>(" + esc(m.ev) + ")</small>" : "") +
+                (x ? " <button class='bouton second' data-rat='" + esc(x.src) + "' style='padding:2px 6px;width:auto;display:inline-block'>🔗</button>" + blocRat(D, x) : "") + "</td><td style='text-align:right'>" + (m.du ? gnf(m.du) : "") + "</td><td style='text-align:right'>" + (m.v ? gnf(m.v) : "") +
+                "</td><td style='text-align:right'>" + (o.du ? gnf(m.solde) : "") + "</td></tr>";
+            }).join("") + "</table></div>";
+        }
+      }
+      return B.map(function (o) {
+        return "<div class='carte' data-f='b:" + esc(o.id) + "' style='cursor:pointer'><div class='ligne' style='justify-content:space-between'><b>👤 " + esc(o.nom) + "</b>" +
+          (o.du ? "<b style='flex:0;white-space:nowrap;color:" + (o.solde > 0 ? "#c62828" : "#2e7d32") + "'>" + (o.solde >= 0 ? "reste " + gnf(o.solde) : "avance " + gnf(-o.solde)) + "</b>" : "<b style='flex:0;white-space:nowrap'>" + gnf(o.tV) + "</b>") + "</div>" +
+          "<div class='info'>" + esc(o.type || "à typer") + (o.du ? " · dû " + gnf(o.tDu) : "") + " · versé " + gnf(o.tV) + " · " + o.mv.filter(function (m) { return m.v; }).length + " versement(s)" + (o.id === "emna" && D.cloture ? " · soldée au " + jourFr(D.cloture.date) : "") + "</div></div>";
+      }).join("");
+    }
+    function payer() {
+      var o = REPV.pay && REPV.pay.benef; if (!o) return;
+      var ev = $("pyEv").value, mt = parseFloat(String($("pyMt").value).replace(/\s/g, "").replace(",", ".")), banque = /Banque/.test($("pyMo").value);
+      if (!(mt > 0)) { alert("⛔ Indiquez le montant."); return; }
+      if (!S.fin) { alert("⛔ Ouvrez d'abord Finances une fois (données Finances absentes)."); return; }
+      var ty = o.type || "Démarchage externe", objet = "Commission " + (ty === "Commission interne" ? "interne" : ty === "Démarchage externe" ? "démarchage" : ty === "Commission directe (Trésor)" ? "directe Trésor" : "attribution") + " — " + o.nom + " [" + (ev || "Hors contrat") + "|" + ty + "]";
+      formulaireFin(banque ? { type: "Mouvement de trésorerie", op: "Virement", societe: $("pySo").value, categorie: "Commission", objet: objet, montant: mt, beneficiaire: o.nom }
+                           : { type: "Dépense de caisse", societe: $("pySo").value, categorie: "Commission", objet: objet, montant: mt });
+    }
+    // ⚖️ Balances
+    function vueBal(R, D) {
+      var X = D.bal || {}, P = D.factures.filter(function (f) { return f.prev; });
+      function s(i) { return P.reduce(function (t, f) { return t + (+f.t[i] || 0); }, 0); }
+      function bloc(t, L) { return "<div class='carte'><h3>" + t + "</h3><table style='width:100%;font-size:14px'>" + L.join("") + "</table></div>"; }
+      return bloc("📦 Amortissement stock", [ligneV("Valeur du stock (CUMP)", gnf(X.valeurCump)), ligneV("Stock complémentaire", gnf(X.valeurStock - X.valeurCump)), ligneV("Total à amortir", gnf(X.valeurStock), 1),
+          ligneV("Déjà amorti (factures réglées)", gnf(X.stRecup)), ligneV("Reste à amortir", gnf(Math.max(0, X.valeurStock - X.stRecup)), 1), ligneV("dont couvert par les engagées", gnf(s(9)))]) +
+        bloc("🏭 Fonds de roulement (arriérés de charges)", [ligneV("Arriérés depuis " + jourFr(X.debut), gnf(X.fdrCumul)), ligneV("Amorti par les factures réglées", gnf(X.chRecup)), ligneV("Amorti par les engagées (prévisionnel)", gnf(s(10))),
+          ligneV("Non couvert", gnf(Math.max(0, X.fdrCumul - X.chRecup - s(10))), 1)]) +
+        bloc("🛡️ Réserve fonds de roulement", [ligneV("Constituée (factures réglées)", gnf(X.resCum)), ligneV("+ prévisionnel", gnf(X.resProj)), ligneV("Objectif", gnf(X.objectif)), ligneV("Écart", gnf(Math.max(0, X.objectif - X.resCum)), 1)]) +
+        bloc("🧾 Réserve fiscale", [ligneV("Réservée depuis le " + jourFr(X.fiscalDepuis) + " (à verser l'année suivante)", gnf(X.fiscalCumul), 1)]);
+    }
+    // ⚙️ Paramètres
+    function vuePar(R) {
+      var COLS = [[4, "Démarch. %"], [5, "Fiscal %"], [6, "Emna %"], [7, "Plaf. stock %"], [8, "Plaf. FDR %"]];
+      function pc(x) { return x === "" || x === null || x === undefined ? "" : String(Math.round(x * 1000) / 10).replace(".", ","); }
+      var h = "<div class='carte pleine'><h3>Paramètres généraux</h3>" + R.glob.map(function (g) {
+        var v = g.sorte === "date" ? (typeof g.val === "number" ? isoJour(g.val) : "") : String(g.val === null || g.val === undefined ? "" : g.val);
+        return "<div class='ligne' style='align-items:flex-end;gap:6px'><div style='flex:3'><label>" + esc(g.lib) + "</label><input id='gl" + g.k + "' " + (g.sorte === "date" ? "type='date' " : g.sorte === "num" ? "inputmode='decimal' " : "") + "value='" + esc(v) + "'></div>" +
+          "<button class='bouton second' data-gl='" + g.k + "' style='flex:0 0 auto;width:auto;padding:10px'>💾</button></div>";
+      }).join("") + "</div>";
+      h += "<div class='carte pleine'><h3>Contrats et factures</h3><div class='info'>Taux en %. Case vide = valeur de la ligne du dessus (facture ← contrat ← Par défaut). Chaque 💾 recalcule la répartition (≈ 1 min).</div>" + R.arbre.map(function (a) {
+        var ind = a.niv === "f" ? 18 : 0, o = a.niv !== "f" || !!REPV.ouv["p" + a.row];
+        var t = "<div style='padding:6px 0 6px " + ind + "px;border-top:1px solid var(--bord)" + (a.niv === "d" ? ";background:var(--fond)" : "") + "'><div class='ligne' style='justify-content:space-between'" + (a.niv === "f" ? " data-o='p" + a.row + "'" : "") + "><b style='" + (a.engagee ? "color:#b26a00" : "") + "'>" + (a.niv === "f" ? (o ? "▼ " : "▶ ") + "↳ " : "") + esc(a.lib) + (a.engagee ? " (engagée)" : "") + "</b>" +
+          "<small class='info' style='flex:0;white-space:nowrap;margin:0'>" + (a.niv === "f" ? (typeof a.b === "number" ? jourFr(a.b) : "") + " · " + gnf(a.mt) : esc(String(a.b || ""))) + "</small></div>";
+        if (!o) return t + "</div>";
+        t += "<div class='ligne' style='flex-wrap:wrap;gap:6px'>" + COLS.map(function (c) { var v = pc(a.taux[c[0] - 4]); return "<div style='flex:1 1 90px'><label style='font-size:11px'>" + c[1] + "</label><input data-row='" + a.row + "' data-col='" + c[0] + "' data-v='" + esc(v) + "' value='" + esc(v) + "' inputmode='decimal' placeholder='hérité'></div>"; }).join("") +
+          (a.niv === "c" ? "<div style='flex:1 1 120px'><label style='font-size:11px'>Charges AO</label><input data-row='" + a.row + "' data-col='10' data-v='" + esc(a.ao) + "' value='" + esc(a.ao) + "' inputmode='decimal'></div>" : "") +
+          (a.niv !== "f" ? "<div style='flex:2 1 160px'><label style='font-size:11px'>Bénéficiaire démarchage</label><input data-row='" + a.row + "' data-col='12' data-v='" + esc(a.benef) + "' value='" + esc(a.benef) + "'></div>" : "") + "</div>" +
+          (a.attr || a.tres ? "<div class='info'>" + (a.attr ? "Attribution versée " + gnf(a.attr) : "") + (a.tres ? " Trésor versé " + gnf(a.tres) : "") + "</div>" : "") +
+          "<button class='bouton second' data-pr='" + a.row + "' style='width:auto;padding:6px 12px'>💾 Enregistrer la ligne</button></div>";
+        return t;
+      }).join("") + "</div>";
+      return h;
+    }
+    dessiner(S.rep ? "mise à jour…" : "chargement…");
+    rafraichirRep().then(function () { dessiner(""); }, function (e) { dessiner("⛔ " + e.message + " (réseau nécessaire)"); });
+  }
+
   /* ---------- 🏬 Magasins : stock par magasin, Sortie Stock M2S, sorties des autres magasins, transferts, création ---------- */
   var MAG = { ouv: {}, vue: "" };
   function optsM(L, v, vide) { return (vide ? "<option value=''>" + vide + "</option>" : "") + L.map(function (x) { return "<option" + (x === v ? " selected" : "") + ">" + esc(x) + "</option>"; }).join(""); }
@@ -4061,7 +4273,7 @@
   $("annulerScan").onclick = function () { montrer("vueAccueil"); };
   /* ‹ Retour : revient à l'écran précédent (pile de navigation), l'accueil seulement en bout de pile.
      Les formulaires sont transitoires : après un envoi, ‹ ne rouvre pas le formulaire vide. */
-  var NAV_ECRANS = ["afficherListe", "afficherFinances", "ouvrirDemandeFin", "formulaireFin", "afficherSoldes", "afficherSuiviAchats", "afficherRH", "ouvrirEvRH", "ficheRH", "formulaireEvRH", "formulaireSalaireRH", "formulaireDepartRH", "formulaireNouvelRH", "afficherPaieRH", "afficherCom", "ficheContratCom", "ficheFactureCom", "ficheClientCom", "formulaireContratCom", "formulaireBdcCom", "formulaireDocCom", "formulaireEncCom", "formulaireRelanceCom", "afficherMis", "ficheMis", "formulaireMis", "afficherFournisseurs", "ficheFourMere", "formulaireFourMere", "formulaireCompteFour", "afficherInterco", "ficheFournisseur", "afficherTreso", "ficheTreso", "afficherJournal", "afficherAvancement", "afficherStockVal", "afficherMagasins", "afficherFiches", "ouvrirFormulaire", "afficherNotifs"];
+  var NAV_ECRANS = ["afficherListe", "afficherFinances", "ouvrirDemandeFin", "formulaireFin", "afficherSoldes", "afficherSuiviAchats", "afficherRH", "ouvrirEvRH", "ficheRH", "formulaireEvRH", "formulaireSalaireRH", "formulaireDepartRH", "formulaireNouvelRH", "afficherPaieRH", "afficherCom", "ficheContratCom", "ficheFactureCom", "ficheClientCom", "formulaireContratCom", "formulaireBdcCom", "formulaireDocCom", "formulaireEncCom", "formulaireRelanceCom", "afficherMis", "ficheMis", "formulaireMis", "afficherFournisseurs", "ficheFourMere", "formulaireFourMere", "formulaireCompteFour", "afficherInterco", "ficheFournisseur", "afficherTreso", "ficheTreso", "afficherJournal", "afficherAvancement", "afficherStockVal", "afficherMagasins", "afficherRepartition", "afficherFiches", "ouvrirFormulaire", "afficherNotifs"];
   var NAV_FN = {};
   NAV_FN.afficherListe = afficherListe;
   NAV_FN.afficherFinances = afficherFinances;
@@ -4101,6 +4313,7 @@
   NAV_FN.afficherAvancement = afficherAvancement;
   NAV_FN.afficherStockVal = afficherStockVal;
   NAV_FN.afficherMagasins = afficherMagasins;
+  NAV_FN.afficherRepartition = afficherRepartition;
   NAV_FN.afficherFiches = afficherFiches;
   NAV_FN.ouvrirFormulaire = ouvrirFormulaire;
   NAV_FN.afficherNotifs = afficherNotifs;
@@ -4143,6 +4356,7 @@
   afficherAvancement = NAV_FN.afficherAvancement;
   afficherStockVal = NAV_FN.afficherStockVal;
   afficherMagasins = NAV_FN.afficherMagasins;
+  afficherRepartition = NAV_FN.afficherRepartition;
   afficherFiches = NAV_FN.afficherFiches;
   ouvrirFormulaire = NAV_FN.ouvrirFormulaire;
   afficherNotifs = NAV_FN.afficherNotifs;
