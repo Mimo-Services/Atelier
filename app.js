@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-12 JJ";
+  var VERSION_APP = "2026-11-12 JK";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -3796,21 +3796,21 @@
     if (S.fin && droitFin()) S.fin.demandes.filter(finOuverte).forEach(function (d) {
       var h = d.historique || [], der = h[h.length - 1] || {}, corr = ((d.proposition && !d.proposition.etat) || /Correction demandée au DG/.test(der.act || "")) && S.fin.role === "DG";
       L.push({ rub: "💰", t: d.no + " · " + libelleFin(d), s: statutFin(d) + " · " + gnf(d.montant) + " " + d.devise + " · " + d.demandeur + (corr ? " · 📝 " + (d.proposition && d.proposition.type === "annul" ? "annulation" : "modification") + " demandée : " + (der.c || "") : ""),
-               moi: finATraiter(d) || corr, q: d.date, ouvrir: function () { afficherFinances(); ouvrirDemandeFin(d.no); },
+               moi: finATraiter(d) || corr, q: d.date, et: corr ? "Proposition à décider" : statutFin(d), ouvrir: function () { afficherFinances(); ouvrirDemandeFin(d.no); },
                sal: d.type === "Paiement RH" && d.motifRH === "SALAIRE (RH)" && d.demandeur === S.fin.auto ? { mois: d.dateEffet || d.date, statut: statutFin(d), mt: d.montant, dev: d.devise, nom: d.personnel } : null });
     });
     if (S.rh && S.rh.direction && droitRH()) S.rh.evenements.filter(function (e) { return e.statut === "En attente Walid"; }).forEach(function (e) {
-      L.push({ rub: "👥", t: e.type + " · " + e.personnel, s: "Événement RH à valider · " + e.no, moi: true, q: e.date || 0, ouvrir: function () { afficherRH(); if (typeof ouvrirEvRH === "function") ouvrirEvRH(e.no); } });
+      L.push({ rub: "👥", t: e.type + " · " + e.personnel, s: "Événement RH à valider · " + e.no, moi: true, et: "À valider", q: e.date || 0, ouvrir: function () { afficherRH(); if (typeof ouvrirEvRH === "function") ouvrirEvRH(e.no); } });
     });
     if (S.stockv && droitStockVal()) S.stockv.sorties.filter(function (x) { return x.statut === "En attente"; }).forEach(function (x) {
-      L.push({ rub: "📦", t: x.no + " · sortie de stock", s: x.resume + " · " + x.agent, moi: !!S.stockv.direction, q: x.saisi, ouvrir: function () { afficherStockVal(x.no); } });
+      L.push({ rub: "📦", t: x.no + " · sortie de stock", s: x.resume + " · " + x.agent, moi: !!S.stockv.direction, et: "Sorties à valider", q: x.saisi, ouvrir: function () { afficherStockVal(x.no); } });
     });
     if (S.mis && droitMis()) { var M = S.mis, fin = misAuj() + 86400000;
       M.missions.filter(function (m) { return misOuv(m) && ((misPour(m, M.agent) && m.statut !== "À clôturer" && m.echeance && m.echeance < fin) || (M.direction && m.statut === "À clôturer")); }).forEach(function (m) {
-        L.push({ rub: "🎯", t: m.titre, s: (m.statut === "À clôturer" ? "Signalée terminée : à clôturer" : "Échéance " + jourLib(m.echeance)) + " · " + m.assignes.join(", "), moi: true, q: m.echeance || 0, ouvrir: function () { afficherMis(); ficheMis(m.id); } });
+        L.push({ rub: "🎯", t: m.titre, s: (m.statut === "À clôturer" ? "Signalée terminée : à clôturer" : "Échéance " + jourLib(m.echeance)) + " · " + m.assignes.join(", "), moi: true, et: m.statut === "À clôturer" ? "À clôturer" : "Échéance proche", q: m.echeance || 0, ouvrir: function () { afficherMis(); ficheMis(m.id); } });
       }); }
     if (S.com && droitCom()) comRetards().forEach(function (f) {
-      L.push({ rub: "🤝", t: f.id + " · " + f.client, s: "Facture en retard (" + jours(f.echeance) + " j) · " + gnf(f.montant) + " " + f.devise, moi: false, q: f.echeance, ouvrir: function () { afficherCom(); ficheFactureCom(f.id); } });
+      L.push({ rub: "🤝", t: f.id + " · " + f.client, s: "Facture en retard (" + jours(f.echeance) + " j) · " + gnf(f.montant) + " " + f.devise, moi: false, et: "Factures en retard", q: f.echeance, ouvrir: function () { afficherCom(); ficheFactureCom(f.id); } });
     });
     return L.sort(function (a, b) { return (b.moi ? 1 : 0) - (a.moi ? 1 : 0) || (b.q || 0) - (a.q || 0); });
   }
@@ -3836,12 +3836,16 @@
       L.forEach(function (x) {
         if (!x.sal) { out.push(x); return; }
         var d = new Date(x.sal.mois), k = d.getFullYear() + "-" + d.getMonth() + "|" + x.sal.statut;
-        if (!sal[k]) { sal[k] = { rub: rb[0], moi: false, q: x.q, enfants: [], titre: "Salaires de " + MOIS[d.getMonth()] + " " + d.getFullYear(), statut: x.sal.statut, tot: {} }; out.push(sal[k]); }
+        if (!sal[k]) { sal[k] = { rub: rb[0], et: x.et, moi: false, q: x.q, enfants: [], titre: "Salaires de " + MOIS[d.getMonth()] + " " + d.getFullYear(), statut: x.sal.statut, tot: {} }; out.push(sal[k]); }
         var g = sal[k]; g.enfants.push(x); g.moi = g.moi || x.moi; g.tot[x.sal.dev] = (g.tot[x.sal.dev] || 0) + (+x.sal.mt || 0);
       });
       out.forEach(function (g) { if (g.enfants) { g.t = g.titre + " · " + g.enfants.length + " " + g.statut.toLowerCase(); g.s = Object.keys(g.tot).map(function (dv) { return gnf(g.tot[dv]) + " " + dv; }).join(" + ") + " · " + g.enfants.map(function (e) { return e.sal.nom; }).join(", "); } });
       out.sort(function (a, b) { return (b.moi ? 1 : 0) - (a.moi ? 1 : 0) || (b.q || 0) - (a.q || 0); });
-      return { rub: rb[0], lib: rb[1], L: out, n: L.length, moi: L.filter(function (x) { return x.moi; }).length };
+      // Sous-groupes par étape (À exécuter, À valider…), ceux qui m'attendent d'abord.
+      var ET = {}, ordreE = [];
+      out.forEach(function (x) { var e = x.et || "Autres"; if (!ET[e]) { ET[e] = { et: e, L: [], n: 0, moi: 0 }; ordreE.push(e); } ET[e].L.push(x); ET[e].n += x.enfants ? x.enfants.length : 1; if (x.moi) ET[e].moi += x.enfants ? x.enfants.filter(function (c) { return c.moi; }).length : 1; });
+      var E = ordreE.map(function (e) { return ET[e]; }).sort(function (a, b) { return (b.moi ? 1 : 0) - (a.moi ? 1 : 0); });
+      return { rub: rb[0], lib: rb[1], L: out, E: E, n: L.length, moi: L.filter(function (x) { return x.moi; }).length };
     }).filter(function (g) { return g.n; });
   }
   function afficherNotifs() {
@@ -3853,26 +3857,33 @@
       if (CLOCHE.onglet === "resoudre") {
         $("vueListe").innerHTML = "<div class='carte pleine'><h3>🔔 Notifications</h3>" + ong + "<div class='info'>Opérations en cours (données du téléphone) : une ligne disparaît quand l'opération est close. 👉 = action attendue de vous.</div></div>" +
           (function () {
-            var GR = groupesNotifs(A), IT = [];
-            function ligne(x, retrait) { IT.push(x); var i = IT.length - 1;
-              return "<div data-ar='" + i + "' style='cursor:pointer;padding:8px 10px " + "8px " + (retrait ? 26 : 10) + "px;border-top:1px solid var(--bord)" + (x.moi ? ";border-left:3px solid var(--cuivre)" : "") + "'><b>" + (x.moi ? "👉 " : "") + esc(x.t) + "</b><div class='info' style='margin:0'>" + esc(x.s) + "</div></div>"; }
+            var GR = groupesNotifs(A), IT = CLOCHE.items = [];
+            function carteN(x, retrait) { IT.push(x); var i = IT.length - 1;
+              return "<div data-ar='" + i + "' style='cursor:pointer;margin:8px 12px 8px " + (retrait ? 34 : 12) + "px;padding:12px 14px;border-radius:12px;background:var(--fond);border:1px solid var(--bord)" + (x.moi ? ";border-left:4px solid var(--cuivre)" : "") + "'>" +
+                "<div style='font-weight:700'>" + (x.moi ? "👉 " : "") + esc(x.t) + "</div><div class='info' style='margin:4px 0 0'>" + esc(x.s) + "</div></div>"; }
+            function ouvert(k, def) { return CLOCHE.ouv[k] !== undefined ? CLOCHE.ouv[k] : def; }
             return GR.map(function (g) {
-              var o = CLOCHE.ouv[g.rub] !== undefined ? CLOCHE.ouv[g.rub] : g.moi > 0;
-              return "<div class='carte pleine' style='padding:0;overflow:hidden" + (g.moi ? ";border-color:var(--cuivre)" : "") + "'><div data-gr='" + g.rub + "' style='cursor:pointer;padding:12px'><div class='ligne' style='justify-content:space-between'><b>" + (o ? "▼ " : "▶ ") + g.rub + " " + esc(g.lib) + "</b>" +
+              var o = ouvert(g.rub, g.moi > 0);
+              return "<div class='carte pleine' style='padding:0;overflow:hidden;margin-bottom:14px" + (g.moi ? ";border-color:var(--cuivre)" : "") + "'><div data-gr='" + g.rub + "' data-def='" + (g.moi > 0 ? 1 : 0) + "' style='cursor:pointer;padding:14px 16px'><div class='ligne' style='justify-content:space-between'><b style='font-size:16px'>" + (o ? "▼ " : "▶ ") + g.rub + " " + esc(g.lib) + "</b>" +
                 "<b style='flex:0;white-space:nowrap'>" + g.n + (g.moi ? " · 👉 " + g.moi : "") + "</b></div></div>" +
-                (o ? g.L.map(function (x) {
-                  if (!x.enfants) return ligne(x);
-                  var kg = "s|" + x.t, os = !!CLOCHE.ouv[kg];
-                  return "<div data-gr='" + esc(kg) + "' style='cursor:pointer;padding:8px 10px;border-top:1px solid var(--bord)" + (x.moi ? ";border-left:3px solid var(--cuivre)" : "") + "'><b>" + (os ? "▼ " : "▶ ") + (x.moi ? "👉 " : "") + "🧾 " + esc(x.t) + "</b><div class='info' style='margin:0'>" + esc(x.s) + "</div></div>" +
-                    (os ? x.enfants.map(function (e) { return ligne(e, true); }).join("") : "");
+                (o ? g.E.map(function (e) {
+                  var ke = g.rub + "|" + e.et, oe = ouvert(ke, e.moi > 0 || g.E.length === 1);
+                  return "<div style='border-top:1px solid var(--bord);padding-bottom:4px'><div data-gr='" + esc(ke) + "' data-def='" + (e.moi > 0 || g.E.length === 1 ? 1 : 0) + "' style='cursor:pointer;padding:10px 16px'><div class='ligne' style='justify-content:space-between'><b style='color:var(--cuivre)'>" + (oe ? "▾ " : "▸ ") + esc(e.et) + "</b>" +
+                    "<span class='info' style='flex:0;white-space:nowrap;margin:0'>" + e.n + (e.moi ? " · 👉 " + e.moi : "") + "</span></div></div>" +
+                    (oe ? e.L.map(function (x) {
+                      if (!x.enfants) return carteN(x);
+                      var kg = "s|" + x.t, os = !!CLOCHE.ouv[kg];
+                      return "<div data-gr='" + esc(kg) + "' data-def='0' style='cursor:pointer;margin:8px 12px;padding:12px 14px;border-radius:12px;background:var(--fond);border:1px solid var(--bord)" + (x.moi ? ";border-left:4px solid var(--cuivre)" : "") + "'>" +
+                        "<div style='font-weight:700'>" + (os ? "▼ " : "▶ ") + (x.moi ? "👉 " : "") + "🧾 " + esc(x.t) + "</div><div class='info' style='margin:4px 0 0'>" + esc(x.s) + "</div></div>" +
+                        (os ? x.enfants.map(function (c) { return carteN(c, true); }).join("") : "");
+                    }).join("") : "") + "</div>";
                 }).join("") : "") + "</div>";
             }).join("") || "<p class='info' style='padding:0 4px'>Rien à résoudre. 🎉</p>";
-            CLOCHE.items = IT;
           })();
         montrer("vueListe");
         Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-ar]"), function (el) { el.onclick = function () { CLOCHE.items[+el.getAttribute("data-ar")].ouvrir(); }; });
-        Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-gr]"), function (el) { el.onclick = function () { var k = el.getAttribute("data-gr"), A0 = groupesNotifs(A).filter(function (g) { return g.rub === k; })[0];
-          var cur = CLOCHE.ouv[k] !== undefined ? CLOCHE.ouv[k] : (A0 ? A0.moi > 0 : false); CLOCHE.ouv[k] = !cur; afficherNotifs(); }; });
+        Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-gr]"), function (el) { el.onclick = function () { var k = el.getAttribute("data-gr");
+          var cur = CLOCHE.ouv[k] !== undefined ? CLOCHE.ouv[k] : el.getAttribute("data-def") === "1"; CLOCHE.ouv[k] = !cur; afficherNotifs(); }; });
         Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-cl]"), function (b) { b.onclick = function () { CLOCHE.onglet = b.getAttribute("data-cl"); afficherNotifs(); }; });
         return;
       }
