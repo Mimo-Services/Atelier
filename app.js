@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 KD";
+  var VERSION_APP = "2026-11-14 KE";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -2010,7 +2010,8 @@
         "<div class='ligne'><div><label>✈️ Aller vers</label><select id='cfAv'>" + vOpts(av0) + "</select><input id='cfAvA' placeholder='Ville' style='display:none;margin-top:6px'></div><div><label>Date de départ</label><input id='cfDu' type='date' value='" + cbIso(x.du) + "'></div></div>" +
         "<div class='ligne'><div><label>↩️ Retour vers</label><select id='cfRv'>" + vOpts(rv0) + "</select><input id='cfRvA' placeholder='Ville' style='display:none;margin-top:6px'></div><div><label>Date de retour <small>(vide = ouvert)</small></label><input id='cfAu' type='date' value='" + cbIso(x.au) + "'></div></div>" +
         "<div id='cfV' class='info'></div>" + champFichiers("cfPj").replace("Photos / PDF", "🎫 Billet (photo ou PDF) — obligatoire") + ((x.pieces || []).length ? "<div class='info'>Déjà joint : " + x.pieces.length + " pièce(s).</div>" : "") +
-        (x.no ? "" : "<div class='info'>💸 Après l'enregistrement, la demande Finances › Paiement RH (prise en charge) s'ouvre pour saisir le prix et le paiement.</div>");
+        "<label>💸 Paiement du billet</label><select id='cfPay'><option value='payer'" + (x.dejaPaye ? "" : " selected") + ">" + (x.no ? "À payer / payé via Finances" : "À payer → ouvrir Finances après l'enregistrement") + "</option><option value='deja'" + (x.dejaPaye ? " selected" : "") + ">Déjà payé</option></select>" +
+        "<div class='info' id='cfPayI'></div>";
     }
     else h += "<div class='ligne'><div><label>Début du cycle (embauche ou dernier retour)</label><input id='cfDu' type='date'></div><div><label>Report de jours (facultatif)</label><input id='cfRe' inputmode='decimal'></div></div>";
     h += "<label>Commentaire</label><input id='cfCm' value='" + esc(x.com || "") + "'><div class='ligne'><button class='bouton' id='cfOk'>✅ Enregistrer</button><button class='bouton second' id='cfX'>Annuler</button></div></div>";
@@ -2027,6 +2028,7 @@
       $("cfRv").disabled = !ak;
       vu("cfAvA", v("cfAv") === "__autre"); vu("cfRvA", ak && v("cfRv") === "__autre");
     }
+    if ($("cfPay")) { var majPay = function () { $("cfPayI").textContent = v("cfPay") === "deja" ? "Billet marqué « déjà payé » : aucune demande Finances (le bouton 💸 reste disponible sur la fiche pour un complément)." : x.no ? "" : "La demande Finances › Paiement RH (prise en charge) s'ouvrira pour saisir le prix et le paiement."; }; $("cfPay").onchange = majPay; majPay(); }
     if ($("cfAv")) { $("cfAv").onchange = majVilles; $("cfRv").onchange = majVilles; $("cfAvA").oninput = majVilles; majVilles(); }
     function maj() {
       var p = v("cfP"), so = s[p] || {};
@@ -2040,7 +2042,7 @@
       var d = { personnel: v("cfP"), du: v("cfDu"), au: v("cfAu"), commentaire: v("cfCm") };
       if (x.no) d.no = x.no;
       if (t === "Billet") {
-        d.compagnie = v("cfCo"); d.billet = v("cfNb"); d.emis = v("cfEm"); d.allerVers = ville("cfAv"); d.retourVers = ville("cfRv"); d.fichiers = FICH.cfPj || [];
+        d.compagnie = v("cfCo"); d.billet = v("cfNb"); d.emis = v("cfEm"); d.allerVers = ville("cfAv"); d.retourVers = ville("cfRv"); d.fichiers = FICH.cfPj || []; d.dejaPaye = v("cfPay") === "deja";
         if (!d.allerVers) { alert("⛔ Indiquez la ville de l'aller."); return; }
         if (!d.du) { alert("⛔ Indiquez la date de départ."); return; }
         if (!d.fichiers.length && !(x.pieces || []).length) { alert("⛔ Joignez le billet (photo ou PDF)."); return; }
@@ -2048,7 +2050,7 @@
       if (t === "Droit") { d.debut = v("cfDu"); d.report = v("cfRe"); }
       CBV.form = "";
       envoyerRH(t === "Congé" ? "cbConge" : t === "Billet" ? "cbBillet" : "cbDroit", d, (t === "Droit" ? "Droits " : t + " ") + d.personnel,
-        t === "Billet" && !x.no ? function (r) { if (r.ok && r.no) payerBillet({ no: r.no, personnel: d.personnel, compagnie: d.compagnie, billet: d.billet, du: cbDate(d.du), allerVers: d.allerVers }); else afficherRH(); } : null);
+        t === "Billet" && !x.no && !d.dejaPaye ? function (r) { if (r.ok && r.no) payerBillet({ no: r.no, personnel: d.personnel, compagnie: d.compagnie, billet: d.billet, du: cbDate(d.du), allerVers: d.allerVers }); else afficherRH(); } : null);
     };
   }
   function cbDate(s) { var m = String(s || "").match(/^(\d{4})-(\d{2})-(\d{2})$/); return m ? new Date(+m[1], +m[2] - 1, +m[3]).getTime() : 0; }
@@ -2062,8 +2064,8 @@
     rafraichirFin().then(function () { if (S.fin) ouvrir(); else afficherRH(); }, function () { alert("⛔ Finances indisponible (réseau) : le paiement se fera depuis la fiche du billet."); afficherRH(); });
   }
   function cbPayLib(x) {
-    var P = x.pay || []; if (!P.length) return "<span style='color:#c62828'>non payé</span>";
-    return P.map(function (p) { return "💸 " + esc(p.no) + " · " + esc(p.statut) + (p.montant ? " · " + gnf(p.montant) + " " + esc(p.devise) : ""); }).join("<br>");
+    var P = x.pay || []; if (!P.length) return x.dejaPaye ? "<span style='color:#2e7d32'>✅ déjà payé</span>" : "<span style='color:#c62828'>non payé</span>";
+    return (x.dejaPaye ? "<span style='color:#2e7d32'>✅ déjà payé</span><br>" : "") + P.map(function (p) { return "💸 " + esc(p.no) + " · " + esc(p.statut) + (p.montant ? " · " + gnf(p.montant) + " " + esc(p.devise) : ""); }).join("<br>");
   }
   function ficheCB(C, R, x) {
     if (!x) { CBV.fiche = ""; afficherRH(); return; }
@@ -2081,7 +2083,7 @@
     var A = "";
     if (x.statut === "En attente DG" && dg) A += "<h3>Décision</h3><input id='cbCm' placeholder='Motif (obligatoire pour refuser)'><div class='ligne'><button class='bouton' id='cbV' style='background:var(--vert)'>✅ Valider</button><button class='bouton alerte' id='cbR'>⛔ Refuser</button></div>";
     if (x.type === "Billet" && x.statut === "Validé") A += "<h3>↩️ Modifier le retour</h3><div class='ligne'><div><label>Nouvelle date de retour</label><input id='cbNr' type='date' value='" + cbIso(x.au) + "' max='" + cbIso(fv) + "'></div><div style='flex:2'><label>Raison</label><input id='cbNc' placeholder='ex. travaux SGG en cours'></div></div>" + champFichiers("cbNf").replace("Photos / PDF", "🎫 Billet modifié (photo ou PDF) — obligatoire") + "<button class='bouton' id='cbNo'>↩️ Enregistrer le nouveau retour</button>" +
-      (R.finances && !(x.pay || []).length ? "<button class='bouton second' id='cbPay'>💸 Demande Finances (paiement du billet)</button>" : "");
+      (R.finances && (!(x.pay || []).length || x.dejaPaye) ? "<button class='bouton second' id='cbPay'>💸 Demande Finances (paiement du billet)</button>" : "");
     if (["En attente DG", "Validé"].indexOf(x.statut) >= 0) A += "<div class='ligne' style='margin-top:8px'><button class='bouton second' id='cbE'>✏️ Modifier</button>" + (x.statut !== "Validé" || dg ? "<button class='bouton second' id='cbA'>🗑️ Annuler</button>" : "") + "</div>";
     $("cbAct").innerHTML = A || "<div class='info'>Aucune action.</div>";
     $("cbF").onclick = function () { CBV.fiche = ""; afficherRH(); };
