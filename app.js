@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-12 JN";
+  var VERSION_APP = "2026-11-13 JO";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -1577,7 +1577,7 @@
       // Seuls les caisses / comptes de la société payeuse (et ceux sans société) sont proposés.
       var payeur = achat ? payeurAchat(t) : v("ffSoc"), deLui = function (c) { return !c.societe || c.societe === payeur; };
       // Retrait / transfert vers la caisse d'une autre société : proposé (après les siennes) → avance en 🔁 Inter-sociétés.
-      var versAutre = t === "Mouvement de trésorerie" && (op === "Retrait" || op === "Transfert entre caisses");
+      var versAutre = t === "Mouvement de trésorerie" && (op === "Retrait" || op === "Transfert entre caisses" || op === "Versement");
       srcL = srcL.filter(function (c) { return deLui(c) && (c.devise || "GNF") === dev; });
       if (dstL && versAutre) dstL = dstL.filter(deLui).concat(dstL.filter(function (c) { return !deLui(c) && ["AB", "M2S", "CASAFINO", "DG"].indexOf(c.societe) >= 0; }));
       else if (dstL && op !== F.opRemb) dstL = dstL.filter(deLui);
