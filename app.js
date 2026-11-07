@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 KB";
+  var VERSION_APP = "2026-11-14 KC";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -1475,7 +1475,7 @@
       "<div id='ffAchatB'><div class='ligne'><div><label>Pièce</label><select id='ffPiece'>" + opts(["Avec facture", "Sans facture (reçu ou rien)"], A1.piece) + "</select></div>" +
       "<div><label>Paiement</label><select id='ffPay'>" + opts(["Payé maintenant", "À payer plus tard"], A1.pay) + "</select></div></div>" +
       "<label>Destination</label><select id='ffDest'>" + opts(["📦 Stock · fourniture locale (Suivi Achats)", "📦 Stock · fourniture importée (Suivi Achats)", "💸 Charge ou prestation (passe directement)"], A1.dest) + "</select></div>" +
-      "<div id='ffOpB'><label>Mouvement</label><select id='ffOp'>" + opts(F.opsBanque, src.type === "Mouvement de trésorerie" ? src.op : "", "— choisir —") + "</select></div>" +
+      "<div id='ffOpB'><label>Mouvement</label><select id='ffOp'>" + opts(F.opsBanque, src.type === "Mouvement de trésorerie" ? (src.op === "Dépôt de chèque" || (src.op === "Virement" && src.mode === "Chèque") ? "Remise chèque" : src.op) : "", "— choisir —") + "</select></div>" +
       "<div id='ffOcB'><label>Opération constatée (sans validation)</label><select id='ffOc'>" + opts(F.opsConstatees || [], src.type === "Opération constatée" ? src.op : "", "— choisir —") + "</select></div>" +
       "<div class='ligne'><div><label id='ffSocL'>Société (payeuse)</label><select id='ffSoc'>" + opts(["AB", "M2S", "CASAFINO"], (srcAchat && (src.pourCompte || (fourSrc && fourSrc.societe))) || src.societe || "AB") + "</select></div>" +
       "<div id='ffPaySB'><label>Société payeuse</label><select id='ffPayS'>" + opts(["AB", "M2S", "CASAFINO", "DG"], src.type === "Règlement fournisseur" && src.op === "Achat comptant" ? src.societe : "") + "</select><div class='info'>Caisse / compte proposés : ceux de la société payeuse. Différente de la bénéficiaire → 🔁 Inter-sociétés.</div></div>" +
@@ -1564,11 +1564,10 @@
       else $("ffDev").disabled = false;
       vis("ffFactB", false); vis("ffRefB", achat); vis("ffRefOB", avecF); vis("ffEchB", t === "Facture d'achat");
       // Modes de paiement selon le type.
-      var benExt = t === "Mouvement de trésorerie" && op === "Virement" && !$("ffCtp").value;   // virement / chèque remis à un bénéficiaire externe
-      var modes = t === "Règlement fournisseur" ? ["Espèces", "Chèque", "Virement"] : t === "Paiement RH" ? ["Espèces", "Virement"] : benExt ? ["Virement", "Chèque"] : [];
+      var chq = op === "Remise chèque", benExt = t === "Mouvement de trésorerie" && (op === "Virement" || chq) && !$("ffCtp").value;   // virement / chèque remis à un bénéficiaire externe
+      var modes = t === "Règlement fournisseur" ? ["Espèces", "Chèque", "Virement"] : t === "Paiement RH" ? ["Espèces", "Virement"] : [];
       vis("ffModeB", modes.length);
-      var curM = $("ffMode").value || modePrec || ""; if (benExt && modes.indexOf(curM) < 0) curM = "Virement";
-      $("ffMode").innerHTML = opts(modes, curM, benExt ? "" : "— choisir —"); modePrec = "";
+      var curM = $("ffMode").value || modePrec || ""; $("ffMode").innerHTML = opts(modes, curM, "— choisir —"); modePrec = "";
       var mode = v("ffMode");
       // Comptes possibles : source (débitée) → destination (créditée) ; devise = celle du compte.
       var CA = F.comptes.filter(function (c) { return c.type === "Caisse"; }), BA = F.comptes.filter(function (c) { return c.type === "Banque"; });
@@ -1579,7 +1578,7 @@
         if (op === "Retrait") { srcL = BA; dstL = CA; lS = "Compte du chèque"; lD = "Vers la caisse"; }
         else if (op === "Versement") { srcL = CA; dstL = BA; lS = "Depuis la caisse"; lD = "Vers le compte bancaire"; }
         else if (op === "Virement") { srcL = BA; dstL = BA; lS = "Depuis le compte"; lD = "Vers le compte (ou bénéficiaire)"; }
-        else if (op === "Dépôt de chèque") { srcL = BA; dstL = BA; lS = "Chèque tiré sur"; lD = "Déposé sur"; }
+        else if (chq) { srcL = BA; dstL = BA; lS = "Chèque tiré sur"; lD = "Remis sur (ou bénéficiaire)"; }
         else if (op === "Transfert entre caisses") { srcL = CA; dstL = CA; lS = "Depuis la caisse"; lD = "Vers la caisse"; }
         else if (op === F.opRemb) { srcL = F.comptes.filter(function (c) { return ["AB", "M2S", "CASAFINO"].indexOf(c.societe) >= 0; }); dstL = srcL; lS = "Depuis un compte de la société qui rembourse"; lD = "Vers un compte de la société remboursée"; }
       }
@@ -1592,15 +1591,16 @@
       if (dstL && versAutre) dstL = dstL.filter(deLui).concat(dstL.filter(function (c) { return !deLui(c) && ["AB", "M2S", "CASAFINO", "DG"].indexOf(c.societe) >= 0; }));
       else if (dstL && op !== F.opRemb) dstL = dstL.filter(deLui);
       if (op === F.opRemb && dstL) dstL = dstL.filter(function (c) { return c.societe && c.societe !== payeur; });
-      remplir("ffCpt", srcL, src.compte, "— choisir —"); remplir("ffCtp", dstL || [], src.contrepartie, op === "Virement" ? "— bénéficiaire externe —" : "— choisir —", versAutre ? function (c) { return c.nom + (deLui(c) ? "" : " · " + c.societe + " (avance inter-sociétés)"); } : null);
+      remplir("ffCpt", srcL, src.compte, "— choisir —"); remplir("ffCtp", dstL || [], src.contrepartie, op === "Virement" || chq ? "— bénéficiaire externe —" : "— choisir —", versAutre ? function (c) { return c.nom + (deLui(c) ? "" : " · " + c.societe + " (avance inter-sociétés)"); } : null);
       $("ffCptL").textContent = lS; $("ffCtpL").textContent = lD;
+      benExt = t === "Mouvement de trésorerie" && (op === "Virement" || chq) && !v("ffCtp");
       vis("ffCptB", t !== "Facture d'achat"); vis("ffCtpB", !!dstL);
       var cpt = F.comptes.filter(function (c) { return c.nom === v("ffCpt"); })[0], dst = F.comptes.filter(function (c) { return c.nom === v("ffCtp"); })[0];
       var icAv = versAutre && dst && dst.societe && dst.societe !== payeur;
       vis("ffIcI", !!icAv); if (icAv) $("ffIcI").textContent = "🔁 " + dst.nom + " appartient à " + dst.societe + " : avance de " + payeur + " à " + dst.societe + ", inscrite comme dette de " + dst.societe + " dans Inter-sociétés.";
       // (la devise n'est plus imposée par le compte : la liste des comptes suit la devise choisie)
       var devR = dst && dst.devise && dst.devise !== dev ? dst.devise : "";
-      vis("ffChqI", t === "Mouvement de trésorerie" && op === "Dépôt de chèque");
+      vis("ffChqI", t === "Mouvement de trésorerie" && chq);
       vis("ffRecuB", !!devR); $("ffRecuL").textContent = "Montant reçu sur " + (dst ? dst.nom : "") + " (" + devR + ")";
       // Paie RH : mois du salaire ; équivalent dans la devise du salaire si le compte est dans une autre devise.
       var mot = v("ffMotRH"), devSal = t === "Paiement RH" ? (F.devisesPersonnel || {})[v("ffPers")] || "" : "";
@@ -1608,7 +1608,7 @@
       vis("ffEffB", !(t === "Paiement RH" && mot === "SALAIRE (RH)") && t !== "Facture d'achat");
       vis("ffEqB", !!devSal && devSal !== dev && ["SALAIRE (RH)", "AVANCE (RH)", "PRIME SUR SALAIRE (RH)"].indexOf(mot) >= 0);
       $("ffEqL").textContent = "Équivalent en " + devSal + " (devise du salaire de " + v("ffPers") + ")";
-      vis("ffBenB", (t === "Règlement fournisseur" && mode && mode !== "Espèces") || (t === "Mouvement de trésorerie" && op === "Virement" && !v("ffCtp")));
+      vis("ffBenB", (t === "Règlement fournisseur" && mode && mode !== "Espèces") || benExt);
       vis("ffTauxB", dev !== "GNF");
       var Cf = comptesDe(v("ffFour")), curC = $("ffFourC").value || (fourSrc ? fourSrc.nom : "");
       if (Cf.map(function (c) { return c.nom; }).join("|") !== $("ffFourC").getAttribute("data-l")) {
@@ -1650,7 +1650,7 @@
       }
       // Catégorie : imposée pour les mouvements internes et la paie ; reprise de la facture réglée.
       var catStock = /importée/.test(v("ffDest")) ? "Fourniture Importee" : "Fourniture Locale";
-      var catAuto = (t === "Mouvement de trésorerie" && !(op === "Virement" && !v("ffCtp"))) || t === "Paiement RH" || (t === "Opération constatée" && op === "Credit bancaire") ||
+      var catAuto = (t === "Mouvement de trésorerie" && !benExt) || t === "Paiement RH" || (t === "Opération constatée" && op === "Credit bancaire") ||
         (achat && (stock || t === "Facture d'achat")) || (regl && !avance && regC.length > 0 && regC.every(function (f) { return f.categorie; }));
       vis("ffCatB", !catAuto);
       $("ffCatB").querySelector("label").textContent = regl && !avance && regC.length ? "Catégorie (factures sans catégorie)" : "Catégorie (trésorerie)";
@@ -1682,8 +1682,8 @@
       var gros = g >= (F.seuil || 5000000), regle;
       if (t === "Opération constatée") regle = "aucune (constatée, inscrite directement)";
       else regle = t === "Facture d'achat" || (t === "Dépense de caisse" && gros) || (t === "Règlement fournisseur" && !((mode === "Espèces" || mode === "Chèque") && !gros)) ||
-        (t === "Paiement RH" && !(mode === "Espèces" && !gros)) || (t === "Mouvement de trésorerie" && !((op === "Dépôt de chèque" || op === "Transfert entre caisses" || op === F.opRemb) && !gros)) ? "Walid puis DG" : "Walid";
-      var photo = achat ? (avecF ? "photo de la facture obligatoire" : "photo du reçu facultative") : t === "Facture d'achat" ? "photo de la facture obligatoire" : (t === "Règlement fournisseur" && mode === "Chèque") || (t === "Mouvement de trésorerie" && (op === "Dépôt de chèque" || op === "Retrait" || (benExt && mode === "Chèque"))) ? "photo du chèque obligatoire" : "pièces facultatives";
+        (t === "Paiement RH" && !(mode === "Espèces" && !gros)) || (t === "Mouvement de trésorerie" && !(((chq && !benExt) || op === "Transfert entre caisses" || op === F.opRemb) && !gros)) ? "Walid puis DG" : "Walid";
+      var photo = achat ? (avecF ? "photo de la facture obligatoire" : "photo du reçu facultative") : t === "Facture d'achat" ? "photo de la facture obligatoire" : (t === "Règlement fournisseur" && mode === "Chèque") || (t === "Mouvement de trésorerie" && (chq || op === "Retrait")) ? "photo du chèque obligatoire" : "pièces facultatives";
       if (F.role === "DG") regle = "validée d'office (DG)" + (t === "Facture d'achat" || t === "Opération constatée" ? "" : " · exécution directe avec la preuve");
       else if (F.role === "Walid" && t !== "Opération constatée") regle = /DG/.test(regle) ? "Walid d'office, puis DG" : "validée d'office (Walid)";
       if ($("ffXB")) vis("ffXB", t !== "Facture d'achat" && t !== "Opération constatée");
@@ -1723,7 +1723,7 @@
       var A = s.achat;
       var err = t === "Paiement RH" && !s.personnel ? "personnel" : t === "Paiement RH" && !s.motifRH ? "motif RH" : on("ffModeB") && !s.mode ? "mode de paiement" :
         !s.compte && t !== "Facture d'achat" ? "compte" : on("ffCatB") && !s.categorie && t !== "Facture d'achat" ? "catégorie" : on("ffRecuB") && !(s.recu > 0) ? "montant reçu" : on("ffEqB") && !(s.recu > 0) ? "équivalent dans la devise du salaire" : on("ffMoisB") && !s.moisEffet ? "mois du salaire" :
-        on("ffCtpB") && !s.contrepartie && !(op === "Virement" && s.beneficiaire) ? "compte de destination" : !(s.montant > 0) ? "montant" : s.devise !== "GNF" && !(s.taux > 0) ? "taux de change" :
+        on("ffCtpB") && !s.contrepartie && !((op === "Virement" || op === "Remise chèque") && s.beneficiaire) ? "compte de destination" : !(s.montant > 0) ? "montant" : s.devise !== "GNF" && !(s.taux > 0) ? "taux de change" :
         (t === "Mouvement de trésorerie" || t === "Opération constatée") && !op ? "opération" : (t === "Facture d'achat" || t === "Règlement fournisseur") && !s.fournisseur ? "fournisseur" :
         A && !A.nature ? "nature de l'achat" : A && A.nature === "Article existant" && !A.article ? "article acheté" : A && A.nature === "Nouvel article" && !(A.designation && A.catNouvel) ? "nouvel article (désignation et catégorie)" :
         A && A.nature !== "Frais" && !(A.quantite > 0) ? "quantité commandée" : A && A.nature === "Frais" && !A.articles.length ? "article concerné par le frais" : "";
@@ -3868,7 +3868,7 @@
       if (!(mt > 0)) { alert("⛔ Indiquez le montant."); return; }
       if (!S.fin) { alert("⛔ Ouvrez d'abord Finances une fois (données Finances absentes)."); return; }
       var ty = o.type || "Démarchage externe", objet = "Commission " + (ty === "Commission interne" ? "interne" : ty === "Démarchage externe" ? "démarchage" : ty === "Commission directe (Trésor)" ? "directe Trésor" : "attribution") + " — " + o.nom + " [" + (ev || "Hors contrat") + "|" + ty + "]";
-      formulaireFin(banque ? { type: "Mouvement de trésorerie", op: "Virement", mode: cheque ? "Chèque" : "Virement", societe: $("pySo").value, categorie: "Commission", objet: objet, montant: mt, beneficiaire: o.nom }
+      formulaireFin(banque ? { type: "Mouvement de trésorerie", op: cheque ? "Remise chèque" : "Virement", societe: $("pySo").value, categorie: "Commission", objet: objet, montant: mt, beneficiaire: o.nom }
                            : { type: "Dépense de caisse", societe: $("pySo").value, categorie: "Commission", objet: objet, montant: mt });
     }
     // ⚖️ Balances
