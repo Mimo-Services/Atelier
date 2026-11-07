@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-13 JV";
+  var VERSION_APP = "2026-11-14 JW";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -362,8 +362,8 @@
       if (k === "stock") return;   // dans la rubrique « Magasins » (Sortie Stock M2S)
       tuile("form:" + k, k === "stock" ? "📦" : "🧾", k === "stock" ? "Sortie de stock" : fs[k].nom || fs[k].titre || k, fs[k].erreur ? "indisponible" : k === "stock" ? "Nouvelle saisie" : "");
     });
+    if (droitFin() || droitRH() || droitCom() || droitTreso() || droitMis() || droitRep() || droitStockVal() || fs.stock) section("Gestion");
     if (droitStockVal() || fs.stock) { var nS = stockNbAttente(); tuile("magasins", "🏬", "Magasins", "Stock, Sortie Stock M2S, transferts", nS ? { badge: nS, bcls: S.stockv && S.stockv.direction ? "rouge" : "orange" } : {}); }
-    if (droitFin() || droitRH() || droitCom() || droitTreso() || droitMis() || droitRep()) section("Gestion");
     if (droitFin()) {
       var nF = finNbATraiter();
       tuile("finances", "💰", "Finances", S.fin && S.fin.role ? "Validation " + S.fin.role : S.fin && S.fin.comptable ? "Comptabilité" : "Demandes, paiements", nF ? { badge: nF, bcls: "rouge", cls: "large" } : { cls: "large" });
@@ -1925,6 +1925,129 @@
   function journalDe(nom) { return (S.rh.journal || []).filter(function (j) { return nomRH(j.nom) === nomRH(nom); }).sort(function (a, b) { return a.mois < b.mois ? 1 : -1; }); }
 
   var RHV = { onglet: "personnel", mois: "" };
+  /* ---------- 🏖️ Congés et billets d'avion (RH) ---------- */
+  var CBV = { an: new Date().getFullYear(), form: "", fiche: "" };
+  function cbJ(t) { var d = new Date(t); return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); }
+  function cbIso(t) { if (!t) return ""; var d = new Date(t); return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2); }
+  function cbFinValidite(emis, mois) { var d = new Date(emis); d.setMonth(d.getMonth() + (mois || 11)); return d.getTime(); }
+  function cbAlertes(R) {
+    var auj = misAuj(), A = [], CB = R.cb || { liste: [] };
+    CB.liste.forEach(function (x) {
+      if (x.statut === "En attente DG") A.push({ niv: 1, t: "⏳ " + x.type + " de " + x.personnel + " en attente de validation (DG)", no: x.no });
+      if (x.statut !== "Validé") return;
+      [[x.du, x.type === "Congé" ? "🏖️ Congé de " + x.personnel + " (" + x.jours + " j)" : "✈️ Départ de " + x.personnel], [x.type === "Billet" ? x.au : 0, "↩️ Retour de " + x.personnel + " : à confirmer ou modifier"]].forEach(function (a) {
+        if (!a[0]) return; var j = Math.round((cbJ(a[0]) - auj) / 86400000);
+        if (j >= 0 && j <= 30) A.push({ niv: j <= 7 ? 2 : 3, t: a[1] + " — " + (j === 0 ? "aujourd'hui" : "dans " + j + " j") + " (" + jourFr(a[0]) + ")", no: x.no });
+      });
+      if (x.type === "Billet" && x.emis) { var fv = cbFinValidite(x.emis, CB.validite), jv = Math.round((fv - auj) / 86400000); if (jv >= 0 && jv <= 30 && (!x.au || x.au > auj)) A.push({ niv: 2, t: "🎫 Billet de " + x.personnel + " : validité jusqu'au " + jourFr(fv), no: x.no }); }
+    });
+    return A.sort(function (a, b) { return a.niv - b.niv; });
+  }
+  function vueCongesRH(C, R) {
+    var CB = R.cb || { liste: [], soldes: {} }, dg = R.role === "DG", an = CBV.an, deb = new Date(an, 0, 1).getTime(), fin = new Date(an + 1, 0, 1).getTime(), duree = fin - deb, auj = misAuj();
+    var pers = R.personnel.filter(function (p) { return p.actif; }).map(function (p) { return p.nom; }).sort();
+    if (CBV.fiche) { ficheCB(C, R, CB.liste.filter(function (x) { return x.no === CBV.fiche; })[0]); return; }
+    if (CBV.form) { formCB(C, R, pers); return; }
+    function pct(t) { return Math.max(0, Math.min(100, (t - deb) / duree * 100)); }
+    var A = cbAlertes(R);
+    var h = "<div class='carte pleine'><div class='ligne' style='flex-wrap:wrap;gap:6px'><button class='bouton' id='cbC' style='width:auto;flex:0 0 auto;margin:0'>➕ Congé</button>" +
+      "<button class='bouton' id='cbB' style='width:auto;flex:0 0 auto;margin:0'>✈️ Billet d'avion</button><button class='bouton second' id='cbD' style='width:auto;flex:0 0 auto;margin:0'>⚙️ Droits (début du cycle)</button></div>" +
+      "<div class='info'>Droit : 30 jours / 12 mois (2,5 j par mois), fractionnable · billet aller-retour valable " + (CB.validite || 11) + " mois · saisie RH / Walid, validation DG.</div></div>";
+    if (A.length) h += "<div class='carte pleine' style='border-color:var(--cuivre)'><h3>⚠️ À surveiller (" + A.length + ")</h3>" + A.map(function (a) {
+      return "<div data-cb='" + esc(a.no) + "' style='cursor:pointer;padding:6px 0;border-top:1px solid var(--bord);color:" + (a.niv === 2 ? "#c62828" : a.niv === 1 ? "#e65100" : "inherit") + "'>" + esc(a.t) + "</div>"; }).join("") + "</div>";
+    // Calendrier annuel : une ligne par personne.
+    var mois = ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"], MO = ["janv", "févr", "mars", "avr", "mai", "juin", "juil", "août", "sept", "oct", "nov", "déc"];
+    h += "<div class='carte pleine'><div class='ligne' style='justify-content:space-between;align-items:center'><button class='bouton second' id='cbP' style='width:auto;flex:0 0 auto;margin:0'>‹</button><b>📅 Calendrier " + an + "</b><button class='bouton second' id='cbS' style='width:auto;flex:0 0 auto;margin:0'>›</button></div>" +
+      "<div style='display:flex;margin:8px 0 2px 0'><div style='flex:0 0 110px'></div><div style='flex:1;display:grid;grid-template-columns:repeat(12,minmax(0,1fr))'>" + MO.map(function (m, i) { return "<div class='info' style='margin:0;text-align:center;font-size:11px;border-left:1px solid var(--bord)'>" + (window.innerWidth < 700 ? mois[i] : m) + "</div>"; }).join("") + "</div></div>" +
+      pers.map(function (p) {
+        var L = CB.liste.filter(function (x) { return x.personnel === p && ["Validé", "En attente DG"].indexOf(x.statut) >= 0 && (x.du < fin && (x.au || x.du) >= deb); }), s = CB.soldes[p] || {};
+        var barres = L.map(function (x) {
+          var att = x.statut !== "Validé";
+          if (x.type === "Congé") return "<div data-cb='" + esc(x.no) + "' title='" + esc("Congé " + jourFr(x.du) + " → " + jourFr(x.au) + " · " + x.jours + " j" + (att ? " (en attente)" : "")) + "' style='cursor:pointer;position:absolute;top:3px;bottom:3px;left:" + pct(x.du) + "%;width:" + Math.max(0.6, pct(x.au + 86400000) - pct(x.du)) + "%;border-radius:4px;background:" + (att ? "repeating-linear-gradient(45deg,#2e7d32,#2e7d32 4px,#81c784 4px,#81c784 8px)" : "#2e7d32") + "'></div>";
+          var o = "";
+          if (x.au) o += "<div style='position:absolute;top:9px;height:4px;left:" + pct(x.du) + "%;width:" + Math.max(0.3, pct(x.au) - pct(x.du)) + "%;background:rgba(21,101,192,.35)'></div>";
+          [[x.du, "✈️"], [x.au, "↩️"]].forEach(function (k) { if (k[0] && k[0] >= deb && k[0] < fin) o += "<div data-cb='" + esc(x.no) + "' title='" + esc((k[1] === "✈️" ? "Aller " : "Retour ") + jourFr(k[0]) + (att ? " (en attente)" : "")) + "' style='cursor:pointer;position:absolute;top:-1px;left:calc(" + pct(k[0]) + "% - 8px);font-size:14px'>" + k[1] + "</div>"; });
+          return o;
+        }).join("");
+        return "<div style='display:flex;align-items:center;border-top:1px solid var(--bord)'><div style='flex:0 0 110px;font-size:12px;padding:4px 4px 4px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'><b>" + esc(p) + "</b><br><span class='info' style='margin:0;font-size:11px;color:" + ((s.solde || 0) < 0 ? "#c62828" : "inherit") + "'>solde " + (s.debut ? (Math.round((s.solde || 0) * 10) / 10) + " j" : "cycle ?") + "</span></div>" +
+          "<div style='flex:1;position:relative;height:24px;background:repeating-linear-gradient(90deg,transparent 0,transparent calc(100%/12 - 1px),var(--bord) calc(100%/12 - 1px),var(--bord) calc(100%/12))'>" +
+          (auj >= deb && auj < fin ? "<div style='position:absolute;top:0;bottom:0;left:" + pct(auj) + "%;width:2px;background:var(--cuivre)'></div>" : "") + barres + "</div></div>";
+      }).join("") + "<div class='info'><span style='color:#2e7d32'>■</span> congé (hachuré : en attente) · ✈️ aller · ↩️ retour · ━ hors de l'atelier · <span style='color:var(--cuivre)'>|</span> aujourd'hui</div></div>";
+    // Soldes et liste
+    h += "<div class='carte pleine'><h3>Soldes et billets</h3><table style='width:100%;font-size:13px'><tr style='color:#888;text-align:left'><th>Agent</th><th>Cycle depuis</th><th style='text-align:right'>Acquis</th><th style='text-align:right'>Pris</th><th style='text-align:right'>Solde</th><th>Billet en cours</th></tr>" +
+      pers.map(function (p) {
+        var s = CB.soldes[p] || {}, b = CB.liste.filter(function (x) { return x.personnel === p && x.type === "Billet" && x.statut === "Validé" && (!x.au || x.au >= auj); }).sort(function (a, c) { return a.du - c.du; })[0];
+        return "<tr style='border-top:1px solid var(--bord)'><td>" + esc(p) + "</td><td>" + (s.debut ? jourFr(s.debut) : "<span class='info'>à renseigner</span>") + "</td><td style='text-align:right'>" + (Math.round((s.acquis || 0) * 10) / 10) + "</td><td style='text-align:right'>" + (s.pris || 0) +
+          "</td><td style='text-align:right;font-weight:700'>" + (Math.round((s.solde || 0) * 10) / 10) + " j</td><td>" + (b ? "<span data-cb='" + esc(b.no) + "' style='cursor:pointer'>✈️ " + jourFr(b.du) + " · ↩️ " + (b.au ? jourFr(b.au) : "ouvert") + "</span>" : "—") + "</td></tr>";
+      }).join("") + "</table></div>";
+    C.innerHTML = h;
+    $("cbC").onclick = function () { CBV.form = "Congé"; CBV.edit = null; afficherRH(); };
+    $("cbB").onclick = function () { CBV.form = "Billet"; CBV.edit = null; afficherRH(); };
+    $("cbD").onclick = function () { CBV.form = "Droit"; CBV.edit = null; afficherRH(); };
+    $("cbP").onclick = function () { CBV.an--; afficherRH(); }; $("cbS").onclick = function () { CBV.an++; afficherRH(); };
+    Array.prototype.forEach.call(C.querySelectorAll("[data-cb]"), function (el) { el.onclick = function () { CBV.fiche = el.getAttribute("data-cb"); afficherRH(); window.scrollTo(0, 0); }; });
+  }
+  function formCB(C, R, pers) {
+    var t = CBV.form, x = CBV.edit || {}, o = function (L, v) { return L.map(function (n) { return "<option" + (n === v ? " selected" : "") + ">" + esc(n) + "</option>"; }).join(""); };
+    var s = (R.cb && R.cb.soldes) || {};
+    var h = "<div class='carte pleine'><h3>" + (t === "Congé" ? "🏖️ " + (x.no ? "Modifier le congé " + x.no : "Nouveau congé") : t === "Billet" ? "✈️ " + (x.no ? "Modifier le billet " + x.no : "Nouveau billet d'avion (aller-retour)") : "⚙️ Droits aux congés") + "</h3>" +
+      "<label>Personnel</label><select id='cfP'>" + o(pers, x.personnel || pers[0]) + "</select><div id='cfS' class='info'></div>";
+    if (t === "Congé") h += "<div class='ligne'><div><label>Premier jour</label><input id='cfDu' type='date' value='" + cbIso(x.du) + "'></div><div><label>Dernier jour</label><input id='cfAu' type='date' value='" + cbIso(x.au) + "'></div></div><div id='cfJ' class='info'></div>";
+    else if (t === "Billet") h += "<div class='ligne'><div><label>Compagnie</label><input id='cfCo' value='" + esc(x.compagnie || "") + "'></div><div><label>N° du billet</label><input id='cfNb' value='" + esc(x.billet || "") + "'></div></div>" +
+      "<div class='ligne'><div><label>Émis le</label><input id='cfEm' type='date' value='" + cbIso(x.emis || Date.now()) + "'></div><div><label>Aller</label><input id='cfDu' type='date' value='" + cbIso(x.du) + "'></div><div><label>Retour</label><input id='cfAu' type='date' value='" + cbIso(x.au) + "'></div></div>" +
+      "<div class='ligne'><div><label>Prix</label><input id='cfPx' inputmode='decimal' value='" + esc(x.prix || "") + "'></div><div><label>Devise</label><select id='cfDv'>" + o(["GNF", "EURO", "USD", "TND"], x.devise || "GNF") + "</select></div></div><div id='cfV' class='info'></div>";
+    else h += "<div class='ligne'><div><label>Début du cycle (embauche ou dernier retour)</label><input id='cfDu' type='date'></div><div><label>Report de jours (facultatif)</label><input id='cfRe' inputmode='decimal'></div></div>";
+    h += "<label>Commentaire</label><input id='cfCm' value='" + esc(x.com || "") + "'><div class='ligne'><button class='bouton' id='cfOk'>✅ Enregistrer</button><button class='bouton second' id='cfX'>Annuler</button></div></div>";
+    C.innerHTML = h;
+    function v(id) { return $(id) ? $(id).value.trim() : ""; }
+    function maj() {
+      var p = v("cfP"), so = s[p] || {};
+      $("cfS").textContent = so.debut ? "Solde actuel : " + (Math.round(so.solde * 10) / 10) + " j (acquis " + (Math.round(so.acquis * 10) / 10) + ", pris " + so.pris + ", cycle depuis le " + jourFr(so.debut) + ")" : "Début du cycle non renseigné (⚙️ Droits).";
+      if ($("cfJ") && v("cfDu") && v("cfAu")) { var n = Math.round((new Date(v("cfAu")) - new Date(v("cfDu"))) / 86400000) + 1; $("cfJ").textContent = n > 0 ? n + " jour(s) calendaires" + (so.debut && n > so.solde ? " · ⚠️ dépasse le solde" : "") : "⛔ dates incohérentes"; }
+      if ($("cfV") && v("cfEm")) $("cfV").textContent = "Valide jusqu'au " + jourFr(cbFinValidite(new Date(v("cfEm")).getTime(), R.cb && R.cb.validite));
+    }
+    ["cfP", "cfDu", "cfAu", "cfEm"].forEach(function (id) { if ($(id)) $(id).onchange = maj; }); maj();
+    $("cfX").onclick = function () { CBV.form = ""; afficherRH(); };
+    $("cfOk").onclick = function () {
+      var d = { personnel: v("cfP"), du: v("cfDu"), au: v("cfAu"), commentaire: v("cfCm") };
+      if (x.no) d.no = x.no;
+      if (t === "Billet") { d.compagnie = v("cfCo"); d.billet = v("cfNb"); d.emis = v("cfEm"); d.prix = v("cfPx"); d.devise = v("cfDv"); }
+      if (t === "Droit") { d.debut = v("cfDu"); d.report = v("cfRe"); }
+      CBV.form = "";
+      envoyerRH(t === "Congé" ? "cbConge" : t === "Billet" ? "cbBillet" : "cbDroit", d, (t === "Droit" ? "Droits " : t + " ") + d.personnel);
+    };
+  }
+  function ficheCB(C, R, x) {
+    if (!x) { CBV.fiche = ""; afficherRH(); return; }
+    var dg = R.role === "DG", auj = misAuj(), fv = x.type === "Billet" && x.emis ? cbFinValidite(x.emis, R.cb.validite) : 0;
+    function l(a, b) { return b ? "<tr><td>" + a + "</td><td class='v' style='white-space:normal'>" + b + "</td></tr>" : ""; }
+    var h = "<div class='carte pleine'><div class='ligne' style='justify-content:space-between'><h3>" + (x.type === "Congé" ? "🏖️ " : "✈️ ") + esc(x.no) + " · " + esc(x.personnel) + "</h3><button class='bouton second' id='cbF' style='width:auto;flex:0 0 auto'>✕</button></div>" +
+      "<div style='font-weight:700;color:" + (x.statut === "Validé" ? "#2e7d32" : x.statut === "En attente DG" ? "#e65100" : "#c62828") + "'>" + esc(x.statut) + "</div><table>" +
+      (x.type === "Congé" ? l("Du", jourFr(x.du)) + l("Au", jourFr(x.au)) + l("Jours", x.jours + " j calendaires")
+        : l("Compagnie", esc(x.compagnie)) + l("N° billet", esc(x.billet)) + l("Émis le", jourFr(x.emis)) + l("Aller", jourFr(x.du)) + l("Retour", x.au ? jourFr(x.au) : "ouvert") +
+          l("Validité", jourFr(fv) + (fv < auj ? " · ⛔ expiré" : "")) + l("Prix", x.prix ? gnf(x.prix) + " " + esc(x.devise) : "")) +
+      l("Commentaire", esc(x.com)) + l("Saisi", esc(x.par) + " · " + dateCourte(x.saisi)) + "</table>" +
+      "<div class='info'>" + x.historique.map(function (k) { return dateCourte(k.q) + " · " + esc(k.a) + " · " + esc(k.act) + (k.c ? " — " + esc(k.c) : ""); }).join("<br>") + "</div></div><div class='carte pleine' id='cbAct'></div>";
+    C.innerHTML = h;
+    var A = "";
+    if (x.statut === "En attente DG" && dg) A += "<h3>Décision</h3><input id='cbCm' placeholder='Motif (obligatoire pour refuser)'><div class='ligne'><button class='bouton' id='cbV' style='background:var(--vert)'>✅ Valider</button><button class='bouton alerte' id='cbR'>⛔ Refuser</button></div>";
+    if (x.type === "Billet" && x.statut === "Validé") A += "<h3>↩️ Modifier le retour</h3><div class='ligne'><div><label>Nouvelle date de retour</label><input id='cbNr' type='date' value='" + cbIso(x.au) + "' max='" + cbIso(fv) + "'></div><div style='flex:2'><label>Raison</label><input id='cbNc' placeholder='ex. travaux SGG en cours'></div></div><button class='bouton' id='cbNo'>↩️ Enregistrer le nouveau retour</button>" +
+      (R.finances ? "<button class='bouton second' id='cbPay'>💸 Demande Finances (paiement du billet)</button>" : "");
+    if (["En attente DG", "Validé"].indexOf(x.statut) >= 0) A += "<div class='ligne' style='margin-top:8px'><button class='bouton second' id='cbE'>✏️ Modifier</button>" + (x.statut !== "Validé" || dg ? "<button class='bouton second' id='cbA'>🗑️ Annuler</button>" : "") + "</div>";
+    $("cbAct").innerHTML = A || "<div class='info'>Aucune action.</div>";
+    $("cbF").onclick = function () { CBV.fiche = ""; afficherRH(); };
+    var fini = function () { CBV.fiche = x.no; };
+    if ($("cbV")) $("cbV").onclick = function () { envoyerRH("cbDecider", { no: x.no, version: x.version, decision: "valider", commentaire: $("cbCm").value }, "Validation " + x.no); };
+    if ($("cbR")) $("cbR").onclick = function () { if (!$("cbCm").value.trim()) { alert("⛔ Motif."); return; } envoyerRH("cbDecider", { no: x.no, version: x.version, decision: "refuser", commentaire: $("cbCm").value }, "Refus " + x.no); };
+    if ($("cbNo")) $("cbNo").onclick = function () { if (!$("cbNr").value) return; envoyerRH("cbRetour", { no: x.no, version: x.version, au: $("cbNr").value, commentaire: $("cbNc").value }, "Retour " + x.no); };
+    if ($("cbA")) $("cbA").onclick = function () { var m = prompt("Annuler " + x.no + " : motif ?"); if (m === null) return; CBV.fiche = ""; envoyerRH("cbAnnuler", { no: x.no, version: x.version, commentaire: m }, "Annulation " + x.no); };
+    if ($("cbE")) $("cbE").onclick = function () { CBV.fiche = ""; CBV.form = x.type; CBV.edit = x; afficherRH(); };
+    if ($("cbPay")) $("cbPay").onclick = function () {
+      if (!S.fin) { alert("⛔ Ouvrez d'abord Finances une fois."); return; }
+      formulaireFin({ type: "Dépense de caisse", categorie: "AUTRE", objet: "Billet d'avion " + (x.compagnie || "") + " — " + x.personnel + " (aller " + jourFr(x.du) + ") [" + x.no + "]", montant: x.prix, devise: x.devise });
+    };
+  }
+
   function afficherRH(id) {
     $("titre").textContent = "Ressources humaines";
     var R = S.rh;
@@ -1935,17 +2058,18 @@
     }
     if (id && /^RH-/.test(id)) { ouvrirEvRH(id); return; }
     if (id === "paie") RHV.onglet = "paie";
+    if (id === "cb") { RHV.onglet = "conges"; CBV.fiche = ""; CBV.form = ""; }
     var nEv = R.evenements.filter(function (e) { return e.statut === "En attente Walid"; }).length;
     var envoi = S.file.filter(function (x) { return x.type === "rh"; }).length;
     var h = "<div class='carte'><h3>👥 Ressources humaines</h3><div class='info'>" + esc(R.agent) + (R.direction ? " · direction (" + esc(R.role) + ")" : " · responsable RH") + " · données du " + dateCourte(R.recu || R.genere) + "</div>" +
       "<button class='bouton' id='rhEv'>➕ Événement : heures, absence, congé, prélèvement</button>" +
       (R.direction ? "<button class='bouton second' id='rhNouv'>👤 Nouvel agent</button>" : "") +
-      "<div class='onglets' style='margin-top:10px'>" + [["personnel", "Personnel"], ["evenements", "Événements" + (nEv ? " (" + nEv + ")" : "")], ["paie", "Paie du mois"], ["historique", "Historique"]]
+      "<div class='onglets' style='margin-top:10px'>" + [["personnel", "Personnel"], ["evenements", "Événements" + (nEv ? " (" + nEv + ")" : "")], ["conges", "🏖️ Congés & billets" + (function () { var n = R.cb ? cbAlertes(R).filter(function (a) { return a.niv <= 2; }).length : 0; return n ? " (" + n + ")" : ""; })()], ["paie", "Paie du mois"], ["historique", "Historique"]]
         .map(function (o) { return "<button data-o='" + o[0] + "' class='" + (RHV.onglet === o[0] ? "actif" : "") + "' style='border-radius:10px;border-bottom:1px solid var(--bord)'>" + o[1] + "</button>"; }).join("") + "</div></div>" +
       (envoi ? "<div class='carte att'>⏳ " + envoi + " opération(s) RH sur cet appareil, en attente d'envoi.</div>" : "") +
       "<div id='rhCorps'></div>";
     $("vueListe").innerHTML = h; montrer("vueListe");
-    Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-o]"), function (b) { b.onclick = function () { RHV.onglet = b.getAttribute("data-o"); afficherRH(); }; });
+    Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-o]"), function (b) { b.onclick = function () { RHV.onglet = b.getAttribute("data-o"); CBV.fiche = ""; CBV.form = ""; afficherRH(); }; });
     $("rhEv").onclick = function () { formulaireEvRH(""); };
     if ($("rhNouv")) $("rhNouv").onclick = formulaireNouvelRH;
     var C = $("rhCorps");
@@ -1969,7 +2093,8 @@
       var E = R.evenements.slice().sort(function (a, b) { return ((b.statut === "En attente Walid") - (a.statut === "En attente Walid")) || b.saisi - a.saisi; }).slice(0, 120);
       C.innerHTML = E.map(htmlEvRH).join("") || "<p class='info' style='padding:0 4px'>Aucun événement.</p>";
       Array.prototype.forEach.call(C.querySelectorAll("[data-ev]"), function (el) { el.onclick = function () { ouvrirEvRH(el.getAttribute("data-ev")); }; });
-    } else if (RHV.onglet === "paie") afficherPaieRH(C);
+    } else if (RHV.onglet === "conges") vueCongesRH(C, R);
+    else if (RHV.onglet === "paie") afficherPaieRH(C);
     else {
       C.innerHTML = "<div class='carte'><h3>Salaires de base, arrivées, départs</h3>" + (R.historique.slice().reverse().map(function (x) {
         return "<div class='info'>" + jourLib(x.date) + " · " + esc(x.agent) + " · <b>" + esc(x.action) + "</b> · " + esc(x.personnel) + " · " + esc(x.detail) + " · dès " + esc(cleLib(x.mois)) +
@@ -3895,6 +4020,9 @@
     });
     if (S.rh && S.rh.direction && droitRH()) S.rh.evenements.filter(function (e) { return e.statut === "En attente Walid"; }).forEach(function (e) {
       L.push({ rub: "👥", t: e.type + " · " + e.personnel, s: "Événement RH à valider · " + e.no, moi: true, et: "À valider", q: e.date || 0, ouvrir: function () { afficherRH(); if (typeof ouvrirEvRH === "function") ouvrirEvRH(e.no); } });
+    });
+    if (S.rh && droitRH() && S.rh.cb) cbAlertes(S.rh).filter(function (a) { return a.niv <= 2; }).forEach(function (a) {
+      L.push({ rub: "👥", t: a.t, s: a.no, moi: a.niv === 1 ? S.rh.role === "DG" : true, et: a.niv === 1 ? "Congés / billets à valider" : "Congés / voyages proches", q: 0, ouvrir: function () { afficherRH("cb"); CBV.fiche = a.no; afficherRH(); } });
     });
     if (S.stockv && droitStockVal()) S.stockv.sorties.filter(function (x) { return x.statut === "En attente"; }).forEach(function (x) {
       L.push({ rub: "📦", t: x.no + " · sortie de stock", s: x.resume + " · " + x.agent, moi: !!S.stockv.direction, et: "Sorties à valider", q: x.saisi, ouvrir: function () { afficherStockVal(x.no); } });
