@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-13 JO";
+  var VERSION_APP = "2026-11-13 JV";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -2589,7 +2589,63 @@
       "<div style='font-size:13px;font-weight:700;color:" + (ret ? "#c62828" : jour ? "#e65100" : "var(--texte2,#888)") + "'>" + (m.echeance ? (ret ? "⏰ En retard · " : jour ? "Aujourd'hui · " : "Échéance ") + jourLib(m.echeance) : "Sans échéance") +
       (m.prio === "Haute" ? " · haute priorité" : "") + (att ? " · ⏳ en attente d'envoi" : "") + "</div></div>";
   }
-  var MISV = { onglet: "moi", clos: false };
+  var MISV = { onglet: "moi", clos: false, mois: null, jour: null, vue: "30" };
+  // 📅 Calendrier des missions : échéances du mois (missions ouvertes) + prochaines occurrences des récurrentes (en clair).
+  function misRecSuiv(t, rec) {
+    var d = new Date(t);
+    if (rec === "Quotidienne") d.setDate(d.getDate() + 1); else if (rec === "Hebdomadaire") d.setDate(d.getDate() + 7);
+    else if (rec === "Mensuelle") d.setMonth(d.getMonth() + 1); else if (rec === "Trimestrielle") d.setMonth(d.getMonth() + 3);
+    else if (rec === "Tous les 4 mois") d.setMonth(d.getMonth() + 4); else if (rec === "Annuelle") d.setFullYear(d.getFullYear() + 1); else return 0;
+    return d.getTime();
+  }
+  function calendrierMis(M) {
+    var now = new Date(); if (!MISV.mois) MISV.mois = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    var d0 = new Date(MISV.mois), y = d0.getFullYear(), mo = d0.getMonth(), deb = d0.getTime(), fin = new Date(y, mo + 1, 1).getTime(), auj = misAuj();
+    var trente = MISV.vue === "30";
+    if (trente) { deb = auj; fin = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 30).getTime(); }
+    var MOIS = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"], J = {};
+    function k(t) { var x = new Date(t); return x.getFullYear() + "-" + x.getMonth() + "-" + x.getDate(); }
+    M.missions.filter(function (m) { return misOuv(m) && m.echeance && (M.direction || misPour(m, M.agent) || nomRH(m.par) === nomRH(M.agent)); }).forEach(function (m) {
+      var t = m.echeance, n = 0;
+      if (t >= deb && t < fin) (J[k(t)] = J[k(t)] || []).push({ m: m, prev: false });
+      if (!m.rec) return;
+      while ((t = misRecSuiv(t, m.rec)) && t < fin && n++ < 400) if (t >= deb) (J[k(t)] = J[k(t)] || []).push({ m: m, prev: true });
+    });
+    var j0 = new Date(deb), premier = (j0.getDay() + 6) % 7, nbj = trente ? 30 : new Date(y, mo + 1, 0).getDate(), cases = "";
+    var MC = ["janv", "févr", "mars", "avr", "mai", "juin", "juil", "août", "sept", "oct", "nov", "déc"];
+    for (var i = 0; i < premier; i++) cases += "<div></div>";
+    for (var jj = 0; jj < nbj; jj++) {
+      var dj = new Date(j0.getFullYear(), j0.getMonth(), j0.getDate() + jj), j = dj.getDate() + (trente && (jj === 0 || j === 1 || dj.getDate() === 1) ? " " + MC[dj.getMonth()] : "");
+      var t = dj.getTime(), L = J[k(t)] || [], ret = L.some(function (x) { return !x.prev && t < auj && x.m.statut !== "À clôturer"; }), sel = MISV.jour === t;
+      cases += "<div data-cj='" + t + "' style='cursor:pointer;min-height:54px;border-radius:8px;padding:3px;border:1px solid " + (sel ? "var(--cuivre)" : "var(--bord)") + ";background:" + (t === auj ? "rgba(200,120,60,.15)" : "var(--fond)") + "'>" +
+        "<div style='font-size:12px;font-weight:" + (t === auj ? 800 : 600) + "'>" + j + "</div>" +
+        L.slice(0, 3).map(function (x) { return "<div style='font-size:10px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-radius:4px;padding:0 3px;margin-top:2px;" +
+          (x.prev ? "border:1px dashed var(--bord);opacity:.7" : "background:" + (ret ? "#c62828" : x.m.prio === "Haute" ? "#e65100" : "#2e7d32") + ";color:#fff") + "'>" + esc(x.m.titre) + "</div>"; }).join("") +
+        (L.length > 3 ? "<div style='font-size:10px' class='info'>+" + (L.length - 3) + "</div>" : "") + "</div>";
+    }
+    var det = "";
+    if (MISV.jour === null && trente) MISV.jour = auj;
+    if (MISV.jour && MISV.jour >= deb && MISV.jour < fin) {
+      var LJ = J[k(MISV.jour)] || [];
+      det = "<div style='margin-top:8px'><b>" + jourFr(MISV.jour) + "</b>" + (LJ.map(function (x) {
+        return "<div data-mi='" + esc(x.m.id) + "' style='cursor:pointer;padding:6px 0;border-top:1px solid var(--bord)'>" + (x.prev ? "🔁 " : "🎯 ") + "<b>" + esc(x.m.titre) + "</b> <span class='info'>" +
+          (x.prev ? "occurrence prévue (" + esc(x.m.rec.toLowerCase()) + ")" : esc(x.m.statut) + " · " + esc(x.m.assignes.join(", "))) + "</span></div>"; }).join("") || "<div class='info'>Aucune échéance ce jour.</div>") + "</div>";
+    }
+    var nb30 = 0; Object.keys(J).forEach(function (x) { nb30 += J[x].length; });
+    return "<div class='carte pleine'><div class='ligne' style='justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px'>" +
+      (trente ? "<b style='flex:1'>📅 30 prochains jours <span class='info'>(" + jourFr(deb) + " → " + jourFr(fin - 86400000) + " · " + nb30 + " échéance(s))</span></b><button class='bouton second' id='caV' style='width:auto;flex:0 0 auto;margin:0'>🗓️ Vue mois</button>"
+        : "<button class='bouton second' id='caP' style='width:auto;flex:0 0 auto;margin:0'>‹</button><b style='flex:1;text-align:center'>📅 " + MOIS[mo] + " " + y + "</b>" +
+          "<button class='bouton second' id='caS' style='width:auto;flex:0 0 auto;margin:0'>›</button><button class='bouton second' id='caV' style='width:auto;flex:0 0 auto;margin:0'>📅 30 jours</button>") + "</div>" +
+      "<div style='display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;margin-top:8px'>" + ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"].map(function (x) { return "<div class='info' style='text-align:center;margin:0'>" + x + "</div>"; }).join("") + cases + "</div>" +
+      "<div class='info'><span style='color:#2e7d32'>■</span> à venir · <span style='color:#e65100'>■</span> priorité haute · <span style='color:#c62828'>■</span> en retard · ┆ occurrence récurrente prévue</div>" + det + "</div>";
+  }
+  function lierCalendrierMis() {
+    function mois(dm) { var d = new Date(MISV.mois); MISV.mois = new Date(d.getFullYear(), d.getMonth() + dm, 1).getTime(); MISV.jour = null; afficherMis(); }
+    if ($("caP")) $("caP").onclick = function () { mois(-1); };
+    if ($("caS")) $("caS").onclick = function () { mois(1); };
+    if ($("caV")) $("caV").onclick = function () { var n = new Date(); MISV.vue = MISV.vue === "30" ? "mois" : "30"; MISV.mois = new Date(n.getFullYear(), n.getMonth(), 1).getTime(); MISV.jour = null; afficherMis(); };
+    Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-cj]"), function (el) { el.onclick = function () { var t = +el.getAttribute("data-cj"); MISV.jour = MISV.jour === t ? null : t; afficherMis(); }; });
+  }
   function afficherMis(id) {
     $("titre").textContent = "Missions";
     var M = S.mis;
@@ -2605,8 +2661,9 @@
       "<button class='bouton' id='miNouv'>➕ Nouvelle mission</button><div class='onglets' style='margin-top:10px'>" +
       O.map(function (o) { return "<button data-o='" + o[0] + "' class='" + (MISV.onglet === o[0] ? "actif" : "") + "' style='border-radius:10px;border-bottom:1px solid var(--bord)'>" + o[1] + "</button>"; }).join("") + "</div>" +
       (MISV.onglet !== "equipe" ? "<label style='font-weight:400'><input type='checkbox' id='miClos' style='width:auto'" + (MISV.clos ? " checked" : "") + "> afficher les missions closes</label>" : "") + "</div>" +
-      (envoi ? "<div class='carte att'>⏳ " + envoi + " opération(s) en attente d'envoi.</div>" : "") + "<div id='miL'></div>";
-    $("vueListe").innerHTML = h; montrer("vueListe");
+      (envoi ? "<div class='carte att'>⏳ " + envoi + " opération(s) en attente d'envoi.</div>" : "") + calendrierMis(M) + "<div id='miL'></div>";
+    $("vueListe").innerHTML = h; montrer("vueListe"); lierCalendrierMis();
+    Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-cj] ~ * [data-mi], .carte.pleine [data-mi]"), function (el) { el.onclick = function () { ficheMis(el.getAttribute("data-mi")); }; });
     $("miNouv").onclick = function () { formulaireMis(null); };
     Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-o]"), function (b) { b.onclick = function () { MISV.onglet = b.getAttribute("data-o"); afficherMis(); }; });
     if ($("miClos")) $("miClos").onchange = function () { MISV.clos = this.checked; afficherMis(); };
