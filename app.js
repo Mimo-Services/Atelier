@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 JW";
+  var VERSION_APP = "2026-11-14 JY";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -1349,6 +1349,14 @@
   function envoyerFin(op, donnees, titre, retour) {
     var it = { type: "fin", op: op, jeton: nouveauJeton(), horodatage: Date.now(), agent: S.agent.nom, code: S.agent.code, donnees: donnees, titre: titre, resume: "Finances", essais: 0 };
     soumettre(it).then(function (r) {
+      if (r.ok && !r.enAttente && r.maj && r.maj.length && S.fin) {   // ⚡ demande à jour reçue : affichage immédiat
+        r.maj.forEach(function (z) { var i = -1; S.fin.demandes.forEach(function (x, k) { if (x.no === z.no) i = k; }); if (i >= 0) S.fin.demandes[i] = z; else S.fin.demandes.unshift(z); });
+        ecrire("fin", S.fin); majCloche();
+        alert("✅ " + r.titre + (r.message ? "\n" + r.message : ""));
+        if (r.no || retour) ouvrirDemandeFin(r.no || retour); else afficherFinances();
+        rafraichirFin().catch(function () {});   // complet en arrière-plan (factures, soldes…)
+        return;
+      }
       if (r.ok && !r.enAttente) return rafraichirFin().catch(function () {}).then(function () { alert("✅ " + r.titre + (r.message ? "\n" + r.message : "")); if (r.no || retour) ouvrirDemandeFin(r.no || retour); else afficherFinances(); });
       alert((r.enAttente ? "📥 " : "⛔ ") + (r.titre || "") + "\n" + (r.message || ""));
       if (retour && S.fin.demandes.some(function (x) { return x.no === retour; })) ouvrirDemandeFin(retour); else afficherFinances();
@@ -3381,7 +3389,37 @@
     });
   }
 
+  /* ⚡ Nouveautés des autres téléphones : chaque réponse du serveur porte les horloges de changement par rubrique ;
+     l'app vérifie aussi toutes les 30 s (écran visible). Rubrique changée → rechargée, cloche et écran de liste mis à jour. */
+  var VERS = { connu: null, verif: 0, cours: false };
+  var VERS_RAF = { fin: function () { return droitFin() ? rafraichirFin() : null; }, rh: function () { return droitRH() ? rafraichirRH() : null; },
+    mis: function () { return droitMis() ? rafraichirMis() : null; }, com: function () { return droitCom() ? rafraichirCom() : null; },
+    stockv: function () { return droitStockVal() ? rafraichirStockVal() : null; } };
+  var VERS_ECRANS = { fin: ["afficherFinances"], rh: ["afficherRH"], mis: ["afficherMis"], com: ["afficherCom"], stockv: ["afficherStockVal", "afficherMagasins"] };
+  function comparerVersions(v) {
+    if (!v || !S.agent) return;
+    if (!VERS.connu) { VERS.connu = v; return; }
+    var chg = Object.keys(VERS_RAF).filter(function (k) { return v[k] && v[k] > (VERS.connu[k] || 0); });
+    VERS.connu = v;
+    if (!chg.length) return;
+    var P = chg.map(function (k) { var x = VERS_RAF[k](); return x ? x.catch(function () {}) : null; });
+    Promise.all(P).then(function () {
+      majCloche();
+      if ($("vueAccueil").style.display !== "none") { majAccueil(); return; }
+      var e = NAV.pile[NAV.pile.length - 1], act = document.activeElement, saisie = act && /INPUT|TEXTAREA|SELECT/.test(act.tagName);
+      if (e && !saisie && chg.some(function (k) { return VERS_ECRANS[k].indexOf(e.n) >= 0; }) && !e.a.length) { NAV.retour = true; try { NAV_FN[e.n].apply(null, e.a); } finally { NAV.retour = false; } }
+    });
+  }
+  function verifierNouveautes() {
+    if (VERS.cours || !S.url || !S.agent || !navigator.onLine || document.visibilityState === "hidden" || Date.now() - VERS.verif < 25000) return;
+    VERS.cours = true; VERS.verif = Date.now();
+    requeteBrute(S.url, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, redirect: "follow",
+      body: JSON.stringify({ api: "versions", agent: S.agent.nom, code: S.agent.code }) }, 20000).then(function () {}, function () {}).then(function () { VERS.cours = false; });
+  }
+  setInterval(verifierNouveautes, 30000);
+  document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible") { VERS.verif = 0; verifierNouveautes(); } });
   function surReponseSecurite(r) {
+    if (r && r.versions) setTimeout(function () { comparerVersions(r.versions); }, 0);
     if (r && r.appRequise && plusAncienne(r.appRequise)) declencherMaj(r.appRequise);
     if (!r || !r.appareilRefus) return;
     SEC.refus = r.appareilRefus;
