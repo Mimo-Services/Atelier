@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 KE";
+  var VERSION_APP = "2026-11-14 KF";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -1949,7 +1949,7 @@
         if (!a[0]) return; var j = Math.round((cbJ(a[0]) - auj) / 86400000);
         if (j >= 0 && j <= 30) A.push({ niv: j <= 7 ? 2 : 3, t: a[1] + " — " + (j === 0 ? "aujourd'hui" : "dans " + j + " j") + " (" + jourFr(a[0]) + ")", no: x.no });
       });
-      if (x.type === "Billet" && x.emis) { var fv = cbFinValidite(x.emis, CB.validite), jv = Math.round((fv - auj) / 86400000); if (jv >= 0 && jv <= 30 && (!x.au || x.au > auj)) A.push({ niv: 2, t: "🎫 Billet de " + x.personnel + " : validité jusqu'au " + jourFr(fv), no: x.no }); }
+      if (x.type === "Billet" && (x.du || x.emis)) { var fv = cbFinValidite(x.du || x.emis, CB.validite), jv = Math.round((fv - auj) / 86400000); if (jv >= 0 && jv <= 30 && (!x.au || x.au > auj)) A.push({ niv: 2, t: "🎫 Billet de " + x.personnel + " : validité jusqu'au " + jourFr(fv), no: x.no }); }
     });
     return A.sort(function (a, b) { return a.niv - b.niv; });
   }
@@ -2034,7 +2034,8 @@
       var p = v("cfP"), so = s[p] || {};
       $("cfS").textContent = so.debut ? "Solde actuel : " + (Math.round(so.solde * 10) / 10) + " j (acquis " + (Math.round(so.acquis * 10) / 10) + ", pris " + so.pris + ", cycle depuis le " + jourFr(so.debut) + ")" : "Début du cycle non renseigné (⚙️ Droits).";
       if ($("cfJ") && v("cfDu") && v("cfAu")) { var n = Math.round((new Date(v("cfAu")) - new Date(v("cfDu"))) / 86400000) + 1; $("cfJ").textContent = n > 0 ? n + " jour(s) calendaires" + (so.debut && n > so.solde ? " · ⚠️ dépasse le solde" : "") : "⛔ dates incohérentes"; }
-      if ($("cfV") && v("cfEm")) $("cfV").textContent = "Valide jusqu'au " + jourFr(cbFinValidite(new Date(v("cfEm")).getTime(), R.cb && R.cb.validite));
+      if ($("cfV") && (v("cfDu") || v("cfEm"))) { var fvF = cbFinValidite(new Date(v("cfDu") || v("cfEm")).getTime(), R.cb && R.cb.validite);
+        $("cfV").textContent = "Valide jusqu'au " + jourFr(fvF) + " (" + ((R.cb && R.cb.validite) || 11) + " mois après le départ, indicatif)" + (v("cfAu") && new Date(v("cfAu")).getTime() > fvF ? " · ⚠️ retour après cette date : vérifiez sur le billet" : ""); }
     }
     ["cfP", "cfDu", "cfAu", "cfEm"].forEach(function (id) { if ($(id)) $(id).onchange = maj; }); maj();
     $("cfX").onclick = function () { CBV.form = ""; afficherRH(); };
@@ -2069,7 +2070,7 @@
   }
   function ficheCB(C, R, x) {
     if (!x) { CBV.fiche = ""; afficherRH(); return; }
-    var dg = R.role === "DG", auj = misAuj(), fv = x.type === "Billet" && x.emis ? cbFinValidite(x.emis, R.cb.validite) : 0;
+    var dg = R.role === "DG", auj = misAuj(), fv = x.type === "Billet" && (x.du || x.emis) ? cbFinValidite(x.du || x.emis, R.cb.validite) : 0;
     function l(a, b) { return b ? "<tr><td>" + a + "</td><td class='v' style='white-space:normal'>" + b + "</td></tr>" : ""; }
     var h = "<div class='carte pleine'><div class='ligne' style='justify-content:space-between'><h3>" + (x.type === "Congé" ? "🏖️ " : "✈️ ") + esc(x.no) + " · " + esc(x.personnel) + "</h3><button class='bouton second' id='cbF' style='width:auto;flex:0 0 auto'>✕</button></div>" +
       "<div style='font-weight:700;color:" + (x.statut === "Validé" ? "#2e7d32" : x.statut === "En attente DG" ? "#e65100" : "#c62828") + "'>" + esc(x.statut) + "</div><table>" +
@@ -2082,7 +2083,7 @@
     C.innerHTML = h;
     var A = "";
     if (x.statut === "En attente DG" && dg) A += "<h3>Décision</h3><input id='cbCm' placeholder='Motif (obligatoire pour refuser)'><div class='ligne'><button class='bouton' id='cbV' style='background:var(--vert)'>✅ Valider</button><button class='bouton alerte' id='cbR'>⛔ Refuser</button></div>";
-    if (x.type === "Billet" && x.statut === "Validé") A += "<h3>↩️ Modifier le retour</h3><div class='ligne'><div><label>Nouvelle date de retour</label><input id='cbNr' type='date' value='" + cbIso(x.au) + "' max='" + cbIso(fv) + "'></div><div style='flex:2'><label>Raison</label><input id='cbNc' placeholder='ex. travaux SGG en cours'></div></div>" + champFichiers("cbNf").replace("Photos / PDF", "🎫 Billet modifié (photo ou PDF) — obligatoire") + "<button class='bouton' id='cbNo'>↩️ Enregistrer le nouveau retour</button>" +
+    if (x.type === "Billet" && x.statut === "Validé") A += "<h3>↩️ Modifier le retour</h3><div class='ligne'><div><label>Nouvelle date de retour</label><input id='cbNr' type='date' value='" + cbIso(x.au) + "'></div><div style='flex:2'><label>Raison</label><input id='cbNc' placeholder='ex. travaux SGG en cours'></div></div>" + champFichiers("cbNf").replace("Photos / PDF", "🎫 Billet modifié (photo ou PDF) — obligatoire") + "<button class='bouton' id='cbNo'>↩️ Enregistrer le nouveau retour</button>" +
       (R.finances && (!(x.pay || []).length || x.dejaPaye) ? "<button class='bouton second' id='cbPay'>💸 Demande Finances (paiement du billet)</button>" : "");
     if (["En attente DG", "Validé"].indexOf(x.statut) >= 0) A += "<div class='ligne' style='margin-top:8px'><button class='bouton second' id='cbE'>✏️ Modifier</button>" + (x.statut !== "Validé" || dg ? "<button class='bouton second' id='cbA'>🗑️ Annuler</button>" : "") + "</div>";
     $("cbAct").innerHTML = A || "<div class='info'>Aucune action.</div>";
