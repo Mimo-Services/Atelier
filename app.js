@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 JY";
+  var VERSION_APP = "2026-11-14 KB";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -1140,7 +1140,7 @@
 
   // Pièce : image affichée, PDF ouvert ; gardée en mémoire le temps de la session.
   var PIECES = {};
-  function voirPiece(no, p, cible) {
+  function voirPiece(no, p, cible, apiNom) {
     var aff = function (o) {
       var url = URL.createObjectURL(o);
       if (p.type === "pdf") { window.open(url, "_blank"); return; }
@@ -1148,7 +1148,7 @@
     };
     if (PIECES[p.id]) { aff(PIECES[p.id]); return; }
     cible.innerHTML = "<div class='info'>⏳ Chargement…</div>";
-    api({ api: "finPiece", no: no, id: p.id }, 120000).then(function (r) {
+    api({ api: apiNom || "finPiece", no: no, id: p.id }, 120000).then(function (r) {
       var bin = atob(r.data), u = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
       PIECES[p.id] = new Blob([u], { type: r.mime || (p.type === "pdf" ? "application/pdf" : "image/jpeg") }); cible.innerHTML = ""; aff(PIECES[p.id]);
     }, function (e) { cible.innerHTML = "<div class='info'>⛔ " + esc(e.message) + " (réseau nécessaire pour voir les pièces)</div>"; });
@@ -1564,9 +1564,11 @@
       else $("ffDev").disabled = false;
       vis("ffFactB", false); vis("ffRefB", achat); vis("ffRefOB", avecF); vis("ffEchB", t === "Facture d'achat");
       // Modes de paiement selon le type.
-      var modes = t === "Règlement fournisseur" ? ["Espèces", "Chèque", "Virement"] : t === "Paiement RH" ? ["Espèces", "Virement"] : [];
+      var benExt = t === "Mouvement de trésorerie" && op === "Virement" && !$("ffCtp").value;   // virement / chèque remis à un bénéficiaire externe
+      var modes = t === "Règlement fournisseur" ? ["Espèces", "Chèque", "Virement"] : t === "Paiement RH" ? ["Espèces", "Virement"] : benExt ? ["Virement", "Chèque"] : [];
       vis("ffModeB", modes.length);
-      var curM = $("ffMode").value || modePrec || ""; $("ffMode").innerHTML = opts(modes, curM, "— choisir —"); modePrec = "";
+      var curM = $("ffMode").value || modePrec || ""; if (benExt && modes.indexOf(curM) < 0) curM = "Virement";
+      $("ffMode").innerHTML = opts(modes, curM, benExt ? "" : "— choisir —"); modePrec = "";
       var mode = v("ffMode");
       // Comptes possibles : source (débitée) → destination (créditée) ; devise = celle du compte.
       var CA = F.comptes.filter(function (c) { return c.type === "Caisse"; }), BA = F.comptes.filter(function (c) { return c.type === "Banque"; });
@@ -1681,7 +1683,7 @@
       if (t === "Opération constatée") regle = "aucune (constatée, inscrite directement)";
       else regle = t === "Facture d'achat" || (t === "Dépense de caisse" && gros) || (t === "Règlement fournisseur" && !((mode === "Espèces" || mode === "Chèque") && !gros)) ||
         (t === "Paiement RH" && !(mode === "Espèces" && !gros)) || (t === "Mouvement de trésorerie" && !((op === "Dépôt de chèque" || op === "Transfert entre caisses" || op === F.opRemb) && !gros)) ? "Walid puis DG" : "Walid";
-      var photo = achat ? (avecF ? "photo de la facture obligatoire" : "photo du reçu facultative") : t === "Facture d'achat" ? "photo de la facture obligatoire" : (t === "Règlement fournisseur" && mode === "Chèque") || (t === "Mouvement de trésorerie" && (op === "Dépôt de chèque" || op === "Retrait")) ? "photo du chèque obligatoire" : "pièces facultatives";
+      var photo = achat ? (avecF ? "photo de la facture obligatoire" : "photo du reçu facultative") : t === "Facture d'achat" ? "photo de la facture obligatoire" : (t === "Règlement fournisseur" && mode === "Chèque") || (t === "Mouvement de trésorerie" && (op === "Dépôt de chèque" || op === "Retrait" || (benExt && mode === "Chèque"))) ? "photo du chèque obligatoire" : "pièces facultatives";
       if (F.role === "DG") regle = "validée d'office (DG)" + (t === "Facture d'achat" || t === "Opération constatée" ? "" : " · exécution directe avec la preuve");
       else if (F.role === "Walid" && t !== "Opération constatée") regle = /DG/.test(regle) ? "Walid d'office, puis DG" : "validée d'office (Walid)";
       if ($("ffXB")) vis("ffXB", t !== "Facture d'achat" && t !== "Opération constatée");
@@ -1943,7 +1945,7 @@
     CB.liste.forEach(function (x) {
       if (x.statut === "En attente DG") A.push({ niv: 1, t: "⏳ " + x.type + " de " + x.personnel + " en attente de validation (DG)", no: x.no });
       if (x.statut !== "Validé") return;
-      [[x.du, x.type === "Congé" ? "🏖️ Congé de " + x.personnel + " (" + x.jours + " j)" : "✈️ Départ de " + x.personnel], [x.type === "Billet" ? x.au : 0, "↩️ Retour de " + x.personnel + " : à confirmer ou modifier"]].forEach(function (a) {
+      [[x.du, x.type === "Congé" ? "🏖️ Congé de " + x.personnel + " (" + x.jours + " j)" : "✈️ Départ de " + x.personnel + (x.allerVers ? " vers " + x.allerVers : "")], [x.type === "Billet" ? x.au : 0, "↩️ Retour de " + x.personnel + (x.retourVers ? " vers " + x.retourVers : "") + " : à confirmer ou modifier"]].forEach(function (a) {
         if (!a[0]) return; var j = Math.round((cbJ(a[0]) - auj) / 86400000);
         if (j >= 0 && j <= 30) A.push({ niv: j <= 7 ? 2 : 3, t: a[1] + " — " + (j === 0 ? "aujourd'hui" : "dans " + j + " j") + " (" + jourFr(a[0]) + ")", no: x.no });
       });
@@ -1974,7 +1976,7 @@
           if (x.type === "Congé") return "<div data-cb='" + esc(x.no) + "' title='" + esc("Congé " + jourFr(x.du) + " → " + jourFr(x.au) + " · " + x.jours + " j" + (att ? " (en attente)" : "")) + "' style='cursor:pointer;position:absolute;top:3px;bottom:3px;left:" + pct(x.du) + "%;width:" + Math.max(0.6, pct(x.au + 86400000) - pct(x.du)) + "%;border-radius:4px;background:" + (att ? "repeating-linear-gradient(45deg,#2e7d32,#2e7d32 4px,#81c784 4px,#81c784 8px)" : "#2e7d32") + "'></div>";
           var o = "";
           if (x.au) o += "<div style='position:absolute;top:9px;height:4px;left:" + pct(x.du) + "%;width:" + Math.max(0.3, pct(x.au) - pct(x.du)) + "%;background:rgba(21,101,192,.35)'></div>";
-          [[x.du, "✈️"], [x.au, "↩️"]].forEach(function (k) { if (k[0] && k[0] >= deb && k[0] < fin) o += "<div data-cb='" + esc(x.no) + "' title='" + esc((k[1] === "✈️" ? "Aller " : "Retour ") + jourFr(k[0]) + (att ? " (en attente)" : "")) + "' style='cursor:pointer;position:absolute;top:-1px;left:calc(" + pct(k[0]) + "% - 8px);font-size:14px'>" + k[1] + "</div>"; });
+          [[x.du, "✈️"], [x.au, "↩️"]].forEach(function (k) { if (k[0] && k[0] >= deb && k[0] < fin) o += "<div data-cb='" + esc(x.no) + "' title='" + esc((k[1] === "✈️" ? "Aller" + (x.allerVers ? " vers " + x.allerVers : "") + " " : "Retour" + (x.retourVers ? " vers " + x.retourVers : "") + " ") + jourFr(k[0]) + (att ? " (en attente)" : "")) + "' style='cursor:pointer;position:absolute;top:-1px;left:calc(" + pct(k[0]) + "% - 8px);font-size:14px'>" + k[1] + "</div>"; });
           return o;
         }).join("");
         return "<div style='display:flex;align-items:center;border-top:1px solid var(--bord)'><div style='flex:0 0 110px;font-size:12px;padding:4px 4px 4px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'><b>" + esc(p) + "</b><br><span class='info' style='margin:0;font-size:11px;color:" + ((s.solde || 0) < 0 ? "#c62828" : "inherit") + "'>solde " + (s.debut ? (Math.round((s.solde || 0) * 10) / 10) + " j" : "cycle ?") + "</span></div>" +
@@ -1986,7 +1988,7 @@
       pers.map(function (p) {
         var s = CB.soldes[p] || {}, b = CB.liste.filter(function (x) { return x.personnel === p && x.type === "Billet" && x.statut === "Validé" && (!x.au || x.au >= auj); }).sort(function (a, c) { return a.du - c.du; })[0];
         return "<tr style='border-top:1px solid var(--bord)'><td>" + esc(p) + "</td><td>" + (s.debut ? jourFr(s.debut) : "<span class='info'>à renseigner</span>") + "</td><td style='text-align:right'>" + (Math.round((s.acquis || 0) * 10) / 10) + "</td><td style='text-align:right'>" + (s.pris || 0) +
-          "</td><td style='text-align:right;font-weight:700'>" + (Math.round((s.solde || 0) * 10) / 10) + " j</td><td>" + (b ? "<span data-cb='" + esc(b.no) + "' style='cursor:pointer'>✈️ " + jourFr(b.du) + " · ↩️ " + (b.au ? jourFr(b.au) : "ouvert") + "</span>" : "—") + "</td></tr>";
+          "</td><td style='text-align:right;font-weight:700'>" + (Math.round((s.solde || 0) * 10) / 10) + " j</td><td>" + (b ? "<span data-cb='" + esc(b.no) + "' style='cursor:pointer'>✈️ " + (b.allerVers ? esc(b.allerVers) + " " : "") + jourFr(b.du) + " · ↩️ " + (b.au ? jourFr(b.au) : "ouvert") + "</span>" : "—") + "</td></tr>";
       }).join("") + "</table></div>";
     C.innerHTML = h;
     $("cbC").onclick = function () { CBV.form = "Congé"; CBV.edit = null; afficherRH(); };
@@ -2001,13 +2003,31 @@
     var h = "<div class='carte pleine'><h3>" + (t === "Congé" ? "🏖️ " + (x.no ? "Modifier le congé " + x.no : "Nouveau congé") : t === "Billet" ? "✈️ " + (x.no ? "Modifier le billet " + x.no : "Nouveau billet d'avion (aller-retour)") : "⚙️ Droits aux congés") + "</h3>" +
       "<label>Personnel</label><select id='cfP'>" + o(pers, x.personnel || pers[0]) + "</select><div id='cfS' class='info'></div>";
     if (t === "Congé") h += "<div class='ligne'><div><label>Premier jour</label><input id='cfDu' type='date' value='" + cbIso(x.du) + "'></div><div><label>Dernier jour</label><input id='cfAu' type='date' value='" + cbIso(x.au) + "'></div></div><div id='cfJ' class='info'></div>";
-    else if (t === "Billet") h += "<div class='ligne'><div><label>Compagnie</label><input id='cfCo' value='" + esc(x.compagnie || "") + "'></div><div><label>N° du billet</label><input id='cfNb' value='" + esc(x.billet || "") + "'></div></div>" +
-      "<div class='ligne'><div><label>Émis le</label><input id='cfEm' type='date' value='" + cbIso(x.emis || Date.now()) + "'></div><div><label>Aller</label><input id='cfDu' type='date' value='" + cbIso(x.du) + "'></div><div><label>Retour</label><input id='cfAu' type='date' value='" + cbIso(x.au) + "'></div></div>" +
-      "<div class='ligne'><div><label>Prix</label><input id='cfPx' inputmode='decimal' value='" + esc(x.prix || "") + "'></div><div><label>Devise</label><select id='cfDv'>" + o(["GNF", "EURO", "USD", "TND"], x.devise || "GNF") + "</select></div></div><div id='cfV' class='info'></div>";
+    else if (t === "Billet") {
+      var VL = (R.cb && R.cb.villes) || ["Tunis", "Conakry"], av0 = x.allerVers || "Tunis", rv0 = x.retourVers || (/^conakry$/i.test(av0) ? "Tunis" : "Conakry");
+      var vOpts = function (v) { return VL.map(function (n) { return "<option" + (n.toLowerCase() === String(v).toLowerCase() ? " selected" : "") + ">" + esc(n) + "</option>"; }).join("") + "<option value='__autre'>Autre…</option>"; };
+      h += "<div class='ligne'><div><label>Compagnie</label><input id='cfCo' value='" + esc(x.compagnie || "") + "'></div><div><label>N° du billet</label><input id='cfNb' value='" + esc(x.billet || "") + "'></div><div><label>Émis le</label><input id='cfEm' type='date' value='" + cbIso(x.emis || Date.now()) + "'></div></div>" +
+        "<div class='ligne'><div><label>✈️ Aller vers</label><select id='cfAv'>" + vOpts(av0) + "</select><input id='cfAvA' placeholder='Ville' style='display:none;margin-top:6px'></div><div><label>Date de départ</label><input id='cfDu' type='date' value='" + cbIso(x.du) + "'></div></div>" +
+        "<div class='ligne'><div><label>↩️ Retour vers</label><select id='cfRv'>" + vOpts(rv0) + "</select><input id='cfRvA' placeholder='Ville' style='display:none;margin-top:6px'></div><div><label>Date de retour <small>(vide = ouvert)</small></label><input id='cfAu' type='date' value='" + cbIso(x.au) + "'></div></div>" +
+        "<div id='cfV' class='info'></div>" + champFichiers("cfPj").replace("Photos / PDF", "🎫 Billet (photo ou PDF) — obligatoire") + ((x.pieces || []).length ? "<div class='info'>Déjà joint : " + x.pieces.length + " pièce(s).</div>" : "") +
+        (x.no ? "" : "<div class='info'>💸 Après l'enregistrement, la demande Finances › Paiement RH (prise en charge) s'ouvre pour saisir le prix et le paiement.</div>");
+    }
     else h += "<div class='ligne'><div><label>Début du cycle (embauche ou dernier retour)</label><input id='cfDu' type='date'></div><div><label>Report de jours (facultatif)</label><input id='cfRe' inputmode='decimal'></div></div>";
     h += "<label>Commentaire</label><input id='cfCm' value='" + esc(x.com || "") + "'><div class='ligne'><button class='bouton' id='cfOk'>✅ Enregistrer</button><button class='bouton second' id='cfX'>Annuler</button></div></div>";
     C.innerHTML = h;
+    if ($("cfPjPh")) lierFichiers("cfPj");
     function v(id) { return $(id) ? $(id).value.trim() : ""; }
+    function vu(id, ok) { if ($(id)) $(id).style.display = ok ? "" : "none"; }
+    function ville(id) { return v(id) === "__autre" ? v(id + "A") : v(id); }
+    // Retour = inverse de l'aller : vers Conakry → ville d'origine (modifiable, Tunis par défaut) ; ailleurs → Conakry (imposé).
+    function majVilles() {
+      var ak = /^conakry$/i.test(ville("cfAv"));
+      if (!ak) $("cfRv").value = "Conakry";
+      else if (/^conakry$/i.test(v("cfRv"))) $("cfRv").value = "Tunis";
+      $("cfRv").disabled = !ak;
+      vu("cfAvA", v("cfAv") === "__autre"); vu("cfRvA", ak && v("cfRv") === "__autre");
+    }
+    if ($("cfAv")) { $("cfAv").onchange = majVilles; $("cfRv").onchange = majVilles; $("cfAvA").oninput = majVilles; majVilles(); }
     function maj() {
       var p = v("cfP"), so = s[p] || {};
       $("cfS").textContent = so.debut ? "Solde actuel : " + (Math.round(so.solde * 10) / 10) + " j (acquis " + (Math.round(so.acquis * 10) / 10) + ", pris " + so.pris + ", cycle depuis le " + jourFr(so.debut) + ")" : "Début du cycle non renseigné (⚙️ Droits).";
@@ -2019,11 +2039,31 @@
     $("cfOk").onclick = function () {
       var d = { personnel: v("cfP"), du: v("cfDu"), au: v("cfAu"), commentaire: v("cfCm") };
       if (x.no) d.no = x.no;
-      if (t === "Billet") { d.compagnie = v("cfCo"); d.billet = v("cfNb"); d.emis = v("cfEm"); d.prix = v("cfPx"); d.devise = v("cfDv"); }
+      if (t === "Billet") {
+        d.compagnie = v("cfCo"); d.billet = v("cfNb"); d.emis = v("cfEm"); d.allerVers = ville("cfAv"); d.retourVers = ville("cfRv"); d.fichiers = FICH.cfPj || [];
+        if (!d.allerVers) { alert("⛔ Indiquez la ville de l'aller."); return; }
+        if (!d.du) { alert("⛔ Indiquez la date de départ."); return; }
+        if (!d.fichiers.length && !(x.pieces || []).length) { alert("⛔ Joignez le billet (photo ou PDF)."); return; }
+      }
       if (t === "Droit") { d.debut = v("cfDu"); d.report = v("cfRe"); }
       CBV.form = "";
-      envoyerRH(t === "Congé" ? "cbConge" : t === "Billet" ? "cbBillet" : "cbDroit", d, (t === "Droit" ? "Droits " : t + " ") + d.personnel);
+      envoyerRH(t === "Congé" ? "cbConge" : t === "Billet" ? "cbBillet" : "cbDroit", d, (t === "Droit" ? "Droits " : t + " ") + d.personnel,
+        t === "Billet" && !x.no ? function (r) { if (r.ok && r.no) payerBillet({ no: r.no, personnel: d.personnel, compagnie: d.compagnie, billet: d.billet, du: cbDate(d.du), allerVers: d.allerVers }); else afficherRH(); } : null);
     };
+  }
+  function cbDate(s) { var m = String(s || "").match(/^(\d{4})-(\d{2})-(\d{2})$/); return m ? new Date(+m[1], +m[2] - 1, +m[3]).getTime() : 0; }
+  // 💸 Billet → Finances › Paiement RH, motif prise en charge non médicale ; « [CB-…] » dans l'objet relie le paiement au billet.
+  function payerBillet(x) {
+    var ouvrir = function () {
+      formulaireFin({ type: "Paiement RH", personnel: x.personnel, motifRH: "PRISE EN CHARGE NON MEDICALE (RH)",
+        objet: "Billet d'avion" + (x.compagnie ? " " + x.compagnie : "") + (x.billet ? " n° " + x.billet : "") + " — " + x.personnel + (x.allerVers ? " vers " + x.allerVers : "") + (x.du ? " (départ " + jourFr(x.du) + ")" : "") + " [" + x.no + "]" });
+    };
+    if (S.fin) { ouvrir(); return; }
+    rafraichirFin().then(function () { if (S.fin) ouvrir(); else afficherRH(); }, function () { alert("⛔ Finances indisponible (réseau) : le paiement se fera depuis la fiche du billet."); afficherRH(); });
+  }
+  function cbPayLib(x) {
+    var P = x.pay || []; if (!P.length) return "<span style='color:#c62828'>non payé</span>";
+    return P.map(function (p) { return "💸 " + esc(p.no) + " · " + esc(p.statut) + (p.montant ? " · " + gnf(p.montant) + " " + esc(p.devise) : ""); }).join("<br>");
   }
   function ficheCB(C, R, x) {
     if (!x) { CBV.fiche = ""; afficherRH(); return; }
@@ -2032,27 +2072,30 @@
     var h = "<div class='carte pleine'><div class='ligne' style='justify-content:space-between'><h3>" + (x.type === "Congé" ? "🏖️ " : "✈️ ") + esc(x.no) + " · " + esc(x.personnel) + "</h3><button class='bouton second' id='cbF' style='width:auto;flex:0 0 auto'>✕</button></div>" +
       "<div style='font-weight:700;color:" + (x.statut === "Validé" ? "#2e7d32" : x.statut === "En attente DG" ? "#e65100" : "#c62828") + "'>" + esc(x.statut) + "</div><table>" +
       (x.type === "Congé" ? l("Du", jourFr(x.du)) + l("Au", jourFr(x.au)) + l("Jours", x.jours + " j calendaires")
-        : l("Compagnie", esc(x.compagnie)) + l("N° billet", esc(x.billet)) + l("Émis le", jourFr(x.emis)) + l("Aller", jourFr(x.du)) + l("Retour", x.au ? jourFr(x.au) : "ouvert") +
-          l("Validité", jourFr(fv) + (fv < auj ? " · ⛔ expiré" : "")) + l("Prix", x.prix ? gnf(x.prix) + " " + esc(x.devise) : "")) +
+        : l("Compagnie", esc(x.compagnie)) + l("N° billet", esc(x.billet)) + l("Émis le", jourFr(x.emis)) + l("✈️ Aller", (x.allerVers ? esc(x.allerVers) + " · " : "") + jourFr(x.du)) + l("↩️ Retour", (x.retourVers ? esc(x.retourVers) + " · " : "") + (x.au ? jourFr(x.au) : "ouvert")) +
+          l("Validité", jourFr(fv) + (fv < auj ? " · ⛔ expiré" : "")) + l("Prix", x.prix ? gnf(x.prix) + " " + esc(x.devise) : "") + l("Paiement", cbPayLib(x))) +
       l("Commentaire", esc(x.com)) + l("Saisi", esc(x.par) + " · " + dateCourte(x.saisi)) + "</table>" +
-      "<div class='info'>" + x.historique.map(function (k) { return dateCourte(k.q) + " · " + esc(k.a) + " · " + esc(k.act) + (k.c ? " — " + esc(k.c) : ""); }).join("<br>") + "</div></div><div class='carte pleine' id='cbAct'></div>";
+      "<div class='info'>" + x.historique.map(function (k) { return dateCourte(k.q) + " · " + esc(k.a) + " · " + esc(k.act) + (k.c ? " — " + esc(k.c) : ""); }).join("<br>") + "</div></div>" +
+      ((x.pieces || []).length ? htmlPieces(x, x.pieces, "🎫 Billet", "b") : "") + "<div class='carte pleine' id='cbAct'></div>";
     C.innerHTML = h;
     var A = "";
     if (x.statut === "En attente DG" && dg) A += "<h3>Décision</h3><input id='cbCm' placeholder='Motif (obligatoire pour refuser)'><div class='ligne'><button class='bouton' id='cbV' style='background:var(--vert)'>✅ Valider</button><button class='bouton alerte' id='cbR'>⛔ Refuser</button></div>";
-    if (x.type === "Billet" && x.statut === "Validé") A += "<h3>↩️ Modifier le retour</h3><div class='ligne'><div><label>Nouvelle date de retour</label><input id='cbNr' type='date' value='" + cbIso(x.au) + "' max='" + cbIso(fv) + "'></div><div style='flex:2'><label>Raison</label><input id='cbNc' placeholder='ex. travaux SGG en cours'></div></div><button class='bouton' id='cbNo'>↩️ Enregistrer le nouveau retour</button>" +
-      (R.finances ? "<button class='bouton second' id='cbPay'>💸 Demande Finances (paiement du billet)</button>" : "");
+    if (x.type === "Billet" && x.statut === "Validé") A += "<h3>↩️ Modifier le retour</h3><div class='ligne'><div><label>Nouvelle date de retour</label><input id='cbNr' type='date' value='" + cbIso(x.au) + "' max='" + cbIso(fv) + "'></div><div style='flex:2'><label>Raison</label><input id='cbNc' placeholder='ex. travaux SGG en cours'></div></div>" + champFichiers("cbNf").replace("Photos / PDF", "🎫 Billet modifié (photo ou PDF) — obligatoire") + "<button class='bouton' id='cbNo'>↩️ Enregistrer le nouveau retour</button>" +
+      (R.finances && !(x.pay || []).length ? "<button class='bouton second' id='cbPay'>💸 Demande Finances (paiement du billet)</button>" : "");
     if (["En attente DG", "Validé"].indexOf(x.statut) >= 0) A += "<div class='ligne' style='margin-top:8px'><button class='bouton second' id='cbE'>✏️ Modifier</button>" + (x.statut !== "Validé" || dg ? "<button class='bouton second' id='cbA'>🗑️ Annuler</button>" : "") + "</div>";
     $("cbAct").innerHTML = A || "<div class='info'>Aucune action.</div>";
     $("cbF").onclick = function () { CBV.fiche = ""; afficherRH(); };
     var fini = function () { CBV.fiche = x.no; };
     if ($("cbV")) $("cbV").onclick = function () { envoyerRH("cbDecider", { no: x.no, version: x.version, decision: "valider", commentaire: $("cbCm").value }, "Validation " + x.no); };
     if ($("cbR")) $("cbR").onclick = function () { if (!$("cbCm").value.trim()) { alert("⛔ Motif."); return; } envoyerRH("cbDecider", { no: x.no, version: x.version, decision: "refuser", commentaire: $("cbCm").value }, "Refus " + x.no); };
-    if ($("cbNo")) $("cbNo").onclick = function () { if (!$("cbNr").value) return; envoyerRH("cbRetour", { no: x.no, version: x.version, au: $("cbNr").value, commentaire: $("cbNc").value }, "Retour " + x.no); };
+    if ($("cbNfPh")) lierFichiers("cbNf");
+    Array.prototype.forEach.call(C.querySelectorAll("[data-p^='b']"), function (b) { b.onclick = function () { voirPiece(x.no, x.pieces[+b.getAttribute("data-p").substring(1)], $("pvb"), "cbPiece"); }; });
+    if ($("cbNo")) $("cbNo").onclick = function () { if (!$("cbNr").value) return; if (!(FICH.cbNf || []).length) { alert("⛔ Joignez le billet modifié (photo ou PDF)."); return; }
+      envoyerRH("cbRetour", { no: x.no, version: x.version, au: $("cbNr").value, commentaire: $("cbNc").value, fichiers: FICH.cbNf }, "Retour " + x.no); };
     if ($("cbA")) $("cbA").onclick = function () { var m = prompt("Annuler " + x.no + " : motif ?"); if (m === null) return; CBV.fiche = ""; envoyerRH("cbAnnuler", { no: x.no, version: x.version, commentaire: m }, "Annulation " + x.no); };
     if ($("cbE")) $("cbE").onclick = function () { CBV.fiche = ""; CBV.form = x.type; CBV.edit = x; afficherRH(); };
     if ($("cbPay")) $("cbPay").onclick = function () {
-      if (!S.fin) { alert("⛔ Ouvrez d'abord Finances une fois."); return; }
-      formulaireFin({ type: "Dépense de caisse", categorie: "AUTRE", objet: "Billet d'avion " + (x.compagnie || "") + " — " + x.personnel + " (aller " + jourFr(x.du) + ") [" + x.no + "]", montant: x.prix, devise: x.devise });
+      payerBillet(x);
     };
   }
 
@@ -3802,7 +3845,7 @@
               var rp = o.mv[0] && o.mv[0].report && o.mv[0].du > 0, Lc = D.evs.filter(function (e) { return rp ? e.clos : !e.clos; }).sort(function (a, b) { return a.date - b.date; });   // report à payer → dernier événement clôturé
               return ((Lc.length ? Lc : D.evs)[(Lc.length ? Lc : D.evs).length - 1] || {}).id; })()) + "</select></div>" +
             "<div><label>Montant</label><input id='pyMt' inputmode='decimal' value='" + (o.du && o.solde > 0 ? Math.round(o.solde) : "") + "'></div></div>" +
-            "<div class='ligne'><div><label>Payé par</label><select id='pyMo'>" + repOpts(["Banque (virement / chèque)", "Caisse (espèces)"], "Banque (virement / chèque)") + "</select></div><div><label>Société</label><select id='pySo'>" + repOpts(["AB", "M2S"], "AB") + "</select></div></div>" +
+            "<div class='ligne'><div><label>Payé par</label><select id='pyMo'>" + repOpts(["Banque (virement)", "Chèque remis au bénéficiaire", "Caisse (espèces)"], "Banque (virement)") + "</select></div><div><label>Société</label><select id='pySo'>" + repOpts(["AB", "M2S"], "AB") + "</select></div></div>" +
             "<button class='bouton' id='pyOk'>💸 Préparer la demande Finances</button><div class='info'>La demande s'ouvre pré-remplie (type, catégorie Commission, montant, événement) ; elle suit la validation habituelle. Une fois exécutée, le versement est rattaché tout seul à l'événement.</div></div>" +
             "<table style='width:100%;font-size:13px'><tr style='color:#888;text-align:left'><th>Date</th><th>Mouvement</th><th style='text-align:right'>Dû</th><th style='text-align:right'>Versé</th><th style='text-align:right'>Solde</th></tr>" +
             o.mv.map(function (m) {
@@ -3821,11 +3864,11 @@
     }
     function payer() {
       var o = REPV.pay && REPV.pay.benef; if (!o) return;
-      var ev = $("pyEv").value, mt = parseFloat(String($("pyMt").value).replace(/\s/g, "").replace(",", ".")), banque = /Banque/.test($("pyMo").value);
+      var ev = $("pyEv").value, mt = parseFloat(String($("pyMt").value).replace(/\s/g, "").replace(",", ".")), banque = /Banque|Chèque/.test($("pyMo").value), cheque = /Chèque/.test($("pyMo").value);
       if (!(mt > 0)) { alert("⛔ Indiquez le montant."); return; }
       if (!S.fin) { alert("⛔ Ouvrez d'abord Finances une fois (données Finances absentes)."); return; }
       var ty = o.type || "Démarchage externe", objet = "Commission " + (ty === "Commission interne" ? "interne" : ty === "Démarchage externe" ? "démarchage" : ty === "Commission directe (Trésor)" ? "directe Trésor" : "attribution") + " — " + o.nom + " [" + (ev || "Hors contrat") + "|" + ty + "]";
-      formulaireFin(banque ? { type: "Mouvement de trésorerie", op: "Virement", societe: $("pySo").value, categorie: "Commission", objet: objet, montant: mt, beneficiaire: o.nom }
+      formulaireFin(banque ? { type: "Mouvement de trésorerie", op: "Virement", mode: cheque ? "Chèque" : "Virement", societe: $("pySo").value, categorie: "Commission", objet: objet, montant: mt, beneficiaire: o.nom }
                            : { type: "Dépense de caisse", societe: $("pySo").value, categorie: "Commission", objet: objet, montant: mt });
     }
     // ⚖️ Balances
