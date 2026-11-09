@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 KF";
+  var VERSION_APP = "2026-11-14 KG";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -2447,13 +2447,14 @@
     else if (id && K.contrats.some(function (c) { return c.id === id; })) { ficheContratCom(id); return; }
     var nR = comRetards().length, envoi = S.file.filter(function (x) { return x.type === "com"; }).length;
     var h = "<div class='carte'><h3>🤝 Commercial</h3><div class='info'>" + esc(K.agent) + (K.ecriture ? "" : " · lecture seule") + " · données du " + dateCourte(K.recu || K.genere) + "</div>" +
-      (K.ecriture ? "<div class='ligne'><button class='bouton' id='cmBL'>📦 BL</button><button class='bouton' id='cmFa'>🧾 Facture</button></div>" +
+      (K.ecriture ? "<div class='ligne'><button class='bouton' id='cmDv'>📝 Devis</button><button class='bouton' id='cmBL'>📦 BL</button><button class='bouton' id='cmFa'>🧾 Facture</button></div>" +
         "<div class='ligne'><button class='bouton second' id='cmEnc'>💵 Encaissement</button><button class='bouton second' id='cmCt'>📄 Contrat</button><button class='bouton second' id='cmBdc'>🛒 BDC</button></div>" : "") +
-      "<div class='onglets' style='margin-top:10px'>" + [["contrats", "Contrats"], ["factures", "Factures" + (nR ? " (⏰ " + nR + ")" : "")], ["clients", "Clients"], ["production", "BDC & production"]]
+      "<div class='onglets' style='margin-top:10px'>" + [["contrats", "Contrats"], ["devis", "Devis"], ["factures", "Factures" + (nR ? " (⏰ " + nR + ")" : "")], ["clients", "Clients"], ["production", "BDC & production"]]
         .map(function (o) { return "<button data-o='" + o[0] + "' class='" + (COMV.onglet === o[0] ? "actif" : "") + "' style='border-radius:10px;border-bottom:1px solid var(--bord)'>" + o[1] + "</button>"; }).join("") + "</div></div>" +
       (envoi ? "<div class='carte att'>⏳ " + envoi + " opération(s) commerciale(s) en attente d'envoi.</div>" : "") + "<div id='cmCorps'></div>";
     $("vueListe").innerHTML = h; montrer("vueListe");
     Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-o]"), function (b) { b.onclick = function () { COMV.onglet = b.getAttribute("data-o"); afficherCom(); }; });
+    if ($("cmDv")) $("cmDv").onclick = formulaireDevisCom;
     if ($("cmBL")) { $("cmBL").onclick = function () { formulaireDocCom("bl"); }; $("cmFa").onclick = function () { formulaireDocCom("facture"); };
       $("cmEnc").onclick = function () { formulaireEncCom(""); }; $("cmCt").onclick = formulaireContratCom; $("cmBdc").onclick = function () { formulaireBdcCom(""); }; }
     var C = $("cmCorps");
@@ -2482,6 +2483,15 @@
         (L.map(htmlFacture).join("") || "<p class='info' style='padding:0 4px'>Rien ici.</p>");
       Array.prototype.forEach.call(C.querySelectorAll("[data-fl]"), function (b) { b.onclick = function () { COMV.filtre = b.getAttribute("data-fl"); afficherCom(); }; });
       Array.prototype.forEach.call(C.querySelectorAll("[data-fa]"), function (el) { el.onclick = function () { ficheFactureCom(el.getAttribute("data-fa")); }; });
+    } else if (COMV.onglet === "devis") {
+      var DV = (K.devis || []).slice().sort(function (a, b) { return b.date - a.date; });
+      C.innerHTML = DV.map(function (x) {
+        var exp = x.validite && x.validite < Date.now();
+        return "<div class='carte' data-dv='" + esc(x.id) + "' style='cursor:pointer'><div class='ligne' style='justify-content:space-between'><b>📝 " + esc(x.id) + "</b><b style='flex:0;white-space:nowrap'>" + gnf(x.net) + " " + esc(x.devise) + "</b></div>" +
+          "<div class='info'>" + esc(x.client) + (x.objet ? " · " + esc(x.objet) : "") + " · " + esc(x.societe) + " · " + esc(x.regime) + "</div>" +
+          "<div class='info'>du " + jourLib(x.date) + " · " + (exp ? "<span style='color:#c62828'>expiré le " + jourLib(x.validite) + "</span>" : "valable jusqu'au " + jourLib(x.validite)) + " · " + esc(x.par) + " · 📄 PDF</div></div>";
+      }).join("") || "<p class='info' style='padding:0 4px'>Aucun devis.</p>";
+      Array.prototype.forEach.call(C.querySelectorAll("[data-dv]"), function (el) { el.onclick = function () { ouvrirPdfCom(el.getAttribute("data-dv")); }; });
     } else if (COMV.onglet === "clients") {
       C.innerHTML = K.clients.map(function (cl) {
         var Ct = K.contrats.filter(function (c) { return c.client === cl.nom; }), F = K.factures.filter(function (f) { return f.client === cl.nom; });
@@ -2566,7 +2576,7 @@
     var h = "<div class='carte'><h3>" + esc(cl.nom) + " <small class='info'>" + esc(cl.code) + "</small></h3><table><tr><td>Facturé</td><td class='v'>" + gnf(fa) + "</td></tr><tr><td>Encaissé</td><td class='v'>" + gnf(en) + "</td></tr>" +
       "<tr><td>Dû</td><td class='v'><b>" + gnf(fa - en) + "</b></td></tr></table>" +
       "<label>Régime des factures</label><select id='clReg'" + (K.ecriture ? "" : " disabled") + ">" + K.regimes.map(function (r) { return "<option" + (r === cl.regime ? " selected" : "") + ">" + r + "</option>"; }).join("") + "</select>" +
-      "<div class='info'>Administration : prix TTC, précompte 50 % de la TVA, ARMP 0,6 %. Privé : HT + TVA 18 % = TTC.</div></div>" +
+      "<div class='info'>" + INFO_REG + "</div></div>" +
       "<div class='carte'><h3>Contrats</h3>" + Ct.map(function (c) { return "<div class='info' data-ct='" + esc(c.id) + "' style='cursor:pointer'><b>" + esc(c.designation) + "</b> · " + esc(c.id) + " · " + esc(c.statut) + "</div>"; }).join("") + "</div>" +
       F.map(htmlFacture).join("");
     $("vueListe").innerHTML = h; montrer("vueListe");
@@ -2575,13 +2585,25 @@
     Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-fa]"), function (el) { el.onclick = function () { ficheFactureCom(el.getAttribute("data-fa")); }; });
   }
 
+  var INFO_REG = "Prix saisis en HT. Administration : facture en TTC, − précompte 50 % de la TVA − ARMP 0,6 % (aucun HT affiché). Privé : HT + TVA 18 % = TTC. Exonéré (BCRG, Défense, statut spécial…) : HT seul, « Exonéré de TVA ».";
+  // Montants d'un document selon le régime (même calcul que le serveur) ; pu = prix unitaire HT.
+  function calcRegime(L, reg, s) {
+    var t = (s.tva == null ? 18 : s.tva) / 100, pr = (s.precompte == null ? 50 : s.precompte) / 100, ar = (s.armp == null ? 0.6 : s.armp) / 100, ht = 0;
+    L.forEach(function (l) { if (l.qte > 0) ht += l.qte * (l.pu || 0); });
+    if (reg === "Exonéré") return { ht: ht, tva: 0, ttc: ht, precompte: 0, armp: 0, net: ht };
+    var tva = ht * t, ttc = ht + tva;
+    if (reg === "Privé") return { ht: ht, tva: tva, ttc: ttc, precompte: 0, armp: 0, net: ttc };
+    var p = tva * pr, a = ht * ar; return { ht: ht, tva: tva, ttc: ttc, precompte: p, armp: a, net: ttc - p - a };
+  }
+  function coefRegime(reg, s) { var c = calcRegime([{ qte: 1, pu: 1 }], reg, s || {}); return c.net; }
   function optsCom(L, v, vide, val, lib) { return (vide ? "<option value=''>" + vide + "</option>" : "") + L.map(function (x) { var k = val ? val(x) : x; return "<option value='" + esc(k) + "'" + (k === v ? " selected" : "") + ">" + esc(lib ? lib(x) : x) + "</option>"; }).join(""); }
   function nbCom(x) { x = String(x || "").replace(/[\s  ]/g, "").replace(",", "."); return parseFloat(x) || 0; }
   function blocPrix(p) {
     return "<label>Prix</label><select id='" + p + "PU'><option value='non'>Montant global</option><option value='oui'>Prix unitaire unique × quantité</option></select>" +
-      "<div id='" + p + "MtB'><label>Montant net à payer</label><input id='" + p + "Mt' inputmode='decimal'></div>" +
-      "<div id='" + p + "PuB' class='ligne' style='display:none'><div><label>Net unitaire</label><input id='" + p + "Pu' inputmode='decimal'></div><div><label>Quantité globale</label><input id='" + p + "Q' inputmode='decimal'></div></div>" +
-      "<label>Devise</label><select id='" + p + "Dev'><option>GNF</option><option>EURO</option><option>USD</option><option>TND</option></select>";
+      "<div id='" + p + "MtB'><label>Montant HT</label><input id='" + p + "Mt' inputmode='decimal'></div>" +
+      "<div id='" + p + "PuB' class='ligne' style='display:none'><div><label>Prix unitaire HT</label><input id='" + p + "Pu' inputmode='decimal'></div><div><label>Quantité globale</label><input id='" + p + "Q' inputmode='decimal'></div></div>" +
+      "<label>Devise</label><select id='" + p + "Dev'><option>GNF</option><option>EURO</option><option>USD</option><option>TND</option></select>" +
+      "<div class='info'>Saisie en HT : Base reçoit le net à payer calculé selon le régime du client (Administration × 1,084 · Privé × 1,18 · Exonéré × 1).</div>";
   }
   function lierPrix(p) { $(p + "PU").onchange = function () { var u = this.value === "oui"; $(p + "MtB").style.display = u ? "none" : ""; $(p + "PuB").style.display = u ? "" : "none"; }; }
   function lirePrix(p) {
@@ -2612,7 +2634,7 @@
         d.prixUnique ? (!(d.pu > 0) || !(d.qte > 0) ? "prix unitaire et quantité" : "") : !(d.montant > 0) ? "montant" : "";
       if (err) { $("ncM").textContent = "⛔ Indiquez : " + err + "."; return; }
       var mt = d.prixUnique ? d.pu * d.qte : d.montant;
-      if (!confirm("Nouveau contrat : " + (d.client || d.nomClient) + " · " + (d.projet || d.nomProjet) + " · " + gnf(mt) + " " + d.devise + " ?")) return;
+      if (!confirm("Nouveau contrat : " + (d.client || d.nomClient) + " · " + (d.projet || d.nomProjet) + " · " + gnf(mt) + " " + d.devise + " HT ?")) return;
       envoyerCom("contrat", d, "Contrat " + (d.client || d.nomClient));
     };
   }
@@ -2627,7 +2649,7 @@
       var d = lirePrix("nb"); d.contrat = $("nbC").value; d.date = $("nbD").value;
       var err = !d.contrat ? "contrat" : d.prixUnique ? (!(d.pu > 0) || !(d.qte > 0) ? "prix unitaire et quantité" : "") : !(d.montant > 0) ? "montant" : "";
       if (err) { $("nbM").textContent = "⛔ Indiquez : " + err + "."; return; }
-      if (!confirm("Nouveau BDC sur " + d.contrat + " · " + gnf(d.prixUnique ? d.pu * d.qte : d.montant) + " " + d.devise + " ?")) return;
+      if (!confirm("Nouveau BDC sur " + d.contrat + " · " + gnf(d.prixUnique ? d.pu * d.qte : d.montant) + " " + d.devise + " HT ?")) return;
       envoyerCom("bdc", d, "BDC " + d.contrat, function () { ficheContratCom(d.contrat); });
     };
   }
@@ -2638,6 +2660,7 @@
     $("vueListe").innerHTML = "<div class='carte'><h3>" + (fact ? "🧾 Nouvelle facture" : "📦 Nouveau bon de livraison") + "</h3>" +
       "<label>Contrat</label><select id='dcC'>" + optsCom(CT, idC || "", "— choisir —", function (c) { return c.id; }, function (c) { return c.designation + " · " + c.id; }) + "</select>" +
       "<div id='dcBB'><label>Bon de commande</label><select id='dcB'></select></div><div class='info' id='dcI'></div>" +
+      (fact ? "<label>Régime de la facture</label><select id='dcRg'>" + optsCom(K.regimes || ["Administration", "Privé", "Exonéré"], "Administration") + "</select><div class='info' id='dcRgI'></div>" : "") +
       "<div id='dcL'></div><button class='bouton second' id='dcAj'>➕ Ligne libre</button>" +
       "<div class='ligne'><div><label>Date</label><input id='dcD' type='date' value='" + dateISO(Date.now()) + "'></div>" + (fact ? "<div><label>Échéance de paiement</label><select id='dcEd'>" + ["Délai habituel", "Aucune", "15 jours", "1 mois", "2 mois", "3 mois", "6 mois", "Date"].map(function (x) { return "<option>" + x + "</option>"; }).join("") + "</select></div><div id='dcEB' style='display:none'><label>Date d'échéance</label><input id='dcE' type='date'></div>" : "") + "</div>" +
       "<label>" + (fact ? "Référence (BL, bon d'engagement… facultatif)" : "Livré à (lieu, réceptionnaire)") + "</label><input id='dcR'>" +
@@ -2651,7 +2674,7 @@
         return "<div style='border-top:1px solid var(--bord);padding:6px 0" + (l.qte > 0 ? "" : ";opacity:.75") + "'><div class='ligne'><input class='dcN' data-i='" + i + "' value='" + esc(l.designation) + "' style='padding:6px;flex:1' placeholder='Désignation'>" +
           "<button class='bouton second' data-x='" + i + "' style='padding:4px 8px;width:auto;flex:0'>✕</button></div>" + (l.info ? "<div class='info' style='font-size:11px'>" + esc((l.abr ? l.abr + " · " : "") + l.info) + "</div>" : "") +
           "<div class='ligne'><div><small>Quantité</small><input class='dcQ' data-i='" + i + "' inputmode='decimal' value='" + (l.qte || "") + "' style='padding:6px'></div>" +
-          "<div><small>Net unitaire</small><input class='dcP' data-i='" + i + "' inputmode='decimal' value='" + (l.pu || "") + "' style='padding:6px'></div></div></div>";
+          "<div><small>Prix unitaire HT</small><input class='dcP' data-i='" + i + "' inputmode='decimal' value='" + (l.pu || "") + "' style='padding:6px'></div></div></div>";
       }).join("") : "<div class='info'>Aucune ligne : choisissez le BDC ou ajoutez une ligne libre.</div>";
       if ($("dcRes")) $("dcRes").onclick = function () { lignes.forEach(function (l) { if (l.cmd !== undefined) l.qte = Math.max(0, l.cmd - (l.fac || 0)); }); dessinerLignes(); };
       Array.prototype.forEach.call(document.querySelectorAll(".dcN,.dcQ,.dcP"), function (inp) {
@@ -2660,13 +2683,15 @@
       Array.prototype.forEach.call(document.querySelectorAll("[data-x]"), function (b) { b.onclick = function () { lignes.splice(+b.getAttribute("data-x"), 1); dessinerLignes(); }; });
       totaux();
     }
+    function regDoc() { var c = contrat(); return $("dcRg") ? $("dcRg").value : (c ? c.regime : "Administration"); }
     function totaux() {
-      var c = contrat(), s = soc(), reg = c ? c.regime : "Administration", t = s.tva / 100, net = 0, q = 0;
-      lignes.forEach(function (l) { if (l.qte > 0) { net += l.qte * (l.pu || 0); q += l.qte; } });
-      var h = "<b>" + lignes.filter(function (l) { return l.qte > 0; }).length + " ligne(s) · " + gnf(q) + " unités</b><br>Net à payer : <b>" + gnf(net) + " " + esc(c ? c.devise : "GNF") + "</b>";
-      if (fact && net) {
-        if (reg === "Privé") h += "<br><small>Privé : HT " + gnf(net / (1 + t)) + " + TVA " + s.tva + " % = TTC " + gnf(net) + "</small>";
-        else { var k = 1 + t - t * s.precompte / 100 - s.armp / 100, ht = net / k; h += "<br><small>Administration : HT " + gnf(ht) + " · TTC " + gnf(ht * (1 + t)) + " − précompte " + gnf(ht * t * s.precompte / 100) + " − ARMP " + gnf(ht * s.armp / 100) + "</small>"; }
+      var c = contrat(), s = soc(), reg = regDoc(), q = 0, dv = esc(c ? c.devise : "GNF");
+      lignes.forEach(function (l) { if (l.qte > 0) q += l.qte; });
+      var k = calcRegime(lignes, reg, s);
+      var h = "<b>" + lignes.filter(function (l) { return l.qte > 0; }).length + " ligne(s) · " + gnf(q) + " unités</b>";
+      if (k.ht) {
+        h += "<br>" + (reg === "Administration" ? "TTC " + gnf(k.ttc) + " − précompte " + gnf(k.precompte) + " − ARMP " + gnf(k.armp) : reg === "Privé" ? "HT " + gnf(k.ht) + " + TVA " + gnf(k.tva) + " = TTC " + gnf(k.ttc) : "HT " + gnf(k.ht) + " · exonéré de TVA") +
+          "<br>Net à payer : <b>" + gnf(k.net) + " " + dv + "</b> <small>(" + esc(reg) + ")</small>";
       }
       $("dcT").innerHTML = h;
     }
@@ -2686,20 +2711,81 @@
       if (fact && $("dcE")) { var d0 = new Date($("dcD").value + "T00:00:00").getTime() || Date.now(); $("dcE").value = dateISO(d0 + soc().delai * 86400000); }
       chargerBdc();
     }
-    $("dcC").onchange = majContrat; $("dcB").onchange = chargerBdc;
+    $("dcC").onchange = function () { var c = contrat(); if ($("dcRg") && c) $("dcRg").value = c.regime || "Administration"; majRg(); majContrat(); }; $("dcB").onchange = chargerBdc;
+    function majRg() { if (!$("dcRg")) return; var c = contrat(); $("dcRgI").textContent = c && $("dcRg").value !== c.regime ? "⚠️ Différent du régime du client (" + c.regime + ") : pour cette facture seulement." : ""; totaux(); }
+    if ($("dcRg")) $("dcRg").onchange = majRg;
     $("dcAj").onclick = function () { lignes.push({ designation: "", qte: 0, pu: 0 }); dessinerLignes(); };
+    if ($("dcRg") && contrat()) $("dcRg").value = contrat().regime || "Administration";
     majContrat();
     $("dcEnv").onclick = function () {
       var c = contrat(), L = lignes.filter(function (l) { return String(l.designation).trim() && l.qte > 0; });
       if (!c) { $("dcM").textContent = "⛔ Choisissez le contrat."; return; }
       if (!L.length) { $("dcM").textContent = "⛔ Au moins une ligne avec une quantité."; return; }
       if (fact && L.some(function (l) { return !(l.pu > 0); })) { $("dcM").textContent = "⛔ Prix unitaire manquant sur une ligne."; return; }
-      var net = L.reduce(function (t, l) { return t + l.qte * (l.pu || 0); }, 0);
-      if (!confirm((fact ? "Émettre la facture" : "Émettre le BL") + " · " + c.client + " · " + L.length + " ligne(s)" + (net ? " · net " + gnf(net) + " " + c.devise : "") + " ?\nLe n° est attribué par le serveur (réseau nécessaire pour le PDF).")) return;
+      var net = calcRegime(L, regDoc(), soc()).net;
+      if (!confirm((fact ? "Émettre la facture" : "Émettre le BL") + " · " + c.client + " · " + L.length + " ligne(s)" + (net ? " · net à payer " + gnf(net) + " " + c.devise + (fact ? " (" + regDoc() + ")" : "") : "") + " ?\nLe n° est attribué par le serveur (réseau nécessaire pour le PDF).")) return;
       var d = { contrat: c.id, bdc: $("dcB").value, lignes: L.map(function (l) { return { designation: String(l.designation).trim(), abr: l.abr || "", qte: l.qte, pu: l.pu || 0 }; }),
-        date: $("dcD").value, echeance: fact && $("dcEd").value === "Date" ? $("dcE").value : "", duree: fact && $("dcEd").value !== "Délai habituel" ? $("dcEd").value : "", reference: $("dcR").value.trim(), devise: c.devise || "GNF" };
+        date: $("dcD").value, echeance: fact && $("dcEd").value === "Date" ? $("dcE").value : "", duree: fact && $("dcEd").value !== "Délai habituel" ? $("dcEd").value : "", reference: $("dcR").value.trim(), devise: c.devise || "GNF", regime: fact ? regDoc() : "" };
       envoyerCom(type, d, (fact ? "Facture " : "BL ") + c.client, function (r) {
         if (r && r.ok && r.id && r.pdf) { ficheContratCom(c.id); if (confirm("Ouvrir le PDF " + r.id + " ?")) ouvrirPdfCom(r.id); } else ficheContratCom(c.id);
+      });
+    };
+  }
+  /* 📝 Devis simple : client (liste ou libre), objet, société, régime, lignes libres (PU HT), validité ; PDF ; rien dans Base. */
+  function formulaireDevisCom() {
+    var K = S.com, cls = K.clients.map(function (c) { return c.nom; });
+    $("titre").textContent = "Nouveau devis";
+    $("vueListe").innerHTML = "<div class='carte'><h3>📝 Nouveau devis</h3>" +
+      "<label>Client</label><select id='dvCl'>" + optsCom(cls, "", "— choisir —") + "<option value='+'>✏️ Autre client (saisie libre)</option></select><input id='dvClL' placeholder='Nom du client' style='display:none;margin-top:6px'>" +
+      "<label>Objet</label><input id='dvObj' placeholder='ex. Impression de 5 000 carnets…'>" +
+      "<div class='ligne'><div><label>Société</label><select id='dvSo'>" + optsCom(Object.keys(K.societes || { AB: 1, M2S: 1 }), "AB") + "</select></div><div><label>Régime</label><select id='dvRg'>" + optsCom(K.regimes || ["Administration", "Privé", "Exonéré"], "Administration") + "</select></div>" +
+      "<div><label>Devise</label><select id='dvDev'><option>GNF</option><option>EURO</option><option>USD</option><option>TND</option></select></div></div>" +
+      "<div class='info'>" + INFO_REG + "</div><div id='dvL'></div><button class='bouton second' id='dvAj'>➕ Ligne</button>" +
+      "<div class='ligne'><div><label>Date</label><input id='dvD' type='date' value='" + dateISO(Date.now()) + "'></div><div><label>Validité (jours)</label><input id='dvV' inputmode='numeric' value='30'></div></div>" +
+      "<label>Référence (facultatif)</label><input id='dvR'><div class='carte' id='dvT' style='margin-top:10px'></div>" +
+      "<button class='bouton' id='dvEnv'>📤 Émettre le devis (PDF)</button><div class='info' id='dvM' style='white-space:pre-line'></div></div>";
+    montrer("vueListe");
+    var lignes = [{ designation: "", qte: 0, pu: 0 }];
+    function soc() { return (K.societes || {})[$("dvSo").value] || { tva: 18, precompte: 50, armp: 0.6 }; }
+    function client() { return $("dvCl").value === "+" ? $("dvClL").value.trim() : $("dvCl").value; }
+    function totaux() {
+      var reg = $("dvRg").value, k = calcRegime(lignes, reg, soc()), dv = esc($("dvDev").value);
+      $("dvT").innerHTML = k.ht ? (reg === "Administration" ? "TTC " + gnf(k.ttc) + " − précompte " + gnf(k.precompte) + " − ARMP " + gnf(k.armp) : reg === "Privé" ? "HT " + gnf(k.ht) + " + TVA " + gnf(k.tva) + " = TTC " + gnf(k.ttc) : "HT " + gnf(k.ht) + " · exonéré de TVA") +
+        "<br>Net à payer : <b>" + gnf(k.net) + " " + dv + "</b>" : "<span class='info'>Saisissez les lignes.</span>";
+    }
+    function dessiner() {
+      $("dvL").innerHTML = lignes.map(function (l, i) {
+        return "<div style='border-top:1px solid var(--bord);padding:6px 0'><div class='ligne'><input class='dvN' data-i='" + i + "' value='" + esc(l.designation) + "' style='padding:6px;flex:1' placeholder='Désignation'>" +
+          "<button class='bouton second' data-x='" + i + "' style='padding:4px 8px;width:auto;flex:0'>✕</button></div>" +
+          "<div class='ligne'><div><small>Quantité</small><input class='dvQ' data-i='" + i + "' inputmode='decimal' value='" + (l.qte || "") + "' style='padding:6px'></div>" +
+          "<div><small>Prix unitaire HT</small><input class='dvP' data-i='" + i + "' inputmode='decimal' value='" + (l.pu || "") + "' style='padding:6px'></div></div></div>";
+      }).join("");
+      Array.prototype.forEach.call(document.querySelectorAll(".dvN,.dvQ,.dvP"), function (inp) {
+        inp.oninput = function () { var l = lignes[+inp.getAttribute("data-i")]; if (inp.className === "dvN") l.designation = inp.value; else if (inp.className === "dvQ") l.qte = nbCom(inp.value); else l.pu = nbCom(inp.value); totaux(); };
+      });
+      Array.prototype.forEach.call(document.querySelectorAll("#dvL [data-x]"), function (b) { b.onclick = function () { lignes.splice(+b.getAttribute("data-x"), 1); dessiner(); }; });
+      totaux();
+    }
+    $("dvCl").onchange = function () {
+      $("dvClL").style.display = this.value === "+" ? "" : "none";
+      var c = K.clients.filter(function (x) { return x.nom === $("dvCl").value; })[0]; if (c) $("dvRg").value = c.regime || "Administration";
+      totaux();
+    };
+    ["dvRg", "dvSo", "dvDev"].forEach(function (id) { $(id).onchange = totaux; });
+    $("dvAj").onclick = function () { lignes.push({ designation: "", qte: 0, pu: 0 }); dessiner(); };
+    dessiner();
+    $("dvEnv").onclick = function () {
+      var cl = client(), L = lignes.filter(function (l) { return String(l.designation).trim() && l.qte > 0; });
+      if (!cl) { $("dvM").textContent = "⛔ Indiquez le client."; return; }
+      if (!L.length) { $("dvM").textContent = "⛔ Au moins une ligne avec une quantité."; return; }
+      if (L.some(function (l) { return !(l.pu > 0); })) { $("dvM").textContent = "⛔ Prix unitaire HT manquant sur une ligne."; return; }
+      var reg = $("dvRg").value, net = calcRegime(L, reg, soc()).net;
+      if (!confirm("Émettre le devis · " + cl + " · " + L.length + " ligne(s) · net à payer " + gnf(net) + " " + $("dvDev").value + " (" + reg + ") ?\nLe n° est attribué par le serveur (réseau nécessaire pour le PDF).")) return;
+      var d = { client: cl, objet: $("dvObj").value.trim(), societe: $("dvSo").value, regime: reg, devise: $("dvDev").value, date: $("dvD").value, validite: nbCom($("dvV").value) || 30, reference: $("dvR").value.trim(),
+        lignes: L.map(function (l) { return { designation: String(l.designation).trim(), qte: l.qte, pu: l.pu }; }) };
+      envoyerCom("devis", d, "Devis " + cl, function (r) {
+        COMV.onglet = "devis"; afficherCom();
+        if (r && r.ok && r.id && r.pdf && confirm("Ouvrir le PDF " + r.id + " ?")) ouvrirPdfCom(r.id);
       });
     };
   }
