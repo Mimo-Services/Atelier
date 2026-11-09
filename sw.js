@@ -1,6 +1,6 @@
 // Service worker : garde l'application sur le téléphone pour qu'elle s'ouvre sans réseau.
 // Changer VERSION à chaque mise à jour des fichiers de l'application.
-var VERSION = "duocore-2026-11-14-KL";
+var VERSION = "duocore-2026-11-14-KM";
 var FICHIERS = ["./", "index.html", "app.js", "config.js", "manifest.webmanifest",
   "icone-192.png", "icone-512.png", "notif-finances.png", "notif-rh.png", "notif-commercial.png", "notif-missions.png", "notif-stockval.png", "notif-maj.png", "notif-accueil.png", "notif-planif.png", "icone-maskable-512.png", "apple-touch-icon.png", "aide.js", "duocore-192.png", "duocore-512.png", "duocore-maskable-512.png"];
 var JSQR = "https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js";

@@ -1,5 +1,5 @@
-/* Manuel DuoCore : fiches d aide (❓). Images : aide/<img>.jpg */
-window.AIDE_IMG_V = "KL";
+/* Manuel DuoCore : fiches d’aide (❓). Images : aide/<img>.jpg */
+window.AIDE_IMG_V = "KM";
 window.AIDE_FICHES = [
  {
   "id": "base-aide",
@@ -2282,6 +2282,61 @@ window.AIDE_FICHES = [
   "voir": [
    "fin-mouvement",
    "fin-depense-caisse"
+  ]
+ },
+ {
+  "id": "rh-pr-reprise",
+  "rub": "rh",
+  "titre": "Saisir la situation de départ d’un prestataire (solde dû, caisse)",
+  "droits": [
+   "direction"
+  ],
+  "qui": "Qui : DG ou Walid.",
+  "mots": "reprise ouverture solde depart du impaye caisse avance prestataire ahmed situation",
+  "intro": "Pour reprendre ce qu’on doit déjà au prestataire avant DuoCore, et la caisse (argent de la société) qu’il détient.",
+  "etapes": [
+   "Touchez <b>👥 RH</b> puis l’onglet <b>🔧 Prestataires</b>.",
+   "Sur la carte du prestataire, touchez <b>✏️ Fiche</b>.",
+   "Dans <b>Situation de départ (reprise)</b>, indiquez le <b>Solde d’ouverture dû (TND)</b> et la date <b>Au</b>.",
+   "Indiquez la <b>Caisse en sa possession (TND)</b>.",
+   "Touchez <b>✅ Enregistrer</b>.",
+   "Pour régler ce solde : <b>💸 Payer le solde d’ouverture</b> (montant TND, devise, taux), puis la demande Finances habituelle."
+  ],
+  "notes": [
+   "💡 Le solde d’ouverture apparaît dans le relevé et dans les alertes « à payer » tant qu’il n’est pas réglé.",
+   "💡 La caisse est une avance : elle est reconstituée à chaque fin de mission et reste à rendre en fin de collaboration."
+  ],
+  "voir": [
+   "rh-pr-releve",
+   "rh-pr-payer"
+  ]
+ },
+ {
+  "id": "rh-pr-releve",
+  "rub": "rh",
+  "titre": "Consulter le relevé d’un prestataire (PDF)",
+  "droits": [
+   "rh",
+   "direction",
+   "comptable"
+  ],
+  "qui": "Qui : DG, Walid, comptable, agents RH.",
+  "mots": "releve situation solde du paye prestataire ahmed pdf partager compte",
+  "intro": "Le relevé liste ce qui est dû (missions, solde d’ouverture), les paiements exécutés et le solde restant.",
+  "etapes": [
+   "Touchez <b>👥 RH</b> puis <b>🔧 Prestataires</b>.",
+   "Sur la carte du prestataire, touchez <b>📄 Relevé</b>.",
+   "Lisez les lignes : <b>Dû</b>, <b>Payé</b>, <b>Solde</b> cumulé en TND.",
+   "En bas : <b>Reste dû</b>, paiements en cours de validation, <b>Caisse en sa possession</b>.",
+   "Touchez <b>📄 PDF</b> pour l’ouvrir, ou <b>📤 Partager</b> pour l’envoyer (WhatsApp, e-mail)."
+  ],
+  "notes": [
+   "⚠️ Seuls les paiements clôturés dans Finances (« paiement effectué ») sont comptés.",
+   "💡 Le PDF demande le réseau."
+  ],
+  "voir": [
+   "rh-pr-reprise",
+   "rh-pr-payer"
   ]
  },
  {
