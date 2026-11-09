@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 KI";
+  var VERSION_APP = "2026-11-14 KJ";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -1957,6 +1957,27 @@
       if (x.type === "Billet" && (x.du || x.emis)) { var fv = cbFinValidite(x.du || x.emis, CB.validite), jv = Math.round((fv - auj) / 86400000); if (jv >= 0 && jv <= 30 && (!x.au || x.au > auj)) pousser(x, { niv: 2, t: "🎫 Billet de " + x.personnel + " : validité jusqu'au " + jourFr(fv), cle: "val|" + cbIso(fv), etape: jv <= 7 ? "7" : "30" }); }
     });
     return A.sort(function (a, b) { return a.niv - b.niv; });
+  }
+  // 🎯 Missions : « 👍 Vu » (pour moi, sur cet appareil) cache l'alerte pour la journée ; « ✅ Fait » = signalée terminée → clôture par le DG.
+  var MIS_VUS = (function () { try { return JSON.parse(localStorage.getItem("misVus") || "{}"); } catch (e) { return {}; } })();
+  function misVuCle(m) { return ((S.agent && S.agent.nom) || "") + "|" + m.id + "|" + m.echeance; }
+  function misVu(m) { return MIS_VUS[misVuCle(m)] === dateISO(Date.now()); }
+  function misMarquerVu(m) { MIS_VUS[misVuCle(m)] = dateISO(Date.now()); try { localStorage.setItem("misVus", JSON.stringify(MIS_VUS)); } catch (e) {} }
+  function misBoutons(i, m) {
+    var dg = String((S.agent && S.agent.nom) || "").toUpperCase() === "DG";
+    if (m.statut === "À clôturer") return dg ? "<div class='ligne' style='margin-top:8px;gap:6px'><button class='bouton' data-mic='" + i + "' style='width:auto;flex:0 0 auto;padding:6px 12px;margin:0;background:var(--vert)'>✅ Valider (clôturer)</button></div>" : "";
+    return "<div class='ligne' style='margin-top:8px;gap:6px'><button class='bouton' data-mif='" + i + "' style='width:auto;flex:0 0 auto;padding:6px 12px;margin:0;background:var(--vert)'>✅ Fait</button>" +
+      "<button class='bouton second' data-miv='" + i + "' style='width:auto;flex:0 0 auto;padding:6px 12px;margin:0'>👍 Vu</button></div>";
+  }
+  function misLierBoutons(racine, liste, apres) {
+    function m(b, k) { return liste[+b.getAttribute(k)]; }
+    Array.prototype.forEach.call(racine.querySelectorAll("[data-miv]"), function (b) { b.onclick = function (ev) { ev.stopPropagation(); misMarquerVu(m(b, "data-miv")); apres(); }; });
+    Array.prototype.forEach.call(racine.querySelectorAll("[data-mif]"), function (b) { b.onclick = function (ev) { ev.stopPropagation(); var x = m(b, "data-mif");
+      if (!confirm("« " + x.titre + " » : faite ?\nElle est signalée terminée ; le DG valide la clôture.")) return;
+      envoyerMis("statut", { id: x.id, version: x.version, statut: "À clôturer", commentaire: "Fait (depuis les notifications)" }, "À clôturer " + x.id, apres); }; });
+    Array.prototype.forEach.call(racine.querySelectorAll("[data-mic]"), function (b) { b.onclick = function (ev) { ev.stopPropagation(); var x = m(b, "data-mic");
+      if (!confirm("Clôturer « " + x.titre + " » (terminée) ?" + (x.rec ? "\nLa suivante (" + x.rec.toLowerCase() + ") sera créée." : ""))) return;
+      envoyerMis("statut", { id: x.id, version: x.version, statut: "Terminée", commentaire: "Validée (depuis les notifications)" }, "Clôture " + x.id, apres); }; });
   }
   function cbBoutons(i) { return "<div class='ligne' style='margin-top:8px;gap:6px'><button class='bouton' data-cbc='" + i + "' style='width:auto;flex:0 0 auto;padding:6px 12px;margin:0;background:var(--vert)'>✅ Confirmé</button>" +
     "<button class='bouton second' data-cbv='" + i + "' style='width:auto;flex:0 0 auto;padding:6px 12px;margin:0'>👍 Vu</button></div>"; }
@@ -4220,8 +4241,8 @@
       L.push({ rub: "📦", t: x.no + " · sortie de stock", s: x.resume + " · " + x.agent, moi: !!S.stockv.direction, et: "Sorties à valider", q: x.saisi, ouvrir: function () { afficherStockVal(x.no); } });
     });
     if (S.mis && droitMis()) { var M = S.mis, fin = misAuj() + 86400000;
-      M.missions.filter(function (m) { return misOuv(m) && ((misPour(m, M.agent) && m.statut !== "À clôturer" && m.echeance && m.echeance < fin) || (M.direction && m.statut === "À clôturer")); }).forEach(function (m) {
-        L.push({ rub: "🎯", t: m.titre, s: (m.statut === "À clôturer" ? "Signalée terminée : à clôturer" : "Échéance " + jourLib(m.echeance)) + " · " + m.assignes.join(", "), moi: true, et: m.statut === "À clôturer" ? "À clôturer" : "Échéance proche", q: m.echeance || 0, ouvrir: function () { afficherMis(); ficheMis(m.id); } });
+      M.missions.filter(function (m) { return misOuv(m) && ((misPour(m, M.agent) && m.statut !== "À clôturer" && m.echeance && m.echeance < fin && !misVu(m)) || (M.direction && m.statut === "À clôturer")); }).forEach(function (m) {
+        L.push({ rub: "🎯", t: m.titre, s: (m.statut === "À clôturer" ? "Signalée terminée : à clôturer" : "Échéance " + jourLib(m.echeance)) + " · " + m.assignes.join(", "), moi: true, et: m.statut === "À clôturer" ? "À clôturer" : "Échéance proche", q: m.echeance || 0, mis: m, ouvrir: function () { afficherMis(); ficheMis(m.id); } });
       }); }
     if (S.com && droitCom()) comRetards().forEach(function (f) {
       L.push({ rub: "🤝", t: f.id + " · " + f.client, s: "Facture en retard (" + jours(f.echeance) + " j) · " + gnf(f.montant) + " " + f.devise, moi: false, et: "Factures en retard", q: f.echeance, ouvrir: function () { afficherCom(); ficheFactureCom(cleFac(f)); } });
@@ -4274,7 +4295,7 @@
             var GR = groupesNotifs(A), IT = CLOCHE.items = [];
             function carteN(x, retrait) { IT.push(x); var i = IT.length - 1;
               return "<div data-ar='" + i + "' style='cursor:pointer;margin:8px 12px 8px " + (retrait ? 34 : 12) + "px;padding:12px 14px;border-radius:12px;background:var(--fond);border:1px solid var(--bord)" + (x.moi ? ";border-left:4px solid var(--cuivre)" : "") + "'>" +
-                "<div style='font-weight:700'>" + (x.moi ? "👉 " : "") + esc(x.t) + "</div><div class='info' style='margin:4px 0 0'>" + esc(x.s) + "</div>" + (x.cb ? cbBoutons(i) : "") + "</div>"; }
+                "<div style='font-weight:700'>" + (x.moi ? "👉 " : "") + esc(x.t) + "</div><div class='info' style='margin:4px 0 0'>" + esc(x.s) + "</div>" + (x.cb ? cbBoutons(i) : "") + (x.mis ? misBoutons(i, x.mis) : "") + "</div>"; }
             function ouvert(k, def) { return CLOCHE.ouv[k] !== undefined ? CLOCHE.ouv[k] : def; }
             return GR.map(function (g) {
               var o = ouvert(g.rub, g.moi > 0);
@@ -4297,6 +4318,7 @@
         montrer("vueListe");
         Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-ar]"), function (el) { el.onclick = function () { CLOCHE.items[+el.getAttribute("data-ar")].ouvrir(); }; });
         cbLierBoutons($("vueListe"), CLOCHE.items.map(function (x) { return x.cb; }), function () { afficherNotifs(); });
+        misLierBoutons($("vueListe"), CLOCHE.items.map(function (x) { return x.mis; }), function () { afficherNotifs(); });
         Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-gr]"), function (el) { el.onclick = function () { var k = el.getAttribute("data-gr");
           var cur = CLOCHE.ouv[k] !== undefined ? CLOCHE.ouv[k] : el.getAttribute("data-def") === "1"; CLOCHE.ouv[k] = !cur; afficherNotifs(); }; });
         Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-cl]"), function (b) { b.onclick = function () { CLOCHE.onglet = b.getAttribute("data-cl"); afficherNotifs(); }; });
