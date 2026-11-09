@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 KJ";
+  var VERSION_APP = "2026-11-14 KK";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -1902,7 +1902,7 @@
     if (m.type === "ouvrir") ouvrirDepuisNotif(m.data || {});
   });
   /* ---------- 👥 Ressources humaines : personnel, événements (validés par Walid), paie du mois ---------- */
-  function droitRH() { var d = S.agent && S.formulaires && S.formulaires.droits; return !!(d && (d.rh || d.validation)); }
+  function droitRH() { var d = S.agent && S.formulaires && S.formulaires.droits; return !!(d && (d.rh || d.validation || d.comptable)); }
   var rafRH = null;
   function rafraichirRH() {
     if (!S.url || !droitRH()) return Promise.resolve();
@@ -1989,7 +1989,7 @@
   }
   function vueCongesRH(C, R) {
     var CB = R.cb || { liste: [], soldes: {} }, dg = R.role === "DG", an = CBV.an, deb = new Date(an, 0, 1).getTime(), fin = new Date(an + 1, 0, 1).getTime(), duree = fin - deb, auj = misAuj();
-    var pers = R.personnel.filter(function (p) { return p.actif; }).map(function (p) { return p.nom; }).sort();
+    var pers = R.personnel.filter(function (p) { return p.actif; }).map(function (p) { return p.nom; }).concat(((R.pr || {}).prestataires || []).filter(function (p) { return p.actif; }).map(function (p) { return p.nom; })).sort();
     if (CBV.fiche) { ficheCB(C, R, CB.liste.filter(function (x) { return x.no === CBV.fiche; })[0]); return; }
     if (CBV.form) { formCB(C, R, pers); return; }
     function pct(t) { return Math.max(0, Math.min(100, (t - deb) / duree * 100)); }
@@ -2137,6 +2137,154 @@
     };
   }
 
+
+  /* ---------- 🔧 Prestataires (ex. Ahmed, réparateur) : missions, rapports, comptes de fin de mission, paiements ---------- */
+  var PRV = { fiche: "", form: "", prest: "" };
+  function pmSolde(m) { return m.statut === "Clôturée" ? Math.round(((m.total || 0) - (m.paye || 0) - (m.enCours || 0)) * 100) / 100 : 0; }
+  function tnd(v) { return (+v || 0).toLocaleString("fr-FR", { maximumFractionDigits: 2 }) + " TND"; }
+  function pmAlertes(R) {
+    var P = (R.pr || {}).missions || [], auj = misAuj(), A = [];
+    P.forEach(function (m) {
+      if (m.statut === "Planifiée") {
+        var j = Math.round((cbJ(m.du) - auj) / 86400000), jf = Math.round((cbJ(m.au) - auj) / 86400000);
+        if (jf <= 0) A.push({ niv: 1, t: "🔧 " + m.prestataire + " : mission " + (jf < 0 ? "terminée le " + jourFr(m.au) : "dernier jour aujourd'hui") + " — rapport et comptes", no: m.no, et: "Missions à clôturer" });
+        else if (j >= 0 && j <= 7) A.push({ niv: 2, t: "🔧 Mission de " + m.prestataire + " — " + (j === 0 ? "arrivée aujourd'hui" : "dans " + j + " j") + " (" + jourFr(m.du) + ")", no: m.no, et: "Missions proches" });
+      } else if (pmSolde(m) > 0.5) A.push({ niv: 1, t: "💸 " + m.prestataire + " : " + tnd(pmSolde(m)) + " à payer (" + m.no + ")", no: m.no, et: "Missions à payer" });
+    });
+    return A;
+  }
+  function vuePrestataires(C, R) {
+    var PR = R.pr || { prestataires: [], missions: [] }, dir = !!R.direction;
+    if (PRV.form === "prest") { formPrest(C, R); return; }
+    if (PRV.form === "plan") { formPlanMission(C, R); return; }
+    var mF = PRV.fiche ? PR.missions.filter(function (m) { return m.no === PRV.fiche; })[0] : null;
+    if (PRV.form === "clot" && mF) { formClotMission(C, R, mF); return; }
+    if (PRV.form === "pay" && mF) { formPayMission(C, R, mF); return; }
+    if (mF) { ficheMissionPr(C, R, mF); return; }
+    var A = pmAlertes(R);
+    var h = (A.length ? "<div class='carte pleine' style='border-color:var(--cuivre)'><h3>⚠️ À faire (" + A.length + ")</h3>" + A.map(function (a) {
+      return "<div data-pm='" + esc(a.no) + "' style='cursor:pointer;padding:6px 0;border-top:1px solid var(--bord);color:" + (a.niv === 1 ? "#e65100" : "inherit") + "'>" + esc(a.t) + "</div>"; }).join("") + "</div>" : "");
+    h += PR.prestataires.map(function (p) {
+      var M = PR.missions.filter(function (m) { return m.prestataire === p.nom; }).sort(function (a, b) { return b.du - a.du; });
+      var proch = M.filter(function (m) { return m.statut === "Planifiée"; }).sort(function (a, b) { return a.du - b.du; })[0], du = M.reduce(function (t, m) { return t + Math.max(0, pmSolde(m)); }, 0);
+      return "<div class='carte pleine'><div class='ligne' style='justify-content:space-between'><h3 style='margin:0'>🔧 " + esc(p.nom) + "</h3>" + (du > 0.5 ? "<b style='flex:0;white-space:nowrap;color:#c62828'>dû " + tnd(du) + "</b>" : "<b style='flex:0;white-space:nowrap;color:#2e7d32'>à jour</b>") + "</div>" +
+        "<div class='info'>" + esc(p.metier) + " · " + tnd(p.honoraire) + " par mission · caisse " + tnd(p.caisse) + " · " + p.duree + " j tous les " + p.periode + " j · bénéficiaire " + esc(p.societe) + (p.actif ? "" : " · inactif") + "</div>" +
+        "<div class='info'>" + (proch ? "Prochaine mission : <b>" + jourFr(proch.du) + " → " + jourFr(proch.au) + "</b> (" + esc(proch.no) + ")" : "Aucune mission planifiée.") + "</div>" +
+        "<div class='ligne' style='flex-wrap:wrap;gap:6px'><button class='bouton' data-pp='" + esc(p.nom) + "' style='width:auto;flex:0 0 auto'>➕ Planifier une mission</button>" + (dir ? "<button class='bouton second' data-pf='" + esc(p.nom) + "' style='width:auto;flex:0 0 auto'>✏️ Fiche</button>" : "") + "</div>" +
+        (M.length ? "<table style='width:100%;font-size:13px;margin-top:8px'><tr style='color:#888;text-align:left'><th>Mission</th><th>Dates</th><th>Statut</th><th style='text-align:right'>Total</th><th style='text-align:right'>Reste</th></tr>" + M.slice(0, 30).map(function (m) {
+          return "<tr data-pm='" + esc(m.no) + "' style='cursor:pointer;border-top:1px solid var(--bord)" + (m.statut === "Annulée" ? ";opacity:.5" : "") + "'><td>" + esc(m.no) + "</td><td>" + jourFr(m.du) + " → " + jourFr(m.au) + "</td><td>" + esc(m.statut) + "</td><td style='text-align:right'>" + (m.total ? tnd(m.total) : "") +
+            "</td><td style='text-align:right'>" + (m.statut === "Clôturée" ? (pmSolde(m) > 0.5 ? "<b style='color:#c62828'>" + tnd(pmSolde(m)) + "</b>" : m.enCours ? "en paiement" : "✅") : "") + "</td></tr>"; }).join("") + "</table>" : "") + "</div>";
+    }).join("");
+    if (dir) h += "<button class='bouton second' id='prNv'>➕ Nouveau prestataire</button>";
+    C.innerHTML = h || "<p class='info'>Aucun prestataire.</p>";
+    Array.prototype.forEach.call(C.querySelectorAll("[data-pm]"), function (el) { el.onclick = function () { PRV.fiche = el.getAttribute("data-pm"); afficherRH(); window.scrollTo(0, 0); }; });
+    Array.prototype.forEach.call(C.querySelectorAll("[data-pp]"), function (el) { el.onclick = function () { PRV.prest = el.getAttribute("data-pp"); PRV.form = "plan"; afficherRH(); }; });
+    Array.prototype.forEach.call(C.querySelectorAll("[data-pf]"), function (el) { el.onclick = function () { PRV.prest = el.getAttribute("data-pf"); PRV.form = "prest"; afficherRH(); }; });
+    if ($("prNv")) $("prNv").onclick = function () { PRV.prest = ""; PRV.form = "prest"; afficherRH(); };
+  }
+  function prRetour(fiche) { return function () { PRV.form = ""; PRV.fiche = fiche || ""; afficherRH(); }; }
+  function formPrest(C, R) {
+    var p = ((R.pr || {}).prestataires || []).filter(function (x) { return x.nom === PRV.prest; })[0] || { devise: "TND", honoraire: 0, caisse: 0, periode: 60, duree: 10, societe: "M2S", actif: true };
+    C.innerHTML = "<div class='carte pleine'><h3>🔧 " + (p.nom ? "Fiche " + esc(p.nom) : "Nouveau prestataire") + "</h3>" +
+      "<div class='ligne'><div style='flex:2'><label>Nom (distinct du personnel)</label><input id='pfN' value='" + esc(p.nom || "") + "'></div><div style='flex:2'><label>Métier</label><input id='pfM' value='" + esc(p.metier || "") + "'></div></div>" +
+      "<div class='ligne'><div><label>Honoraire par mission (TND)</label><input id='pfH' inputmode='decimal' value='" + (p.honoraire || "") + "'></div><div><label>Caisse fixe (TND)</label><input id='pfC' inputmode='decimal' value='" + (p.caisse || "") + "'></div></div>" +
+      "<div class='ligne'><div><label>Durée d'une mission (jours, vol compris)</label><input id='pfD' inputmode='numeric' value='" + p.duree + "'></div><div><label>Une mission tous les (jours)</label><input id='pfP' inputmode='numeric' value='" + p.periode + "'></div></div>" +
+      "<div class='ligne'><div><label>Société bénéficiaire</label><select id='pfS'>" + ["M2S", "AB", "CASAFINO"].map(function (x) { return "<option" + (x === p.societe ? " selected" : "") + ">" + x + "</option>"; }).join("") + "</select></div>" +
+      "<div><label>Actif</label><select id='pfA'><option value='oui'>Oui</option><option value='non'" + (p.actif ? "" : " selected") + ">Non</option></select></div></div>" +
+      "<label>Commentaire</label><input id='pfCm' value='" + esc(p.com || "") + "'><div class='ligne'><button class='bouton' id='pfOk'>✅ Enregistrer</button><button class='bouton second' id='pfX'>Annuler</button></div></div>";
+    $("pfX").onclick = prRetour("");
+    $("pfOk").onclick = function () {
+      var d = { ancien: p.nom || "", nom: $("pfN").value.trim(), metier: $("pfM").value.trim(), devise: "TND", honoraire: nbCom($("pfH").value), caisse: nbCom($("pfC").value), duree: nbCom($("pfD").value) || 10, periode: nbCom($("pfP").value) || 60,
+        societe: $("pfS").value, actif: $("pfA").value === "oui", commentaire: $("pfCm").value.trim() };
+      if (!d.nom) { alert("⛔ Nom."); return; }
+      PRV.form = ""; envoyerRH("pmPrest", d, "Prestataire " + d.nom);
+    };
+  }
+  function formPlanMission(C, R) {
+    var PR = (R.pr || {}).prestataires || [], p = PR.filter(function (x) { return x.nom === PRV.prest; })[0] || PR[0];
+    if (!p) { PRV.form = ""; afficherRH(); return; }
+    var der = ((R.pr || {}).missions || []).filter(function (m) { return m.prestataire === p.nom && m.statut !== "Annulée"; }).sort(function (a, b) { return b.du - a.du; })[0];
+    var du0 = der ? der.du + p.periode * 86400000 : Date.now();
+    C.innerHTML = "<div class='carte pleine'><h3>➕ Mission de " + esc(p.nom) + "</h3><div class='ligne'><div><label>Arrivée à Conakry (jour du vol)</label><input id='plD' type='date' value='" + cbIso(du0) + "'></div>" +
+      "<div><label>Départ</label><input id='plA' type='date'></div></div><div class='info' id='plI'></div><label>Commentaire</label><input id='plC'>" +
+      "<div class='ligne'><button class='bouton' id='plOk'>✅ Planifier</button><button class='bouton second' id='plX'>Annuler</button></div><div class='info'>Le billet d'avion se saisit dans 🏖️ Congés & billets (" + esc(p.nom) + " figure dans la liste).</div></div>";
+    function maj() { var d = $("plD").value; if (d && !$("plA").dataset.m) $("plA").value = cbIso(new Date(d + "T12:00:00").getTime() + (p.duree - 1) * 86400000); $("plI").textContent = p.duree + " jours, vol compris."; }
+    $("plD").onchange = maj; $("plA").onchange = function () { $("plA").dataset.m = "1"; }; maj();
+    $("plX").onclick = prRetour("");
+    $("plOk").onclick = function () { if (!$("plD").value) return; PRV.form = ""; envoyerRH("pmPlanifier", { prestataire: p.nom, du: $("plD").value, au: $("plA").value, commentaire: $("plC").value.trim() }, "Mission " + p.nom); };
+  }
+  function ficheMissionPr(C, R, m) {
+    var dir = !!R.direction, sol = pmSolde(m);
+    function l(a, b) { return b ? "<tr><td>" + a + "</td><td class='v' style='white-space:normal'>" + b + "</td></tr>" : ""; }
+    var h = "<div class='carte pleine'><div class='ligne' style='justify-content:space-between'><h3>🔧 " + esc(m.no) + " · " + esc(m.prestataire) + "</h3><button class='bouton second' id='pmF' style='width:auto;flex:0 0 auto'>✕</button></div>" +
+      "<div style='font-weight:700'>" + esc(m.statut) + "</div><table>" + l("Arrivée", jourFr(m.du)) + l("Départ", jourFr(m.au)) +
+      (m.statut === "Clôturée" ? l("Honoraire", tnd(m.honoraire)) + l("Dépenses de caisse", tnd(m.depenses)) + l("Total dû", "<b>" + tnd(m.total) + "</b>") +
+        l("Payé", tnd(m.paye)) + (m.enCours ? l("En cours de paiement", tnd(m.enCours)) : "") + l("Reste", sol > 0.5 ? "<b style='color:#c62828'>" + tnd(sol) + "</b>" : "✅ soldé") : "") +
+      l("Paiements", (m.pay || []).map(function (p) { return "💸 " + esc(p.no) + " · " + esc(p.statut) + " · " + tnd(p.tnd) + " (" + gnf(p.montant) + " " + esc(p.devise) + ")"; }).join("<br>")) +
+      l("Travaux réalisés", esc(m.travaux).replace(/\n/g, "<br>")) + l("Programme suivant", esc(m.programme).replace(/\n/g, "<br>")) + l("Prochaine mission", m.prochaine ? jourFr(m.prochaine) : "") + "</table>" +
+      "<div class='info'>" + m.historique.map(function (k) { return dateCourte(k.q) + " · " + esc(k.a) + " · " + esc(k.act) + (k.c ? " — " + esc(k.c) : ""); }).join("<br>") + "</div></div>" +
+      ((m.pieces || []).length ? htmlPieces(m, m.pieces, "📄 Rapport", "r") : "") + "<div class='carte pleine'>";
+    if (m.statut === "Planifiée") h += "<button class='bouton' id='pmC'>📝 Clôturer : rapport et comptes</button><div class='ligne'><div><label>Arrivée</label><input id='pmD' type='date' value='" + cbIso(m.du) + "'></div><div><label>Départ</label><input id='pmA' type='date' value='" + cbIso(m.au) + "'></div></div>" +
+      "<div class='ligne'><button class='bouton second' id='pmM'>✏️ Modifier les dates</button><button class='bouton second' id='pmX'>🗑️ Annuler la mission</button></div>";
+    if (m.statut === "Clôturée" && sol > 0.5 && R.finances !== false) h += "<button class='bouton' id='pmP'>💸 Préparer le paiement (" + tnd(sol) + ")</button>";
+    if (m.statut === "Clôturée" && dir) h += "<button class='bouton second' id='pmX'>🗑️ Annuler la mission</button>";
+    C.innerHTML = h + "</div>";
+    $("pmF").onclick = prRetour("");
+    Array.prototype.forEach.call(C.querySelectorAll("[data-p^='r']"), function (b) { b.onclick = function () { voirPiece(m.no, m.pieces[+b.getAttribute("data-p").substring(1)], $("pvr"), "pmPiece"); }; });
+    if ($("pmC")) $("pmC").onclick = function () { PRV.form = "clot"; afficherRH(); };
+    if ($("pmP")) $("pmP").onclick = function () { PRV.form = "pay"; afficherRH(); };
+    if ($("pmM")) $("pmM").onclick = function () { envoyerRH("pmModifier", { no: m.no, version: m.version, du: $("pmD").value, au: $("pmA").value }, "Dates " + m.no, prRetour(m.no)); };
+    if ($("pmX")) $("pmX").onclick = function () { var c = prompt("Annuler " + m.no + " : motif ?"); if (c === null) return; envoyerRH("pmAnnuler", { no: m.no, version: m.version, commentaire: c }, "Annulation " + m.no, prRetour("")); };
+  }
+  function formClotMission(C, R, m) {
+    var p = ((R.pr || {}).prestataires || []).filter(function (x) { return x.nom === m.prestataire; })[0] || { honoraire: m.honoraire, caisse: 0, periode: 60 };
+    C.innerHTML = "<div class='carte pleine'><h3>📝 Fin de mission " + esc(m.no) + " · " + esc(m.prestataire) + "</h3>" +
+      "<div class='ligne'><div><label>Arrivée</label><input id='fcD' type='date' value='" + cbIso(m.du) + "'></div><div><label>Départ</label><input id='fcA' type='date' value='" + cbIso(m.au) + "'></div></div>" +
+      "<label>Travaux réalisés (rapport)</label><textarea id='fcT' rows='5'></textarea><label>Programme de la prochaine mission</label><textarea id='fcP' rows='3'></textarea>" +
+      "<label>Date de la prochaine mission (arrivée)</label><input id='fcN' type='date' value='" + cbIso(m.du + (p.periode || 60) * 86400000) + "'>" +
+      "<div class='ligne'><div><label>Honoraire (TND)</label><input id='fcH' inputmode='decimal' value='" + (m.honoraire || p.honoraire) + "'></div><div><label>Dépenses de la caisse (TND, montant global)</label><input id='fcE' inputmode='decimal' placeholder='0'></div></div>" +
+      "<div class='carte' id='fcR' style='margin-top:8px'></div>" + champFichiers("fcF").replace("Photos / PDF", "📄 Rapport signé, reçus (photo ou PDF, facultatif)") +
+      "<div class='ligne'><button class='bouton' id='fcOk'>✅ Clôturer la mission</button><button class='bouton second' id='fcX'>Annuler</button></div></div>";
+    lierFichiers("fcF");
+    function maj() { var h = nbCom($("fcH").value), e = nbCom($("fcE").value);
+      $("fcR").innerHTML = "À payer : honoraire " + tnd(h) + " + dépenses " + tnd(e) + " = <b>" + tnd(h + e) + "</b><br><small>La caisse revient à " + tnd(p.caisse) + " (les dépenses sont remboursées). Ex. 2 500 dépensés → 2 500 remboursés.</small>"; }
+    $("fcH").oninput = maj; $("fcE").oninput = maj; maj();
+    $("fcX").onclick = prRetour(m.no);
+    $("fcOk").onclick = function () {
+      if (!$("fcT").value.trim()) { alert("⛔ Indiquez les travaux réalisés."); return; }
+      var tot = nbCom($("fcH").value) + nbCom($("fcE").value);
+      if (!confirm("Clôturer " + m.no + " : " + tnd(tot) + " à payer ?" + ($("fcN").value ? "\nLa prochaine mission sera planifiée à partir du " + $("fcN").value.split("-").reverse().join("/") + "." : ""))) return;
+      envoyerRH("pmCloturer", { no: m.no, version: m.version, du: $("fcD").value, au: $("fcA").value, travaux: $("fcT").value, programme: $("fcP").value, prochaine: $("fcN").value,
+        honoraire: $("fcH").value, depenses: $("fcE").value || "0", fichiers: FICH.fcF || [] }, "Fin de mission " + m.no, function (r) {
+        PRV.form = ""; PRV.fiche = m.no; afficherRH();
+        if (r && r.ok && !r.enAttente && confirm("Préparer le paiement maintenant ?")) { PRV.form = "pay"; afficherRH(); }
+      });
+    };
+  }
+  function formPayMission(C, R, m) {
+    var sol = pmSolde(m);
+    C.innerHTML = "<div class='carte pleine'><h3>💸 Paiement " + esc(m.no) + " · " + esc(m.prestataire) + "</h3>" +
+      "<label>Montant à régler (TND)</label><input id='fpT' inputmode='decimal' value='" + sol + "'>" +
+      "<div class='ligne'><div><label>Payé en</label><select id='fpDv'><option>USD</option><option>EURO</option><option>TND</option></select></div><div><label>Taux : 1 <span id='fpDvL'>USD</span> = … TND</label><input id='fpTx' inputmode='decimal'></div></div>" +
+      "<label>Mode</label><select id='fpMo'><option value='vir'>Virement (ex. BIAT DG USD → compte tiers)</option><option value='esp'>Espèces (EUR / USD remis avant le départ)</option></select>" +
+      "<div class='carte' id='fpR' style='margin-top:8px'></div><button class='bouton' id='fpOk'>💸 Préparer la demande Finances</button><button class='bouton second' id='fpX'>Annuler</button>" +
+      "<div class='info'>La demande suit la validation habituelle (Walid puis DG). Une fois exécutée, le montant en TND est déduit du reste dû de la mission.</div></div>";
+    function calc() { var t = nbCom($("fpT").value), dv = $("fpDv").value, tx = dv === "TND" ? 1 : nbCom($("fpTx").value); $("fpDvL").textContent = dv; $("fpTx").disabled = dv === "TND";
+      var mt = tx > 0 ? Math.round(t / tx * 100) / 100 : 0; $("fpR").innerHTML = tx > 0 ? tnd(t) + " ÷ " + tx + " = <b>" + mt.toLocaleString("fr-FR", { maximumFractionDigits: 2 }) + " " + dv + "</b>" : "Indiquez le taux de change."; return { t: t, dv: dv, tx: tx, mt: mt }; }
+    ["fpT", "fpTx"].forEach(function (id) { $(id).oninput = calc; }); $("fpDv").onchange = calc; calc();
+    $("fpX").onclick = prRetour(m.no);
+    $("fpOk").onclick = function () {
+      var k = calc(); if (!(k.t > 0) || !(k.mt > 0)) { alert("⛔ Montant et taux."); return; }
+      var objet = "Mission " + m.no + " · " + m.prestataire + " : " + (k.t >= sol - 0.5 ? "honoraire " + tnd(m.honoraire) + " + caisse " + tnd(m.depenses) : "acompte") + " (taux 1 " + k.dv + " = " + k.tx + " TND) [" + m.no + "|" + k.t + " TND]";
+      var ouvrir = function () {
+        PRV.form = ""; PRV.fiche = m.no;
+        formulaireFin($("fpMo") && $("fpMo").value === "esp" ? { type: "Dépense de caisse", categorie: "Prestation", objet: objet, montant: k.mt, devise: k.dv }
+          : { type: "Mouvement de trésorerie", op: "Virement", categorie: "Prestation", objet: objet, montant: k.mt, devise: k.dv, beneficiaire: m.prestataire });
+      };
+      if (S.fin) { ouvrir(); return; }
+      rafraichirFin().then(function () { if (S.fin) ouvrir(); else alert("⛔ Finances indisponible."); }, function () { alert("⛔ Finances indisponible (réseau)."); });
+    };
+  }
   function afficherRH(id) {
     $("titre").textContent = "Ressources humaines";
     var R = S.rh;
@@ -2148,18 +2296,20 @@
     if (id && /^RH-/.test(id)) { ouvrirEvRH(id); return; }
     if (id === "paie") RHV.onglet = "paie";
     if (id === "cb") { RHV.onglet = "conges"; CBV.fiche = ""; CBV.form = ""; }
+    if (id === "pr" || (id && /^PM-/.test(id))) { RHV.onglet = "prestataires"; PRV.form = ""; PRV.fiche = /^PM-/.test(id || "") ? id : ""; }
+    if (R.prSeul) RHV.onglet = "prestataires";
     var nEv = R.evenements.filter(function (e) { return e.statut === "En attente Walid"; }).length;
     var envoi = S.file.filter(function (x) { return x.type === "rh"; }).length;
     var h = "<div class='carte'><h3>👥 Ressources humaines</h3><div class='info'>" + esc(R.agent) + (R.direction ? " · direction (" + esc(R.role) + ")" : " · responsable RH") + " · données du " + dateCourte(R.recu || R.genere) + "</div>" +
-      "<button class='bouton' id='rhEv'>➕ Événement : heures, absence, congé, prélèvement</button>" +
+      (R.prSeul ? "" : "<button class='bouton' id='rhEv'>➕ Événement : heures, absence, congé, prélèvement</button>") +
       (R.direction ? "<button class='bouton second' id='rhNouv'>👤 Nouvel agent</button>" : "") +
-      "<div class='onglets' style='margin-top:10px'>" + [["personnel", "Personnel"], ["evenements", "Événements" + (nEv ? " (" + nEv + ")" : "")], ["conges", "🏖️ Congés & billets" + (function () { var n = R.cb ? cbAlertes(R).filter(function (a) { return a.niv <= 2; }).length : 0; return n ? " (" + n + ")" : ""; })()], ["paie", "Paie du mois"], ["historique", "Historique"]]
+      "<div class='onglets' style='margin-top:10px'>" + [["personnel", "Personnel"], ["evenements", "Événements" + (nEv ? " (" + nEv + ")" : "")], ["conges", "🏖️ Congés & billets" + (function () { var n = R.cb ? cbAlertes(R).filter(function (a) { return a.niv <= 2; }).length : 0; return n ? " (" + n + ")" : ""; })()], ["paie", "Paie du mois"], ["historique", "Historique"], ["prestataires", "🔧 Prestataires" + (function () { var n = pmAlertes(R).length; return n ? " (" + n + ")" : ""; })()]].filter(function (o) { return !R.prSeul || o[0] === "prestataires"; })
         .map(function (o) { return "<button data-o='" + o[0] + "' class='" + (RHV.onglet === o[0] ? "actif" : "") + "' style='border-radius:10px;border-bottom:1px solid var(--bord)'>" + o[1] + "</button>"; }).join("") + "</div></div>" +
       (envoi ? "<div class='carte att'>⏳ " + envoi + " opération(s) RH sur cet appareil, en attente d'envoi.</div>" : "") +
       "<div id='rhCorps'></div>";
     $("vueListe").innerHTML = h; montrer("vueListe");
-    Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-o]"), function (b) { b.onclick = function () { RHV.onglet = b.getAttribute("data-o"); CBV.fiche = ""; CBV.form = ""; afficherRH(); }; });
-    $("rhEv").onclick = function () { formulaireEvRH(""); };
+    Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-o]"), function (b) { b.onclick = function () { RHV.onglet = b.getAttribute("data-o"); CBV.fiche = ""; CBV.form = ""; PRV.fiche = ""; PRV.form = ""; afficherRH(); }; });
+    if ($("rhEv")) $("rhEv").onclick = function () { formulaireEvRH(""); };
     if ($("rhNouv")) $("rhNouv").onclick = formulaireNouvelRH;
     var C = $("rhCorps");
     if (RHV.onglet === "personnel") {
@@ -2183,6 +2333,7 @@
       C.innerHTML = E.map(htmlEvRH).join("") || "<p class='info' style='padding:0 4px'>Aucun événement.</p>";
       Array.prototype.forEach.call(C.querySelectorAll("[data-ev]"), function (el) { el.onclick = function () { ouvrirEvRH(el.getAttribute("data-ev")); }; });
     } else if (RHV.onglet === "conges") vueCongesRH(C, R);
+    else if (RHV.onglet === "prestataires") vuePrestataires(C, R);
     else if (RHV.onglet === "paie") afficherPaieRH(C);
     else {
       C.innerHTML = "<div class='carte'><h3>Salaires de base, arrivées, départs</h3>" + (R.historique.slice().reverse().map(function (x) {
@@ -4236,6 +4387,9 @@
     });
     if (S.rh && droitRH() && S.rh.cb) cbAlertes(S.rh).filter(function (a) { return a.niv <= 2; }).forEach(function (a) {
       L.push({ rub: "👥", t: a.t, s: a.no, moi: a.niv === 1 ? S.rh.role === "DG" : true, et: a.niv === 1 ? "Congés / billets à valider" : "Congés / voyages proches", q: 0, cb: a.cle ? a : null, ouvrir: function () { afficherRH("cb"); CBV.fiche = a.no; afficherRH(); } });
+    });
+    if (S.rh && droitRH() && S.rh.pr) pmAlertes(S.rh).forEach(function (a) {
+      L.push({ rub: "👥", t: a.t, s: a.no, moi: a.niv === 1, et: a.et, q: 0, ouvrir: function () { afficherRH(a.no); } });
     });
     if (S.stockv && droitStockVal()) S.stockv.sorties.filter(function (x) { return x.statut === "En attente"; }).forEach(function (x) {
       L.push({ rub: "📦", t: x.no + " · sortie de stock", s: x.resume + " · " + x.agent, moi: !!S.stockv.direction, et: "Sorties à valider", q: x.saisi, ouvrir: function () { afficherStockVal(x.no); } });
