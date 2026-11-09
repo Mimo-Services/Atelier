@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 KG";
+  var VERSION_APP = "2026-11-14 KI";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -1940,18 +1940,31 @@
   function cbJ(t) { var d = new Date(t); return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); }
   function cbIso(t) { if (!t) return ""; var d = new Date(t); return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2); }
   function cbFinValidite(emis, mois) { var d = new Date(emis); d.setMonth(d.getMonth() + (mois || 11)); return d.getTime(); }
+  // « 👍 Vu » : propre à l'agent et à cet appareil, jusqu'à l'étape suivante (30 j → 7 j). « ✅ Confirmé » : serveur, pour tous.
+  var CB_VUS = (function () { try { return JSON.parse(localStorage.getItem("cbVus") || "{}"); } catch (e) { return {}; } })();
+  function cbVuCle(a) { return ((S.agent && S.agent.nom) || "") + "|" + a.no + "|" + a.cle + "|" + a.etape; }
+  function cbMarquerVu(a) { CB_VUS[cbVuCle(a)] = Date.now(); try { localStorage.setItem("cbVus", JSON.stringify(CB_VUS)); } catch (e) {} }
   function cbAlertes(R) {
     var auj = misAuj(), A = [], CB = R.cb || { liste: [] };
+    function pousser(x, o) { if (o.cle && x.confirmes && x.confirmes[o.cle]) return; o.no = x.no; if (o.cle && CB_VUS[cbVuCle(o)]) return; A.push(o); }
     CB.liste.forEach(function (x) {
       if (x.statut === "En attente DG") A.push({ niv: 1, t: "⏳ " + x.type + " de " + x.personnel + " en attente de validation (DG)", no: x.no });
       if (x.statut !== "Validé") return;
-      [[x.du, x.type === "Congé" ? "🏖️ Congé de " + x.personnel + " (" + x.jours + " j)" : "✈️ Départ de " + x.personnel + (x.allerVers ? " vers " + x.allerVers : "")], [x.type === "Billet" ? x.au : 0, "↩️ Retour de " + x.personnel + (x.retourVers ? " vers " + x.retourVers : "") + " : à confirmer ou modifier"]].forEach(function (a) {
-        if (!a[0]) return; var j = Math.round((cbJ(a[0]) - auj) / 86400000);
-        if (j >= 0 && j <= 30) A.push({ niv: j <= 7 ? 2 : 3, t: a[1] + " — " + (j === 0 ? "aujourd'hui" : "dans " + j + " j") + " (" + jourFr(a[0]) + ")", no: x.no });
+      [["dep", x.du, x.type === "Congé" ? "🏖️ Congé de " + x.personnel + " (" + x.jours + " j)" : "✈️ Départ de " + x.personnel + (x.allerVers ? " vers " + x.allerVers : "")], ["ret", x.type === "Billet" ? x.au : 0, "↩️ Retour de " + x.personnel + (x.retourVers ? " vers " + x.retourVers : "") + " : à confirmer ou modifier"]].forEach(function (a) {
+        if (!a[1]) return; var j = Math.round((cbJ(a[1]) - auj) / 86400000);
+        if (j >= 0 && j <= 30) pousser(x, { niv: j <= 7 ? 2 : 3, t: a[2] + " — " + (j === 0 ? "aujourd'hui" : "dans " + j + " j") + " (" + jourFr(a[1]) + ")", cle: a[0] + "|" + cbIso(a[1]), etape: j <= 7 ? "7" : "30" });
       });
-      if (x.type === "Billet" && (x.du || x.emis)) { var fv = cbFinValidite(x.du || x.emis, CB.validite), jv = Math.round((fv - auj) / 86400000); if (jv >= 0 && jv <= 30 && (!x.au || x.au > auj)) A.push({ niv: 2, t: "🎫 Billet de " + x.personnel + " : validité jusqu'au " + jourFr(fv), no: x.no }); }
+      if (x.type === "Billet" && (x.du || x.emis)) { var fv = cbFinValidite(x.du || x.emis, CB.validite), jv = Math.round((fv - auj) / 86400000); if (jv >= 0 && jv <= 30 && (!x.au || x.au > auj)) pousser(x, { niv: 2, t: "🎫 Billet de " + x.personnel + " : validité jusqu'au " + jourFr(fv), cle: "val|" + cbIso(fv), etape: jv <= 7 ? "7" : "30" }); }
     });
     return A.sort(function (a, b) { return a.niv - b.niv; });
+  }
+  function cbBoutons(i) { return "<div class='ligne' style='margin-top:8px;gap:6px'><button class='bouton' data-cbc='" + i + "' style='width:auto;flex:0 0 auto;padding:6px 12px;margin:0;background:var(--vert)'>✅ Confirmé</button>" +
+    "<button class='bouton second' data-cbv='" + i + "' style='width:auto;flex:0 0 auto;padding:6px 12px;margin:0'>👍 Vu</button></div>"; }
+  function cbLierBoutons(racine, liste, apres) {
+    Array.prototype.forEach.call(racine.querySelectorAll("[data-cbc]"), function (b) { b.onclick = function (ev) { ev.stopPropagation(); var a = liste[+b.getAttribute("data-cbc")];
+      if (!confirm("Confirmer pour tout le monde : " + a.t + " ?\nL'alerte ne s'affichera plus (elle reviendra si la date change).")) return;
+      envoyerRH("cbConfirmer", { no: a.no, cle: a.cle }, "Confirmation " + a.no, apres); }; });
+    Array.prototype.forEach.call(racine.querySelectorAll("[data-cbv]"), function (b) { b.onclick = function (ev) { ev.stopPropagation(); cbMarquerVu(liste[+b.getAttribute("data-cbv")]); apres(); }; });
   }
   function vueCongesRH(C, R) {
     var CB = R.cb || { liste: [], soldes: {} }, dg = R.role === "DG", an = CBV.an, deb = new Date(an, 0, 1).getTime(), fin = new Date(an + 1, 0, 1).getTime(), duree = fin - deb, auj = misAuj();
@@ -1963,8 +1976,8 @@
     var h = "<div class='carte pleine'><div class='ligne' style='flex-wrap:wrap;gap:6px'><button class='bouton' id='cbC' style='width:auto;flex:0 0 auto;margin:0'>➕ Congé</button>" +
       "<button class='bouton' id='cbB' style='width:auto;flex:0 0 auto;margin:0'>✈️ Billet d'avion</button><button class='bouton second' id='cbD' style='width:auto;flex:0 0 auto;margin:0'>⚙️ Droits (début du cycle)</button></div>" +
       "<div class='info'>Droit : 30 jours / 12 mois (2,5 j par mois), fractionnable · billet aller-retour valable " + (CB.validite || 11) + " mois · saisie RH / Walid, validation DG.</div></div>";
-    if (A.length) h += "<div class='carte pleine' style='border-color:var(--cuivre)'><h3>⚠️ À surveiller (" + A.length + ")</h3>" + A.map(function (a) {
-      return "<div data-cb='" + esc(a.no) + "' style='cursor:pointer;padding:6px 0;border-top:1px solid var(--bord);color:" + (a.niv === 2 ? "#c62828" : a.niv === 1 ? "#e65100" : "inherit") + "'>" + esc(a.t) + "</div>"; }).join("") + "</div>";
+    if (A.length) h += "<div class='carte pleine' style='border-color:var(--cuivre)'><h3>⚠️ À surveiller (" + A.length + ")</h3>" + A.map(function (a, i) {
+      return "<div data-cb='" + esc(a.no) + "' style='cursor:pointer;padding:6px 0;border-top:1px solid var(--bord);color:" + (a.niv === 2 ? "#c62828" : a.niv === 1 ? "#e65100" : "inherit") + "'>" + esc(a.t) + (a.cle ? cbBoutons(i) : "") + "</div>"; }).join("") + "</div>";
     // Calendrier annuel : une ligne par personne.
     var mois = ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"], MO = ["janv", "févr", "mars", "avr", "mai", "juin", "juil", "août", "sept", "oct", "nov", "déc"];
     h += "<div class='carte pleine'><div class='ligne' style='justify-content:space-between;align-items:center'><button class='bouton second' id='cbP' style='width:auto;flex:0 0 auto;margin:0'>‹</button><b>📅 Calendrier " + an + "</b><button class='bouton second' id='cbS' style='width:auto;flex:0 0 auto;margin:0'>›</button></div>" +
@@ -1996,6 +2009,7 @@
     $("cbD").onclick = function () { CBV.form = "Droit"; CBV.edit = null; afficherRH(); };
     $("cbP").onclick = function () { CBV.an--; afficherRH(); }; $("cbS").onclick = function () { CBV.an++; afficherRH(); };
     Array.prototype.forEach.call(C.querySelectorAll("[data-cb]"), function (el) { el.onclick = function () { CBV.fiche = el.getAttribute("data-cb"); afficherRH(); window.scrollTo(0, 0); }; });
+    cbLierBoutons(C, A, function () { afficherRH(); });
   }
   function formCB(C, R, pers) {
     var t = CBV.form, x = CBV.edit || {}, o = function (L, v) { return L.map(function (n) { return "<option" + (n === v ? " selected" : "") + ">" + esc(n) + "</option>"; }).join(""); };
@@ -2427,7 +2441,7 @@
   function barre(v, tot, coul) { var p = tot > 0 ? Math.min(100, Math.round(v / tot * 100)) : 0; return "<div style='height:6px;background:var(--bord);border-radius:3px;margin:2px 0 6px'><div style='height:6px;width:" + p + "%;background:" + coul + ";border-radius:3px'></div></div>"; }
   function htmlFacture(f) {
     var ret = !f.paye && f.echeance && f.echeance < Date.now(), att = comAttente(f.id).length;
-    return "<div class='carte" + (att ? " att" : "") + "' data-fa='" + esc(f.id) + "' style='cursor:pointer'><div class='ligne' style='justify-content:space-between'><b>" + esc(f.id) + "</b><b style='flex:0;white-space:nowrap'>" + gnf(f.montant) + " " + esc(f.devise) + "</b></div>" +
+    return "<div class='carte" + (att ? " att" : "") + "' data-fa='" + esc(cleFac(f)) + "' style='cursor:pointer'><div class='ligne' style='justify-content:space-between'><b>" + esc(f.id) + "</b><b style='flex:0;white-space:nowrap'>" + gnf(f.montant) + " " + esc(f.devise) + "</b></div>" +
       "<div class='info'>" + esc(f.client) + " · " + esc(f.projet) + " · du " + jourLib(f.date) + "</div>" +
       "<div style='font-weight:700;font-size:14px;color:" + (f.paye ? "#2e7d32" : ret ? "#c62828" : "#e65100") + "'>" + (f.paye ? "✅ Encaissée le " + jourLib(f.encaisse) : ret ? "⏰ En retard de " + jours(f.echeance) + " j (échéance " + jourLib(f.echeance) + ")" : (f.echeance ? "À encaisser · échéance " + jourLib(f.echeance) : "À encaisser · sans échéance")) +
       (att ? " · ⏳ en attente d'envoi" : "") + "</div></div>";
@@ -2541,8 +2555,16 @@
     Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-fa]"), function (el) { el.onclick = function () { ficheFactureCom(el.getAttribute("data-fa")); }; });
     Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-pdf]"), function (el) { el.onclick = function () { ouvrirPdfCom(el.getAttribute("data-pdf")); }; });
   }
+  // Deux factures peuvent porter le même n° (ex. 02/SGG/ENTETES/2026) : clé = n° + date.
+  function cleFac(f) { return f.id + "|" + f.date; }
+  function factureCom(cle) {
+    var K = S.com, i = String(cle || "").lastIndexOf("|"), id = i > 0 ? cle.substring(0, i) : cle, dt = i > 0 ? +cle.substring(i + 1) : NaN;
+    var L = K.factures.filter(function (x) { return x.id === id; });
+    if (!isNaN(dt)) { var e = L.filter(function (x) { return x.date === dt; })[0]; if (e) return e; }
+    return L.filter(function (x) { return !x.paye; }).sort(function (a, b) { return b.date - a.date; })[0] || L[0];
+  }
   function ficheFactureCom(id) {
-    var K = S.com, f = K.factures.filter(function (x) { return x.id === id; })[0];
+    var K = S.com, f = factureCom(id);
     if (!f) { afficherCom(); return; }
     $("titre").textContent = f.id;
     var R = K.relances.filter(function (r) { return r.facture === f.id; }).sort(function (a, b) { return b.date - a.date; });
@@ -2557,13 +2579,13 @@
       "<button class='bouton second' id='faCt'>Contrat " + esc(f.contrat) + "</button>";
     $("vueListe").innerHTML = h; montrer("vueListe");
     if ($("faPdf")) { $("faPdf").onclick = function () { ouvrirPdfCom(f.id); }; $("faPart").onclick = function () { ouvrirPdfCom(f.id, true); }; }
-    if ($("faEnc")) { $("faEnc").onclick = function () { formulaireEncCom(f.id); }; $("faRel").onclick = function () { formulaireRelanceCom(f); }; }
+    if ($("faEnc")) { $("faEnc").onclick = function () { formulaireEncCom(cleFac(f)); }; $("faRel").onclick = function () { formulaireRelanceCom(f); }; }
     $("faCt").onclick = function () { ficheContratCom(f.contrat); };
     if ($("faEd")) {
       var majEd = function () { $("faEdD").style.display = $("faEd").value === "Date" ? "" : "none"; }; $("faEd").onchange = majEd; majEd();
       $("faEdOk").onclick = function () {
         if ($("faEd").value === "Date" && !$("faEdD").value) { alert("⛔ Choisissez la date d'échéance."); return; }
-        envoyerCom("echeance", { facture: f.id, dateFacture: f.date, duree: $("faEd").value, date: $("faEdD").value }, "Échéance " + f.id, function () { ficheFactureCom(f.id); });
+        envoyerCom("echeance", { facture: f.id, dateFacture: f.date, duree: $("faEd").value, date: $("faEdD").value }, "Échéance " + f.id, function () { ficheFactureCom(cleFac(f)); });
       };
     }
   }
@@ -2793,17 +2815,17 @@
     var K = S.com, F = K.factures.filter(function (f) { return !f.paye && !comAttente(f.id).length; }).sort(function (a, b) { return a.echeance - b.echeance; });
     $("titre").textContent = "Encaissement";
     $("vueListe").innerHTML = "<div class='carte'><h3>💵 Encaissement d'une facture</h3><label>Facture (payée en entier)</label><select id='enF'>" +
-      optsCom(F, idF, "— choisir —", function (f) { return f.id; }, function (f) { return f.id + " · " + f.client + " · " + gnf(f.montant) + " " + f.devise; }) + "</select>" +
+      optsCom(F, idF, "— choisir —", cleFac, function (f) { return f.id + " · du " + jourLib(f.date) + " · " + f.client + " · " + gnf(f.montant) + " " + f.devise; }) + "</select>" +
       "<div class='info' id='enI'></div><label>Date réelle d'encaissement (relevé bancaire)</label><input id='enD' type='date' value='" + dateISO(Date.now()) + "'>" +
       "<button class='bouton' id='enEnv' style='background:var(--vert)'>💵 Enregistrer l'encaissement</button><div class='info' id='enM'></div></div>";
     montrer("vueListe");
-    function info() { var f = F.filter(function (x) { return x.id === $("enF").value; })[0]; $("enI").textContent = f ? "Crédité sur " + f.benef + " (compte du contrat)." : ""; }
+    function info() { var f = F.filter(function (x) { return cleFac(x) === $("enF").value; })[0]; $("enI").textContent = f ? "Crédité sur " + f.benef + " (compte du contrat)." : ""; }
     $("enF").onchange = info; info();
     $("enEnv").onclick = function () {
       var f = F.filter(function (x) { return x.id === $("enF").value; })[0], dt = $("enD").value;
       if (!f || !dt) { $("enM").textContent = "⛔ Facture et date."; return; }
       if (!confirm("Encaissement " + f.id + " : " + gnf(f.montant) + " " + f.devise + " le " + dt.split("-").reverse().join("/") + " sur " + f.benef + " ?")) return;
-      envoyerCom("recouvrement", { facture: f.id, date: dt }, "Encaissement " + f.id, function () { ficheFactureCom(f.id); });
+      envoyerCom("recouvrement", { facture: f.id, dateFacture: f.date, date: dt }, "Encaissement " + f.id, function () { ficheFactureCom(cleFac(f)); });
     };
   }
   function formulaireRelanceCom(f) {
@@ -2813,7 +2835,7 @@
       "<label>Compte rendu</label><textarea id='rlC' rows='3'></textarea><label>Prochaine relance</label><input id='rlP' type='date' value='" + dateISO(Date.now() + 7 * 86400000) + "'>" +
       "<button class='bouton' id='rlEnv'>Enregistrer</button></div>";
     montrer("vueListe");
-    $("rlEnv").onclick = function () { envoyerCom("relance", { facture: f.id, client: f.client, mode: $("rlM").value, commentaire: $("rlC").value.trim(), prochaine: $("rlP").value }, "Relance " + f.id, function () { ficheFactureCom(f.id); }); };
+    $("rlEnv").onclick = function () { envoyerCom("relance", { facture: f.id, client: f.client, mode: $("rlM").value, commentaire: $("rlC").value.trim(), prochaine: $("rlP").value }, "Relance " + f.id, function () { ficheFactureCom(cleFac(f)); }); };
   }
 
   /* ---------- 🎯 Missions : créer, assigner, check-list, suivi ; clôture par DG / WALID ---------- */
@@ -4192,7 +4214,7 @@
       L.push({ rub: "👥", t: e.type + " · " + e.personnel, s: "Événement RH à valider · " + e.no, moi: true, et: "À valider", q: e.date || 0, ouvrir: function () { afficherRH(); if (typeof ouvrirEvRH === "function") ouvrirEvRH(e.no); } });
     });
     if (S.rh && droitRH() && S.rh.cb) cbAlertes(S.rh).filter(function (a) { return a.niv <= 2; }).forEach(function (a) {
-      L.push({ rub: "👥", t: a.t, s: a.no, moi: a.niv === 1 ? S.rh.role === "DG" : true, et: a.niv === 1 ? "Congés / billets à valider" : "Congés / voyages proches", q: 0, ouvrir: function () { afficherRH("cb"); CBV.fiche = a.no; afficherRH(); } });
+      L.push({ rub: "👥", t: a.t, s: a.no, moi: a.niv === 1 ? S.rh.role === "DG" : true, et: a.niv === 1 ? "Congés / billets à valider" : "Congés / voyages proches", q: 0, cb: a.cle ? a : null, ouvrir: function () { afficherRH("cb"); CBV.fiche = a.no; afficherRH(); } });
     });
     if (S.stockv && droitStockVal()) S.stockv.sorties.filter(function (x) { return x.statut === "En attente"; }).forEach(function (x) {
       L.push({ rub: "📦", t: x.no + " · sortie de stock", s: x.resume + " · " + x.agent, moi: !!S.stockv.direction, et: "Sorties à valider", q: x.saisi, ouvrir: function () { afficherStockVal(x.no); } });
@@ -4202,7 +4224,7 @@
         L.push({ rub: "🎯", t: m.titre, s: (m.statut === "À clôturer" ? "Signalée terminée : à clôturer" : "Échéance " + jourLib(m.echeance)) + " · " + m.assignes.join(", "), moi: true, et: m.statut === "À clôturer" ? "À clôturer" : "Échéance proche", q: m.echeance || 0, ouvrir: function () { afficherMis(); ficheMis(m.id); } });
       }); }
     if (S.com && droitCom()) comRetards().forEach(function (f) {
-      L.push({ rub: "🤝", t: f.id + " · " + f.client, s: "Facture en retard (" + jours(f.echeance) + " j) · " + gnf(f.montant) + " " + f.devise, moi: false, et: "Factures en retard", q: f.echeance, ouvrir: function () { afficherCom(); ficheFactureCom(f.id); } });
+      L.push({ rub: "🤝", t: f.id + " · " + f.client, s: "Facture en retard (" + jours(f.echeance) + " j) · " + gnf(f.montant) + " " + f.devise, moi: false, et: "Factures en retard", q: f.echeance, ouvrir: function () { afficherCom(); ficheFactureCom(cleFac(f)); } });
     });
     return L.sort(function (a, b) { return (b.moi ? 1 : 0) - (a.moi ? 1 : 0) || (b.q || 0) - (a.q || 0); });
   }
@@ -4252,7 +4274,7 @@
             var GR = groupesNotifs(A), IT = CLOCHE.items = [];
             function carteN(x, retrait) { IT.push(x); var i = IT.length - 1;
               return "<div data-ar='" + i + "' style='cursor:pointer;margin:8px 12px 8px " + (retrait ? 34 : 12) + "px;padding:12px 14px;border-radius:12px;background:var(--fond);border:1px solid var(--bord)" + (x.moi ? ";border-left:4px solid var(--cuivre)" : "") + "'>" +
-                "<div style='font-weight:700'>" + (x.moi ? "👉 " : "") + esc(x.t) + "</div><div class='info' style='margin:4px 0 0'>" + esc(x.s) + "</div></div>"; }
+                "<div style='font-weight:700'>" + (x.moi ? "👉 " : "") + esc(x.t) + "</div><div class='info' style='margin:4px 0 0'>" + esc(x.s) + "</div>" + (x.cb ? cbBoutons(i) : "") + "</div>"; }
             function ouvert(k, def) { return CLOCHE.ouv[k] !== undefined ? CLOCHE.ouv[k] : def; }
             return GR.map(function (g) {
               var o = ouvert(g.rub, g.moi > 0);
@@ -4274,6 +4296,7 @@
           })();
         montrer("vueListe");
         Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-ar]"), function (el) { el.onclick = function () { CLOCHE.items[+el.getAttribute("data-ar")].ouvrir(); }; });
+        cbLierBoutons($("vueListe"), CLOCHE.items.map(function (x) { return x.cb; }), function () { afficherNotifs(); });
         Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-gr]"), function (el) { el.onclick = function () { var k = el.getAttribute("data-gr");
           var cur = CLOCHE.ouv[k] !== undefined ? CLOCHE.ouv[k] : el.getAttribute("data-def") === "1"; CLOCHE.ouv[k] = !cur; afficherNotifs(); }; });
         Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-cl]"), function (b) { b.onclick = function () { CLOCHE.onglet = b.getAttribute("data-cl"); afficherNotifs(); }; });
