@@ -1,8 +1,8 @@
 // Service worker : garde l'application sur le téléphone pour qu'elle s'ouvre sans réseau.
 // Changer VERSION à chaque mise à jour des fichiers de l'application.
-var VERSION = "duocore-2026-11-14-KK";
+var VERSION = "duocore-2026-11-14-KL";
 var FICHIERS = ["./", "index.html", "app.js", "config.js", "manifest.webmanifest",
-  "icone-192.png", "icone-512.png", "notif-finances.png", "notif-rh.png", "notif-commercial.png", "notif-missions.png", "notif-stockval.png", "notif-maj.png", "notif-accueil.png", "notif-planif.png", "icone-maskable-512.png", "apple-touch-icon.png", "duocore-192.png", "duocore-512.png", "duocore-maskable-512.png"];
+  "icone-192.png", "icone-512.png", "notif-finances.png", "notif-rh.png", "notif-commercial.png", "notif-missions.png", "notif-stockval.png", "notif-maj.png", "notif-accueil.png", "notif-planif.png", "icone-maskable-512.png", "apple-touch-icon.png", "aide.js", "duocore-192.png", "duocore-512.png", "duocore-maskable-512.png"];
 var JSQR = "https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js";
 
 // Installation : fichiers téléchargés un par un (progression envoyée à l'app : barre de mise à jour).
@@ -30,7 +30,7 @@ self.addEventListener("message", function (e) { if (e.data && e.data.type === "a
 
 self.addEventListener("activate", function (e) {
   e.waitUntil(caches.keys().then(function (cles) {
-    return Promise.all(cles.filter(function (k) { return k !== VERSION; }).map(function (k) { return caches.delete(k); }));
+    return Promise.all(cles.filter(function (k) { return k !== VERSION && k !== "duocore-aide"; }).map(function (k) { return caches.delete(k); }));
   }).then(function () { return self.clients.claim(); }));
 });
 
@@ -80,6 +80,13 @@ self.addEventListener("fetch", function (e) {
   // Serveur Apps Script : jamais en cache (toujours les données du moment).
   if (url.hostname.indexOf("google") !== -1) return;
   if (url.origin !== location.origin && req.url !== JSQR) return;
+  // Images du manuel (aide/*.jpg) : cache durable, gardé d'une version à l'autre (téléchargées à la 1re consultation).
+  if (url.pathname.indexOf("/aide/") >= 0) {
+    e.respondWith(caches.open("duocore-aide").then(function (c) { return c.match(req).then(function (m) {
+      return m || fetch(req).then(function (r) { if (r && r.ok) c.put(req, r.clone()); return r; });
+    }); }));
+    return;
+  }
   // Ouverture de l'application (avec ou sans ?bdc=…&cle=…) : la page en cache.
   if (req.mode === "navigate") {
     // Cache d'abord (réseau lent à Conakry), mise à jour en arrière-plan.

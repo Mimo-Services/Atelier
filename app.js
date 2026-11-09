@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 KK";
+  var VERSION_APP = "2026-11-14 KL";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -392,6 +392,7 @@
     Array.prototype.forEach.call($("tuiles").querySelectorAll("[data-t]"), function (el) {
       el.onclick = function () {
         var id = el.getAttribute("data-t");
+        AIDE.ctx = AIDE_TUILE[id] || (id.indexOf("form:") === 0 ? "magasins" : "base");
         if (id === "scan") demarrerScan();
         else if (id === "manuel") montrer("vueManuel");
         else if (id.indexOf("form:") === 0) ouvrirFormulaire(id.substring(5));
@@ -2994,7 +2995,7 @@
     function info() { var f = F.filter(function (x) { return cleFac(x) === $("enF").value; })[0]; $("enI").textContent = f ? "Crédité sur " + f.benef + " (compte du contrat)." : ""; }
     $("enF").onchange = info; info();
     $("enEnv").onclick = function () {
-      var f = F.filter(function (x) { return x.id === $("enF").value; })[0], dt = $("enD").value;
+      var f = F.filter(function (x) { return cleFac(x) === $("enF").value; })[0], dt = $("enD").value;
       if (!f || !dt) { $("enM").textContent = "⛔ Facture et date."; return; }
       if (!confirm("Encaissement " + f.id + " : " + gnf(f.montant) + " " + f.devise + " le " + dt.split("-").reverse().join("/") + " sur " + f.benef + " ?")) return;
       envoyerCom("recouvrement", { facture: f.id, dateFacture: f.date, date: dt }, "Encaissement " + f.id, function () { ficheFactureCom(cleFac(f)); });
@@ -4391,7 +4392,7 @@
     if (S.rh && droitRH() && S.rh.pr) pmAlertes(S.rh).forEach(function (a) {
       L.push({ rub: "👥", t: a.t, s: a.no, moi: a.niv === 1, et: a.et, q: 0, ouvrir: function () { afficherRH(a.no); } });
     });
-    if (S.stockv && droitStockVal()) S.stockv.sorties.filter(function (x) { return x.statut === "En attente"; }).forEach(function (x) {
+    if (S.stockv && droitStockVal()) (S.stockv.sorties || []).filter(function (x) { return x.statut === "En attente"; }).forEach(function (x) {
       L.push({ rub: "📦", t: x.no + " · sortie de stock", s: x.resume + " · " + x.agent, moi: !!S.stockv.direction, et: "Sorties à valider", q: x.saisi, ouvrir: function () { afficherStockVal(x.no); } });
     });
     if (S.mis && droitMis()) { var M = S.mis, fin = misAuj() + 86400000;
@@ -4436,6 +4437,68 @@
       var E = ordreE.map(function (e) { return ET[e]; }).sort(function (a, b) { return (b.moi ? 1 : 0) - (a.moi ? 1 : 0); });
       return { rub: rb[0], lib: rb[1], L: out, E: E, n: L.length, moi: L.filter(function (x) { return x.moi; }).length };
     }).filter(function (g) { return g.n; });
+  }
+
+  /* ---------- ❓ Aide : manuel d'utilisation (aide.js + images aide/*.jpg), recherche, filtré par droits ---------- */
+  var AIDE = { ctx: "", rub: "", q: "", fiche: "" };
+  var AIDE_TUILE = { scan: "atelier", manuel: "atelier", journal: "atelier", avancement: "atelier", planif: "planif", magasins: "magasins", stockval: "magasins",
+    finances: "finances", treso: "treso", rh: "rh", commercial: "commercial", repartition: "repartition", missions: "missions" };
+  var AIDE_RUBS = [["base", "📱", "Démarrer & appareil"], ["atelier", "📷", "Atelier"], ["planif", "🗂️", "Planification"], ["magasins", "🏬", "Magasins"], ["finances", "💰", "Finances"],
+    ["treso", "🏦", "Trésorerie"], ["rh", "👥", "RH"], ["commercial", "🤝", "Commercial"], ["repartition", "📊", "Répartition"], ["missions", "🎯", "Missions"], ["notifs", "🔔", "Notifications"]];
+  function chargerAide() {
+    if (window.AIDE_FICHES) return Promise.resolve();
+    return new Promise(function (ok, ko) { var sc = document.createElement("script"); sc.src = "aide.js"; sc.onload = function () { ok(); }; sc.onerror = function () { ko(new Error("manuel indisponible (réseau nécessaire la 1re fois)")); }; document.head.appendChild(sc); });
+  }
+  function aideTags() {
+    var d = (S.formulaires && S.formulaires.droits) || {}, nom = String((S.agent && S.agent.nom) || "").toUpperCase(), T = { tous: 1 };
+    if (S.agent) T.agent = 1;
+    ["planif", "stock", "finances", "rh", "commercial", "treso", "comptable"].forEach(function (k) { if (d[k]) T[k] = 1; });
+    if (d.validation) { T.direction = 1; T.finances = 1; }
+    if (d.validation === "DG" || nom === "DG") { ["planif", "stock", "finances", "rh", "commercial", "treso", "comptable", "direction", "dg", "dirNom"].forEach(function (k) { T[k] = 1; }); }
+    if (nom === "DG" || nom === "WALID") T.dirNom = 1;
+    return T;
+  }
+  function aideNorm(x) { return String(x || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/<[^>]+>/g, " "); }
+  function aideVisibles() { var T = aideTags(); return (window.AIDE_FICHES || []).filter(function (f) { return (f.droits || ["tous"]).some(function (k) { return T[k]; }); }); }
+  function afficherAide(rub, fiche) {
+    $("titre").textContent = "Aide";
+    if (rub !== undefined) { AIDE.rub = rub || ""; AIDE.fiche = fiche || ""; AIDE.q = ""; }
+    $("vueListe").innerHTML = "<div class='carte'><h3>❓ Aide</h3><p class='info'>⏳ Chargement du manuel…</p></div>"; montrer("vueListe");
+    chargerAide().then(dessinerAide, function (e) { $("vueListe").innerHTML = "<div class='carte'><h3>❓ Aide</h3><p class='info'>⛔ " + esc(e.message) + "</p></div>"; });
+  }
+  function dessinerAide() {
+    var V = aideVisibles(), f = AIDE.fiche ? V.filter(function (x) { return x.id === AIDE.fiche; })[0] : null;
+    if (f) { ficheAide(f, V); return; }
+    var mots = aideNorm(AIDE.q).split(/\s+/).filter(String);
+    var L = V.filter(function (x) { if (AIDE.rub && !mots.length && x.rub !== AIDE.rub) return false;
+      if (!mots.length) return true; var t = aideNorm(x.titre + " " + x.mots + " " + x.intro + " " + (x.etapes || []).join(" ") + " " + (x.notes || []).join(" "));
+      return mots.every(function (m) { return t.indexOf(m) >= 0; }); });
+    if (mots.length) L.sort(function (a, b) { function sc(x) { var t = aideNorm(x.titre + " " + x.mots); return mots.filter(function (m) { return t.indexOf(m) >= 0; }).length; } return sc(b) - sc(a); });
+    var nR = {}; V.forEach(function (x) { nR[x.rub] = (nR[x.rub] || 0) + 1; });
+    var h = "<div class='carte pleine'><h3>❓ Aide — manuel DuoCore</h3><input id='aiQ' placeholder='🔎 Rechercher : billet, facture, scanner, clôturer…' value='" + esc(AIDE.q) + "' style='font-size:16px'>" +
+      "<div class='ligne' style='flex-wrap:wrap;gap:6px;margin-top:8px'><button class='bouton " + (AIDE.rub ? "second" : "") + "' data-ar='' style='width:auto;flex:0 0 auto;padding:6px 10px;margin:0'>Tout (" + V.length + ")</button>" +
+      AIDE_RUBS.filter(function (r) { return nR[r[0]]; }).map(function (r) { return "<button class='bouton " + (AIDE.rub === r[0] ? "" : "second") + "' data-ar='" + r[0] + "' style='width:auto;flex:0 0 auto;padding:6px 10px;margin:0'>" + r[1] + " " + r[2] + " (" + nR[r[0]] + ")</button>"; }).join("") + "</div>" +
+      (mots.length && AIDE.rub ? "<div class='info'>Recherche dans tout le manuel.</div>" : "") + "</div>";
+    h += L.map(function (x) { var r = AIDE_RUBS.filter(function (y) { return y[0] === x.rub; })[0] || ["", "📄", ""];
+      return "<div class='carte' data-af='" + esc(x.id) + "' style='cursor:pointer'><b>" + r[1] + " " + esc(x.titre) + "</b><div class='info'>" + esc(x.intro || "") + (x.img ? " 🖼️" : "") + "</div></div>"; }).join("") ||
+      "<p class='info' style='padding:0 4px'>Aucune fiche ne correspond. Essayez un autre mot (ex. « paiement », « stock »).</p>";
+    $("vueListe").innerHTML = h;
+    var q = $("aiQ"); q.oninput = function () { AIDE.q = q.value; var pos = q.selectionStart; dessinerAide(); var q2 = $("aiQ"); q2.focus(); try { q2.setSelectionRange(pos, pos); } catch (e) {} };
+    Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-ar]"), function (b) { b.onclick = function () { AIDE.rub = b.getAttribute("data-ar"); dessinerAide(); }; });
+    Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-af]"), function (b) { b.onclick = function () { AIDE.fiche = b.getAttribute("data-af"); dessinerAide(); window.scrollTo(0, 0); }; });
+  }
+  function ficheAide(f, V) {
+    var r = AIDE_RUBS.filter(function (y) { return y[0] === f.rub; })[0] || ["", "📄", ""];
+    var voir = (f.voir || []).map(function (id) { return V.filter(function (x) { return x.id === id; })[0]; }).filter(Boolean);
+    var h = "<div class='carte pleine'><div class='ligne' style='justify-content:space-between'><div class='info' style='margin:0'>" + r[1] + " " + esc(r[2]) + "</div><button class='bouton second' id='aiL' style='width:auto;flex:0 0 auto;margin:0'>‹ Liste</button></div>" +
+      "<h3 style='margin-top:8px'>" + esc(f.titre) + "</h3><div class='info'>" + esc(f.qui || "") + "</div>" + (f.intro ? "<p>" + esc(f.intro) + "</p>" : "") +
+      (f.img ? "<img src='aide/" + esc(f.img) + ".jpg?v=" + esc(window.AIDE_IMG_V || "1") + "' alt='' loading='lazy' style='max-width:100%;border-radius:10px;border:1px solid var(--bord);margin:6px 0' onerror=\"this.style.display='none'\">" : "") +
+      "<ol style='padding-left:22px;line-height:1.55'>" + (f.etapes || []).map(function (e) { return "<li style='margin:6px 0'>" + e + "</li>"; }).join("") + "</ol>" +
+      ((f.notes || []).length ? "<div style='margin-top:8px'>" + f.notes.map(function (n) { return "<div class='info' style='margin:6px 0;font-size:14px'>" + n + "</div>"; }).join("") + "</div>" : "") +
+      (voir.length ? "<div style='margin-top:10px'><b>Voir aussi</b>" + voir.map(function (x) { return "<div data-af='" + esc(x.id) + "' style='cursor:pointer;color:var(--cuivre);margin:4px 0'>→ " + esc(x.titre) + "</div>"; }).join("") + "</div>" : "") + "</div>";
+    $("vueListe").innerHTML = h;
+    $("aiL").onclick = function () { AIDE.fiche = ""; dessinerAide(); };
+    Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-af]"), function (b) { b.onclick = function () { AIDE.fiche = b.getAttribute("data-af"); dessinerAide(); window.scrollTo(0, 0); }; });
   }
   function afficherNotifs() {
     lire("notifs").then(function (L) {
@@ -5028,7 +5091,8 @@
   ouvrirFormulaire = NAV_FN.ouvrirFormulaire;
   afficherNotifs = NAV_FN.afficherNotifs;
 
-  $("btnNotifs").onclick = function () { afficherNotifs(); };
+  $("btnNotifs").onclick = function () { AIDE.ctx = "notifs"; afficherNotifs(); };
+  $("btnAide").onclick = function () { afficherAide($("vueAccueil").style.display === "block" ? "" : AIDE.ctx); };
   $("btnRetour").onclick = function () {
     if (FM_OUVERT && $("vueLot").style.display !== "none" && !S.lotOuvert) { var id = FM_OUVERT; FM_OUVERT = null; ouvrirSaisieBDC(id); return; }
     FM_OUVERT = null;
