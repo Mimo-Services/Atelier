@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 KO";
+  var VERSION_APP = "2026-11-14 KQ";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -1079,11 +1079,24 @@
     if (finAttente(d.no).length) return false;
     if (role && ((d.statut === "En attente Walid" && role === "Walid") || (d.statut === "En attente DG" && role === "DG"))) return true;
     if (d.proposition && !d.proposition.etat) return role === "DG";
+    if (d.doublon && d.doublon.etat === "attente" && d.statut === "À exécuter") return role === "DG" || role === "Walid";
+    if (finDoublonsExec(d).length) return true;
     if (d.demandeur === F.auto && d.statut === "À exécuter" && (role || F.comptable || F.rh)) return true;
     return d.demandeur === (S.agent && S.agent.nom) && (d.statut === "À corriger" || d.statut === "À exécuter");
   }
   // « À traiter » : toute opération non close (ni exécutée, refusée, annulée, ni facture soldée) ; 👉 = action attendue de vous.
-  function finOuverte(d) { return ["Exécutée", "Refusée", "Annulée"].indexOf(d.statut) < 0 && !(d.statut === "Validée" && (!d.solde || d.solde.reste <= 0)); }
+  // Doublon possible déjà exécuté : demande exécutée semblable à une autre exécutée avant elle (≤ 7 j), non encore tranchée par Walid / le DG.
+  function finDoublonsExec(d) {
+    if (!S.fin || d.statut !== "Exécutée" || (d.doublon && d.doublon.etat) || !(S.fin.role === "DG" || S.fin.role === "Walid")) return [];
+    var tx = d.execute || d.date;
+    return S.fin.demandes.filter(function (z) {
+      var tz = z.execute || z.date;
+      return z.no !== d.no && z.statut === "Exécutée" && (!d.groupe || z.groupe !== d.groupe) && z.type === d.type && z.op === d.op && z.compte === d.compte && z.contrepartie === d.contrepartie
+        && z.devise === d.devise && Math.abs(z.montant - d.montant) <= 0.5 && (d.fournisseur || "") === (z.fournisseur || "") && (d.personnel || "") === (z.personnel || "")
+        && (tz < tx || (tz === tx && z.no < d.no)) && tx - tz < 7 * 86400000;
+    });
+  }
+  function finOuverte(d) { return (["Exécutée", "Refusée", "Annulée"].indexOf(d.statut) < 0 && !(d.statut === "Validée" && (!d.solde || d.solde.reste <= 0))) || finDoublonsExec(d).length > 0; }
   function finNbOuvertes() { return S.fin ? S.fin.demandes.filter(finOuverte).length : 0; }
   function finNbATraiter() { return S.fin ? S.fin.demandes.filter(finATraiter).length : 0; }
   var COUL_ST = { "En attente Walid": "#e65100", "En attente DG": "#e65100", "À corriger": "#b26a00", "Refusée": "#c62828", "Validée": "#2e7d32", "À exécuter": "#1565c0", "Exécutée": "#2e7d32", "Annulée": "#777" };
@@ -1228,7 +1241,7 @@
           envoyerFin("decider", { no: d.no, version: d.version, decision: x[1], commentaire: com }, (x[1] === "valider" ? "Validation " : x[1] === "refuser" ? "Refus " : "Correction ") + d.no, d.no);
         };
       });
-    } else if (d.statut === "À exécuter" && d.proposition && !d.proposition.etat) {
+    } else if (d.statut === "À exécuter" && ((d.proposition && !d.proposition.etat) || (d.doublon && d.doublon.etat === "attente"))) {
       A.innerHTML = "";   // exécution suspendue : la carte de la proposition s'affiche plus bas
     } else if (d.statut === "À exécuter" && (d.demandeur === moi || role || (d.demandeur === F.auto && (F.comptable || F.rh)))) {
       var auto = d.demandeur === F.auto;
@@ -1290,14 +1303,43 @@
         envoyerFin("proposerAnnul", { no: d.no, version: d.version, commentaire: m.trim() }, "Annulation demandée " + d.no, d.no);
       };
     }
-    // DG : annuler une demande déjà exécutée (doublon, erreur de saisie).
-    if (role === "DG" && d.statut === "Exécutée") {
-      A.insertAdjacentHTML("beforeend", "<div class='carte'><button class='bouton second' id='fnAnX'>🚫 Annuler cette exécution (DG)</button><div class='info'>Doublon ou erreur : la demande passe « Annulée ». " +
-        "L'écriture de la feuille Base est à supprimer à la main (la ligne vous est indiquée).</div></div>");
-      $("fnAnX").onclick = function () {
-        var m = prompt("Annuler l'exécution de " + d.no + " (" + gnf(d.montant) + " " + d.devise + ") : motif (ex. doublon de D-…) ?"); if (m === null) return;
+    // ⚠️ Doublon possible déjà exécuté (ex. même remise saisie deux fois) : affiché seulement dans ce cas.
+    var DX = finDoublonsExec(d);
+    if (DX.length) {
+      A.insertAdjacentHTML("beforeend", "<div class='carte' style='border-left:4px solid #ef6c00'><h3>⚠️ Doublon possible avec " + esc(DX.map(function (z) { return z.no; }).join(", ")) + "</h3>" +
+        "<div class='info'>" + DX.map(function (z) { return esc(z.no) + " exécutée le " + dateCourte(z.execute || z.date) + " par " + esc(z.demandeur); }).join("<br>") + "<br>Même opération, mêmes comptes, même montant.</div>" +
+        "<div class='ligne'>" + DX.map(function (z) { return "<button class='bouton second fnDxV' data-no='" + esc(z.no) + "'>👁️ Voir " + esc(z.no) + "</button>"; }).join("") + "</div>" +
+        "<div class='ligne'><button class='bouton second' id='fnDxOk'>✅ Pas un doublon</button>" + (role === "DG" ? "<button class='bouton' id='fnAnX'>🚫 Annuler cette exécution</button>" : "") + "</div>" +
+        "<div class='info'>" + (role === "DG" ? "Annuler : la demande passe « Annulée » et son écriture est retirée automatiquement de Base." : "Seul le DG peut annuler une exécution.") + "</div></div>");
+      document.querySelectorAll(".fnDxV").forEach(function (b) { b.onclick = function () { ouvrirDemandeFin(b.getAttribute("data-no")); }; });
+      $("fnDxOk").onclick = function () {
+        if (!confirm(d.no + " n'est pas un doublon de " + DX.map(function (z) { return z.no; }).join(", ") + " ? L'alerte disparaîtra.")) return;
+        envoyerFin("decideDoublon", { no: d.no, confirmer: true, avec: DX.map(function (z) { return z.no; }), commentaire: "" }, "Doublon écarté " + d.no, d.no);
+      };
+      if ($("fnAnX")) $("fnAnX").onclick = function () {
+        var m = prompt("Annuler l'exécution de " + d.no + " (" + gnf(d.montant) + " " + d.devise + ") et retirer son écriture de Base : motif ?", "doublon de " + DX.map(function (z) { return z.no; }).join(", ")); if (m === null) return;
         if (!m.trim()) { alert("⛔ Motif obligatoire."); return; }
-        envoyerFin("annulerExec", { no: d.no, version: d.version, commentaire: m.trim() }, "Annulation exécution " + d.no, d.no);
+        envoyerFin("annulerExec", { no: d.no, commentaire: m.trim() }, "Annulation exécution " + d.no, d.no);
+      };
+    }
+    // ⚠️ Doublon possible détecté à l'exécution : Walid ou le DG confirment ou bloquent ; tout le monde voit l'état.
+    var DB = d.doublon;
+    if (DB) {
+      var hD = "<div class='carte' style='border-left:4px solid " + (DB.etat === "attente" ? "#ef6c00" : DB.etat === "confirmé" ? "#2e7d32" : "#c62828") + "'><h3>⚠️ Doublon possible avec " + esc((DB.avec || []).join(", ")) + "</h3>" +
+        "<div class='info'>" + (DB.apres ? "Signalé après exécution" : "Détecté à l'exécution par " + esc(DB.par)) + " · " + dateCourte(DB.q) + "<br>" +
+        (DB.etat === "attente" ? "⏸️ Exécution suspendue : Walid ou le DG doit décider." : (DB.etat === "confirmé" ? "✅ Pas un doublon" : "🚫 Bloquée") + " — " + esc((DB.rep || {}).par || "") + (DB.rep && DB.rep.c ? " : " + esc(DB.rep.c) : "")) + "</div>";
+      if (DB.etat === "attente" && (role === "DG" || role === "Walid"))
+        hD += "<div class='ligne'>" + (DB.avec || []).map(function (n) { return "<button class='bouton second fnDbV' data-no='" + esc(n) + "'>👁️ Voir " + esc(n) + "</button>"; }).join("") + "</div>" +
+          "<div class='ligne'><button class='bouton' id='fnDbOk'>✅ Pas un doublon (exécuter)</button><button class='bouton second' id='fnDbNo'>🚫 Bloquer (doublon)</button></div>";
+      A.insertAdjacentHTML("beforeend", hD + "</div>");
+      document.querySelectorAll(".fnDbV").forEach(function (b) { b.onclick = function () { ouvrirDemandeFin(b.getAttribute("data-no")); }; });
+      if ($("fnDbOk")) $("fnDbOk").onclick = function () {
+        if (!confirm("Confirmer que " + d.no + " n'est PAS un doublon de " + DB.avec.join(", ") + " ? Elle pourra être exécutée.")) return;
+        envoyerFin("decideDoublon", { no: d.no, confirmer: true, commentaire: "" }, "Doublon écarté " + d.no, d.no);
+      };
+      if ($("fnDbNo")) $("fnDbNo").onclick = function () {
+        var m = prompt("Bloquer " + d.no + " (doublon de " + DB.avec.join(", ") + ") : elle passera « Annulée ». Commentaire ?", "doublon de " + DB.avec.join(", ")); if (m === null) return;
+        envoyerFin("decideDoublon", { no: d.no, confirmer: false, commentaire: m.trim() }, "Doublon bloqué " + d.no, d.no);
       };
     }
     // Proposition de Walid : le DG accepte ou refuse ; tout le monde voit l'état.
@@ -1370,6 +1412,10 @@
         if (r.no || retour) ouvrirDemandeFin(r.no || retour); else afficherFinances();
         rafraichirFin().catch(function () {});   // complet en arrière-plan (factures, soldes…)
         return;
+      }
+      if (!r.ok && r.doublonExec) {   // exécution suspendue : Walid / DG décident sur la fiche
+        alert(r.titre + "\n\n" + r.message);
+        return rafraichirFin().catch(function () {}).then(function () { if (retour) ouvrirDemandeFin(retour); else afficherFinances(); });
       }
       if (!r.ok && r.doublon) {   // même opération déjà saisie : l'opérateur confirme ou abandonne
         if (confirm(r.titre + "\n\n" + r.message + "\n\nVérifiez avant d'envoyer.\nOK = envoyer quand même · Annuler = ne pas envoyer")) {
@@ -4457,7 +4503,7 @@
     if (S.fin && droitFin()) S.fin.demandes.filter(finOuverte).forEach(function (d) {
       var h = d.historique || [], der = h[h.length - 1] || {}, corr = ((d.proposition && !d.proposition.etat) || /Correction demandée au DG/.test(der.act || "")) && S.fin.role === "DG";
       L.push({ rub: "💰", t: d.no + " · " + libelleFin(d), s: statutFin(d) + " · " + gnf(d.montant) + " " + d.devise + " · " + d.demandeur + (corr ? " · 📝 " + (d.proposition && d.proposition.type === "annul" ? "annulation" : "modification") + " demandée : " + (der.c || "") : ""),
-               moi: finATraiter(d) || corr, q: d.date, et: corr ? "Proposition à décider" : statutFin(d), ouvrir: function () { afficherFinances(); ouvrirDemandeFin(d.no); },
+               moi: finATraiter(d) || corr, q: d.date, et: corr ? "Proposition à décider" : finDoublonsExec(d).length ? "⚠️ Doublon possible avec " + finDoublonsExec(d).map(function (z) { return z.no; }).join(", ") : statutFin(d), ouvrir: function () { afficherFinances(); ouvrirDemandeFin(d.no); },
                sal: d.type === "Paiement RH" && d.motifRH === "SALAIRE (RH)" && d.demandeur === S.fin.auto ? { mois: d.dateEffet || d.date, statut: statutFin(d), mt: d.montant, dev: d.devise, nom: d.personnel } : null });
     });
     if (S.rh && S.rh.direction && droitRH()) S.rh.evenements.filter(function (e) { return e.statut === "En attente Walid"; }).forEach(function (e) {
