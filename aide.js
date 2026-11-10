@@ -1,5 +1,5 @@
 /* Manuel DuoCore : fiches d’aide (❓). Images : aide/<img>.jpg */
-window.AIDE_IMG_V = "KM";
+window.AIDE_IMG_V = "KN";
 window.AIDE_FICHES = [
  {
   "id": "base-aide",
@@ -2939,6 +2939,136 @@ window.AIDE_FICHES = [
   ],
   "notes": [
    "💡 Toucher une notification du téléphone ouvre directement l'écran concerné. Titre avec ⏳ : attendez la synchronisation."
+  ]
+ },
+ {
+  "id": "tr-audit-banque",
+  "rub": "treso",
+  "titre": "Faire l’audit d’un compte bancaire avec le relevé",
+  "droits": [
+   "dirNom"
+  ],
+  "qui": "Qui : Walid et le DG.",
+  "mots": "audit banque releve rapprochement pointage samedi excel pdf comparer anomalie compte bancaire",
+  "intro": "Chaque samedi : le relevé de la banque est comparé aux écritures du compte dans Base. Les lignes identiques sont pointées ; les écarts sont listés.",
+  "etapes": [
+   "Téléchargez le relevé sur le site de la banque, de préférence en <b>Excel (.xlsx)</b> (sinon en PDF).",
+   "Touchez <b>🏦 Trésorerie</b> puis <b>🔎 Audit bancaire</b>.",
+   "Choisissez le <b>Compte bancaire</b> du relevé.",
+   "Touchez le champ <b>Relevé de la banque</b> et choisissez le fichier : l’app affiche le nombre de lignes lues, la période et les totaux débits / crédits.",
+   "Touchez <b>🔎 Comparer avec Base</b>.",
+   "Lisez le résultat : ✅ pointées, 🔁 prélèvements récurrents, ⚠️ sur le relevé mais absentes de Base, ❓ dans Base mais absentes du relevé, et l’écart de solde.",
+   "Touchez <b>✍️ Inscrire les lignes cochées dans Base</b> pour les prélèvements récurrents (frais, commissions, TVA…).",
+   "Pour chaque ligne ⚠️ : <b>➕ Créer l’écriture</b> (formulaire Finances prérempli) ou <b>🔁 En faire un récurrent</b>."
+  ],
+  "notes": [
+   "💡 Le fichier est lu sur l’appareil : seules les lignes (date, libellé, montants) sont envoyées.",
+   "💡 Une ligne est pointée si le montant et le sens sont identiques et la date proche (± 5 jours).",
+   "⚠️ Ancien format Excel 97-2003 : ouvrez-le et enregistrez-le en .xlsx, ou utilisez le PDF.",
+   "💡 Relancez la comparaison après les corrections : l’écart doit tomber à 0."
+  ],
+  "voir": [
+   "tr-regles",
+   "tr-audit-caisse",
+   "tr-historique-audits"
+  ]
+ },
+ {
+  "id": "tr-regles",
+  "rub": "treso",
+  "titre": "Déclarer un prélèvement récurrent (frais bancaires…)",
+  "droits": [
+   "dirNom"
+  ],
+  "qui": "Qui : Walid et le DG.",
+  "mots": "prelevement recurrent regle frais bancaire commission tva udirect rtgs automatique anomalie ignorer",
+  "intro": "Une règle « le libellé contient … » fait inscrire d’office ces lignes du relevé dans Base, sans les signaler comme anomalies.",
+  "etapes": [
+   "Touchez <b>🏦 Trésorerie</b> puis <b>⚙️ Prélèvements récurrents</b>.",
+   "Dans <b>Le libellé contient</b>, tapez un texte toujours présent (ex. « Frais UDIRECT », « Comm. RTGS »).",
+   "Choisissez le <b>Sens</b> (Débit pour un prélèvement), l’<b>Opération</b> et la <b>Catégorie</b>.",
+   "Laissez <b>Compte</b> sur « tous » ou choisissez un compte précis.",
+   "Touchez <b>💾 Enregistrer</b>. Touchez ✏️ pour modifier ou supprimer une règle."
+  ],
+  "notes": [
+   "💡 Depuis le résultat d’un audit, « 🔁 En faire un récurrent » préremplit la règle avec le libellé.",
+   "⚠️ Choisissez un texte précis : un mot trop court reconnaîtrait d’autres opérations."
+  ],
+  "voir": [
+   "tr-audit-banque"
+  ]
+ },
+ {
+  "id": "tr-audit-caisse",
+  "rub": "treso",
+  "titre": "Faire l’audit d’une caisse (comptage)",
+  "droits": [
+   "treso",
+   "dirNom"
+  ],
+  "qui": "Qui : le responsable de la caisse, Walid et le DG.",
+  "mots": "audit caisse comptage billets especes ecart compter samedi",
+  "intro": "On compte l’argent de la caisse ; l’app compare au solde de Base et enregistre l’écart.",
+  "etapes": [
+   "Comptez les billets et pièces de la caisse.",
+   "Touchez <b>🏦 Trésorerie</b> puis <b>💵 Audit de caisse</b>.",
+   "Choisissez la <b>Caisse</b> : le solde de Base s’affiche.",
+   "Saisissez le <b>Montant compté</b> et un commentaire si besoin.",
+   "Touchez <b>✅ Enregistrer le comptage</b> : « Caisse juste » ou l’écart s’affiche."
+  ],
+  "notes": [
+   "💡 Un écart est signalé tout de suite à Walid et au DG.",
+   "💡 Avant de compter, vérifiez que toutes les dépenses du jour sont saisies dans Finances."
+  ],
+  "voir": [
+   "tr-historique-audits"
+  ]
+ },
+ {
+  "id": "tr-historique-audits",
+  "rub": "treso",
+  "titre": "Consulter l’historique des audits",
+  "droits": [
+   "treso",
+   "dirNom"
+  ],
+  "qui": "Qui : agents ayant des comptes à consulter ; Walid et le DG voient tout.",
+  "mots": "historique audits ecarts journal precedent",
+  "intro": "Chaque audit (banque ou caisse) est gardé avec sa date, son auteur et l’écart trouvé.",
+  "etapes": [
+   "Touchez <b>🏦 Trésorerie</b> puis <b>📋 Historique des audits</b>.",
+   "Lisez pour chaque audit : compte, date, résultat, <b>écart</b> (rouge s’il n’est pas nul)."
+  ],
+  "notes": [],
+  "voir": [
+   "tr-audit-banque",
+   "tr-audit-caisse"
+  ]
+ },
+ {
+  "id": "base-apercus",
+  "rub": "base",
+  "titre": "Voir les 5 dernières opérations (aperçu 🕘)",
+  "droits": [
+   "agent"
+  ],
+  "qui": "Qui : tout agent connecté (selon ses droits).",
+  "mots": "apercu dernieres operations historique reperage 5 derniers solde caisse",
+  "intro": "Dans les formulaires, un bandeau 🕘 repliable montre les dernières opérations pour vous repérer, sans encombrer l’écran.",
+  "etapes": [
+   "Dans une demande Finances, choisissez une caisse ou un compte : le bandeau <b>🕘 5 dernières opérations</b> apparaît dessous ; touchez-le pour l’ouvrir (solde compris).",
+   "Paiement RH : derniers paiements de la personne choisie.",
+   "Fournisseur : dernières opérations du fournisseur.",
+   "Magasins (sortie, transfert) : 5 derniers mouvements de l’article.",
+   "Commercial : dernières factures ou derniers BL du client.",
+   "Déclaration d’un lot (scan) : 5 derniers pointages du lot, en haut de l’écran."
+  ],
+  "notes": [
+   "💡 Caisses : seulement celles que vous pouvez consulter ; comptes bancaires : Walid et le DG.",
+   "💡 Comptes, stock et lot demandent le réseau la 1re fois."
+  ],
+  "voir": [
+   "fin-depense-caisse"
   ]
  }
 ];
