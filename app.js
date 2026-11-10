@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 KQ";
+  var VERSION_APP = "2026-11-14 KR";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -1093,8 +1093,21 @@
       var tz = z.execute || z.date;
       return z.no !== d.no && z.statut === "Exécutée" && (!d.groupe || z.groupe !== d.groupe) && z.type === d.type && z.op === d.op && z.compte === d.compte && z.contrepartie === d.contrepartie
         && z.devise === d.devise && Math.abs(z.montant - d.montant) <= 0.5 && (d.fournisseur || "") === (z.fournisseur || "") && (d.personnel || "") === (z.personnel || "")
-        && (tz < tx || (tz === tx && z.no < d.no)) && tx - tz < 7 * 86400000;
+        && (tz < tx || (tz === tx && z.no < d.no)) && tx - tz < 7 * 86400000 && finObjetsProches(z.objet, d.objet);
     });
+  }
+  // Objets semblables : mêmes mots significatifs (≥ 70 % du plus court), repères [..] ignorés (même règle que le script).
+  function finMotsObjet(v) {
+    var VIDES = ["les", "des", "du", "de", "la", "le", "pour", "avec", "sur", "dans", "par", "aux", "une", "un", "et", "mois"], A = [];
+    String(v || "").replace(/\[[^\]]*\]/g, " ").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().split(/[^a-z0-9]+/)
+      .forEach(function (w) { if (w.length >= 3 && VIDES.indexOf(w) < 0 && A.indexOf(w) < 0) A.push(w); });
+    return A;
+  }
+  function finObjetsProches(a, b) {
+    var A = finMotsObjet(a), B = finMotsObjet(b);
+    if (!A.length && !B.length) return true;
+    if (!A.length || !B.length) return false;
+    return A.filter(function (w) { return B.indexOf(w) >= 0; }).length / Math.min(A.length, B.length) >= 0.7;
   }
   function finOuverte(d) { return (["Exécutée", "Refusée", "Annulée"].indexOf(d.statut) < 0 && !(d.statut === "Validée" && (!d.solde || d.solde.reste <= 0))) || finDoublonsExec(d).length > 0; }
   function finNbOuvertes() { return S.fin ? S.fin.demandes.filter(finOuverte).length : 0; }
@@ -1307,7 +1320,7 @@
     var DX = finDoublonsExec(d);
     if (DX.length) {
       A.insertAdjacentHTML("beforeend", "<div class='carte' style='border-left:4px solid #ef6c00'><h3>⚠️ Doublon possible avec " + esc(DX.map(function (z) { return z.no; }).join(", ")) + "</h3>" +
-        "<div class='info'>" + DX.map(function (z) { return esc(z.no) + " exécutée le " + dateCourte(z.execute || z.date) + " par " + esc(z.demandeur); }).join("<br>") + "<br>Même opération, mêmes comptes, même montant.</div>" +
+        "<div class='info'>" + DX.map(function (z) { return esc(z.no) + " exécutée le " + dateCourte(z.execute || z.date) + " par " + esc(z.demandeur); }).join("<br>") + "<br>Même opération, mêmes comptes, même montant, objet semblable.</div>" +
         "<div class='ligne'>" + DX.map(function (z) { return "<button class='bouton second fnDxV' data-no='" + esc(z.no) + "'>👁️ Voir " + esc(z.no) + "</button>"; }).join("") + "</div>" +
         "<div class='ligne'><button class='bouton second' id='fnDxOk'>✅ Pas un doublon</button>" + (role === "DG" ? "<button class='bouton' id='fnAnX'>🚫 Annuler cette exécution</button>" : "") + "</div>" +
         "<div class='info'>" + (role === "DG" ? "Annuler : la demande passe « Annulée » et son écriture est retirée automatiquement de Base." : "Seul le DG peut annuler une exécution.") + "</div></div>");
