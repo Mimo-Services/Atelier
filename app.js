@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 KR";
+  var VERSION_APP = "2026-11-14 KT";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -43,6 +43,7 @@
     file: [],       // déclarations en attente d'envoi (dans l'ordre)
     envoyes: [],    // envoyées et acceptées, pas encore dans les données téléchargées
     aCorriger: [],  // refusées par le serveur
+    journal: [],    // 📤 derniers envois traités par le serveur (boîte « Envoyés »)
     recents: [], derniereSync: 0, lotOuvert: null,
     agent: null,        // { nom, code } : agent connecté pour les saisies (Stock…)
     formulaires: null,  // { genere, droits, formulaires: { stock: {...} } }
@@ -50,7 +51,7 @@
     planifLocal: {}     // saisies faites sur le téléphone, par BDC (affichées tant que le serveur ne les a pas reprises)
   };
   function sauver() {
-    return Promise.all([ecrire("file", S.file), ecrire("envoyes", S.envoyes), ecrire("aCorriger", S.aCorriger), ecrire("recents", S.recents)]);
+    return Promise.all([ecrire("file", S.file), ecrire("envoyes", S.envoyes), ecrire("aCorriger", S.aCorriger), ecrire("recents", S.recents), ecrire("journal", S.journal)]);
   }
 
   /* ---------- Outils ---------- */
@@ -384,8 +385,9 @@
     }
     section("Appareil");
     if (!S.agent && S.url) tuile("connexion", "🔐", "Saisies", "Se connecter");
-    tuile("attente", "⏳", "En attente", S.file.length ? "à envoyer" : "rien", S.file.length ? { badge: S.file.length, bcls: "orange" } : {});
-    tuile("corriger", "⛔", "À corriger", S.aCorriger.length ? "refusés" : "rien", S.aCorriger.length ? { badge: S.aCorriger.length, bcls: "rouge" } : {});
+    var nAtt = S.file.length + S.aCorriger.length;   // seulement ce qui n'est pas passé : suspendus ⛔ + attente réseau
+    tuile("attente", "⏳", "En attente", S.aCorriger.length ? S.aCorriger.length + " suspendu" + (S.aCorriger.length > 1 ? "s" : "") + (S.file.length ? " · " + S.file.length + " à envoyer" : "") : S.file.length ? "à envoyer" : "rien",
+      nAtt ? { badge: nAtt, bcls: S.aCorriger.length ? "rouge" : "orange" } : {});
     tuile("sync", "⇅", "Synchronisation", S.derniereSync ? dateCourte(S.derniereSync) : "jamais");
     tuile("reglages", "⚙️", "Réglages", S.agent ? S.agent.nom : "");
     $("tuiles").innerHTML = t.join("");
@@ -474,50 +476,82 @@
     if (x.type === "planif") return "<b>🗂️ " + esc(x.titre || "Planification") + "</b><br>" + esc(x.resume || "") + "<br><small>" + esc(x.agent) + " · " + dateCourte(x.horodatage) + "</small>";
     if (x.type === "form") return "<b>" + esc(x.titre || "Saisie") + "</b><br>" + esc(x.resume || "") + "<br><small>" + esc(x.agent) + " · " + dateCourte(x.horodatage) + "</small>";
     var o = x.o;
+    if (!o) return "<b>" + esc(x.titre || x.resume || "Envoi") + "</b><br><small>" + esc(x.agent || "") + " · " + dateCourte(x.horodatage) + "</small>";
     return esc(o.cle) + " · " + esc(o.bdc) + "<br>" + esc(o.poste) + libEvt(o) + (o.quantite ? " · " + esc(o.quantite) : "") +
       "<br><small>" + esc(o.operateur) + " · " + dateCourte(x.horodatage) + "</small>";
   }
+  // 📤 Envoyés : copie légère (sans fichiers ni données) des 10 derniers envois traités, pour se situer.
+  function noterEnvoi(it, r) {
+    if (!(r && r.ok)) return;   // refusés : restent en ⛔ Suspendus (S.aCorriger)
+    var dn = it.donnees || {}, no = (r && (r.no || r.id)) || dn.no || (dn.demande && dn.demande.no) || dn.id || "";
+    S.journal = S.journal || [];
+    S.journal.unshift({ jeton: it.jeton, type: it.type, op: it.op || "", titre: it.titre || "", resume: it.resume || "", agent: it.agent, horodatage: it.horodatage, o: it.o || null,
+      no: String(no || ""), recuA: Date.now(), ok: !!(r && r.ok), rt: (r && r.titre) || "", rm: String((r && r.message) || "").split("\n")[0].substring(0, 160) });
+    S.journal = S.journal.filter(function (x, i, A) { return A.findIndex(function (y) { return y.jeton === x.jeton; }) === i; }).slice(0, 10);
+  }
+  function ouvrirEnvoi(x) {
+    if (x.o) return ouvrirLot(x.o.bdc, x.o.cle);
+    if (x.type === "fin" && /^D-\d{4}-\d+$/.test(x.no)) return afficherFinances(x.no);
+    if (x.type === "fin") return afficherFinances();
+    if (x.type === "mis" && typeof ficheMis === "function" && /^M-/.test(x.no)) return ficheMis(x.no);
+    if (x.type === "planif" && x.no && typeof ouvrirBDC === "function") return ouvrirBDC(x.no);
+  }
+  // ⏳ En attente : ⛔ suspendus (refusés par le serveur, à renvoyer) en haut, 📥 attente réseau, ✅ 10 derniers envoyés en bas.
   function afficherListe(type) {
-    var v = $("vueListe"), h;
-    $("titre").textContent = type === "corriger" ? "À corriger" : "En attente";
-    if (type === "corriger") {
-      h = "<p class='info'>Le serveur a refusé ces envois (faits hors ligne) : rien n'a été enregistré. " +
-          "Vérifiez, refaites la bonne saisie si besoin, puis effacez-la de la liste.</p>";
-      h += S.aCorriger.map(function (x, i) {
-        var r = x.r || {};
-        return "<div class='carte ko'><h3>⛔ " + esc(r.titre || "Refusé") + "</h3>" +
-          "<div>" + descriptionItem(x) + "</div>" +
-          "<p style='white-space:pre-line'>" + esc(r.message || "") + "</p>" +
-          (r.details && r.details.length ? "<table>" + r.details.map(function (d) {
-            return "<tr><td>" + esc(d[0]) + "</td><td class='v'>" + esc(d[1]) + "</td></tr>"; }).join("") + "</table>" : "") +
-          "<div class='ligne'>" + (x.o ? "<button class='bouton second' data-ouvrir='" + i + "'>Ouvrir le lot</button>" : "") +
-          (x.type === "planif" && x.donnees ? "<button class='bouton second' data-planif='" + i + "'>Reprendre la saisie</button>" : "") +
-          "<button class='bouton' data-effacer='" + i + "'>Vu, effacer</button></div></div>";
-      }).join("") || "<p>Rien à corriger.</p>";
-    } else {
-      h = "<p class='info'>Ces envois sont gardés sur le téléphone et partiront dès que le réseau revient, " +
-          "avec l'heure de la saisie. Ne les refaites pas.</p>";
-      h += S.file.map(function (x) {
-        return "<div class='carte att'>" + descriptionItem(x) +
-          (x.essais ? "<br><small>" + x.essais + " essai(s)" + (x.erreur ? " — " + esc(x.erreur) : "") + "</small>" : "") + "</div>";
-      }).join("") || "<p>Rien en attente.</p>";
-      h += "<button class='bouton' id='btnEnvoyerMaintenant'>Envoyer maintenant</button>";
-    }
+    var v = $("vueListe"), h = "";
+    $("titre").textContent = "En attente";
+    h += "<h3 style='margin:4px 0'>⛔ Suspendus (" + S.aCorriger.length + ")</h3>";
+    h += S.aCorriger.map(function (x, i) {
+      var r = x.r || {};
+      return "<div class='carte ko'><div>" + descriptionItem(x) + "</div><b>⛔ " + esc(r.titre || "Refusé") + "</b>" +
+        "<p style='white-space:pre-line;margin:4px 0'>" + esc(r.message || "") + "</p>" +
+        (r.details && r.details.length ? "<table>" + r.details.map(function (d) { return "<tr><td>" + esc(d[0]) + "</td><td class='v'>" + esc(d[1]) + "</td></tr>"; }).join("") + "</table>" : "") +
+        "<div class='ligne'><button class='bouton' data-renvoyer='" + i + "'>🔁 Renvoyer</button>" + (x.o ? "<button class='bouton second' data-ouvrir='" + i + "'>Ouvrir le lot</button>" : "") +
+        (x.type === "planif" && x.donnees ? "<button class='bouton second' data-planif='" + i + "'>Reprendre la saisie</button>" : "") +
+        "<button class='bouton second' data-effacer='" + i + "'>🗑️ Effacer</button></div></div>";
+    }).join("") || "<p class='info'>Aucun envoi suspendu.</p>";
+    h += "<h3 style='margin:16px 0 4px'>📥 En attente de réseau (" + S.file.length + ")</h3>";
+    h += S.file.map(function (x) {
+      return "<div class='carte att'>" + descriptionItem(x) + (x.essais ? "<br><small>" + x.essais + " essai(s)" + (x.erreur ? " — " + esc(x.erreur) : "") + "</small>" : "") + "</div>";
+    }).join("") || "<p class='info'>Rien en attente : tout est parti.</p>";
+    if (S.file.length) h += "<button class='bouton' id='btnEnvoyerMaintenant'>Envoyer maintenant</button>";
+    var J = (S.journal || []).filter(function (x) { return x.ok; }).slice(0, 10);
+    h += "<h3 style='margin:16px 0 4px'>✅ Envoyés (10 derniers)</h3>";
+    h += J.map(function (x) {
+      var ouv = x.o || x.type === "fin" || (x.type === "mis" && /^M-/.test(x.no)) || (x.type === "planif" && x.no);
+      return "<div class='carte'" + (ouv ? " data-env='" + esc(x.jeton) + "' style='cursor:pointer'" : "") + ">" + descriptionItem(x) +
+        "<br><small>✅ " + esc(x.rt || "Enregistré") + (x.rm ? " — " + esc(x.rm) : "") + " · reçu " + dateCourte(x.recuA) + "</small>" + (ouv ? "<span style='float:right;opacity:.6'>›</span>" : "") + "</div>";
+    }).join("") || "<p class='info'>Aucun envoi enregistré sur cet appareil pour l'instant.</p>";
     v.innerHTML = h;
     montrer("vueListe");
     Array.prototype.forEach.call(v.querySelectorAll("[data-effacer]"), function (b) {
-      b.onclick = function () { S.aCorriger.splice(+b.getAttribute("data-effacer"), 1); sauver(); afficherListe("corriger"); };
+      b.onclick = function () { if (!confirm("Effacer cet envoi suspendu ? Rien n'a été enregistré sur le serveur.")) return; S.aCorriger.splice(+b.getAttribute("data-effacer"), 1); sauver(); majAccueil(); afficherListe(); };
     });
-    Array.prototype.forEach.call(v.querySelectorAll("[data-planif]"), function (b) {
-      b.onclick = function () { ouvrirBDC(S.aCorriger[+b.getAttribute("data-planif")].donnees.id); };
-    });
-    Array.prototype.forEach.call(v.querySelectorAll("[data-ouvrir]"), function (b) {
-      b.onclick = function () { var o = S.aCorriger[+b.getAttribute("data-ouvrir")].o; ouvrirLot(o.bdc, o.cle); };
-    });
+    Array.prototype.forEach.call(v.querySelectorAll("[data-renvoyer]"), function (b) { b.onclick = function () { b.disabled = true; b.textContent = "Envoi…"; renvoyerSuspendu(+b.getAttribute("data-renvoyer")); }; });
+    Array.prototype.forEach.call(v.querySelectorAll("[data-planif]"), function (b) { b.onclick = function () { ouvrirBDC(S.aCorriger[+b.getAttribute("data-planif")].donnees.id); }; });
+    Array.prototype.forEach.call(v.querySelectorAll("[data-ouvrir]"), function (b) { b.onclick = function () { var o = S.aCorriger[+b.getAttribute("data-ouvrir")].o; ouvrirLot(o.bdc, o.cle); }; });
+    Array.prototype.forEach.call(v.querySelectorAll("[data-env]"), function (b) { b.onclick = function () { ouvrirEnvoi(J.filter(function (x) { return x.jeton === b.getAttribute("data-env"); })[0]); }; });
     var be = $("btnEnvoyerMaintenant");
-    if (be) be.onclick = function () { be.disabled = true; be.textContent = "Envoi…"; synchroniser(true).then(function () { afficherListe("attente"); }); };
+    if (be) be.onclick = function () { be.disabled = true; be.textContent = "Envoi…"; synchroniser(true).then(function () { afficherListe(); }); };
   }
-
+  // 🔁 Renvoi d'un envoi suspendu : même saisie, nouveau jeton ; doublon possible (Finances) → confirmation.
+  function renvoyerSuspendu(i, forcer) {
+    var x = S.aCorriger[i]; if (!x) return afficherListe();
+    var it = JSON.parse(JSON.stringify(x));
+    delete it.r; delete it.erreur; it.jeton = nouveauJeton(); it.essais = 0; it.code = S.agent && S.agent.code;
+    if (forcer && it.donnees) { it.donnees.forcerDoublon = true; if (it.donnees.demande) it.donnees.demande.forcerDoublon = true; }
+    S.aCorriger.splice(i, 1);
+    soumettre(it).then(function (r) {
+      r = r || {};
+      if (!r.ok && !r.enAttente) {   // refusé à nouveau : il revient en ⛔ (lancerEnvoi l'y a remis si la réponse est arrivée par la file)
+        if (!S.aCorriger.some(function (y) { return y.jeton === it.jeton; })) { var c = JSON.parse(JSON.stringify(it)); c.r = r; delete c.code; S.aCorriger.unshift(c); sauver(); }
+        if (r.doublon && confirm((r.titre || "") + "\n\n" + (r.message || "") + "\n\nOK = envoyer quand même")) {
+          var k = S.aCorriger.findIndex(function (y) { return y.jeton === it.jeton; }); if (k >= 0) return renvoyerSuspendu(k, true);
+        } else if (!r.doublon) alert("⛔ " + (r.titre || "Refusé") + "\n" + (r.message || ""));
+      } else alert((r.enAttente ? "📥 " : "✅ ") + (r.titre || "") + (r.message ? "\n" + r.message : ""));
+      majAccueil(); afficherListe();
+    });
+  }
   function pageAlerte(a, suite) {
     var v = $("vueListe");
     $("titre").textContent = "Attention";
@@ -697,6 +731,7 @@
           if (erreurPassagere(r) && it.essais < 6) { it.erreur = r.message; return sauver().then(function () { return n; }); }
           S.file.shift();
           resultats[it.jeton] = r;
+          noterEnvoi(it, r);
           if (attenteJetons[it.jeton]) attenteJetons[it.jeton](r);
           if (r.ok) { if (it.o) { S.envoyes.push({ jeton: it.jeton, o: it.o, recuA: Date.now() }); n++; } else if (it.type === "planif" || it.type === "fin" || it.type === "rh" || it.type === "com" || it.type === "mis") n++; }
           else { var c = JSON.parse(JSON.stringify(it)); c.r = r; delete c.code; S.aCorriger.push(c); }
@@ -1085,7 +1120,7 @@
     return d.demandeur === (S.agent && S.agent.nom) && (d.statut === "À corriger" || d.statut === "À exécuter");
   }
   // « À traiter » : toute opération non close (ni exécutée, refusée, annulée, ni facture soldée) ; 👉 = action attendue de vous.
-  // Doublon possible déjà exécuté : demande exécutée semblable à une autre exécutée avant elle (≤ 7 j), non encore tranchée par Walid / le DG.
+  // Doublon possible déjà exécuté : demande exécutée semblable à une autre exécutée avant elle (≤ 72 h), non encore tranchée par Walid / le DG.
   function finDoublonsExec(d) {
     if (!S.fin || d.statut !== "Exécutée" || (d.doublon && d.doublon.etat) || !(S.fin.role === "DG" || S.fin.role === "Walid")) return [];
     var tx = d.execute || d.date;
@@ -1093,7 +1128,7 @@
       var tz = z.execute || z.date;
       return z.no !== d.no && z.statut === "Exécutée" && (!d.groupe || z.groupe !== d.groupe) && z.type === d.type && z.op === d.op && z.compte === d.compte && z.contrepartie === d.contrepartie
         && z.devise === d.devise && Math.abs(z.montant - d.montant) <= 0.5 && (d.fournisseur || "") === (z.fournisseur || "") && (d.personnel || "") === (z.personnel || "")
-        && (tz < tx || (tz === tx && z.no < d.no)) && tx - tz < 7 * 86400000 && finObjetsProches(z.objet, d.objet);
+        && (tz < tx || (tz === tx && z.no < d.no)) && tx - tz < 72 * 3600000 && finObjetsProches(z.objet, d.objet);
     });
   }
   // Objets semblables : mêmes mots significatifs (≥ 70 % du plus court), repères [..] ignorés (même règle que le script).
@@ -4428,7 +4463,7 @@
       .then(function () { rafStk = null; }, function (e) { rafStk = null; throw e; });
     return rafStk;
   }
-  function stockNbAttente() { return S.stockv ? S.stockv.sorties.filter(function (x) { return x.statut === "En attente"; }).length : 0; }
+  function stockNbAttente() { return S.stockv ? (S.stockv.sorties || []).filter(function (x) { return x.statut === "En attente"; }).length : 0; }
   function afficherStockVal(id) {
     $("titre").textContent = "Sortie Stock M2S";
     function dessiner(msg) {
@@ -5618,7 +5653,8 @@
   }
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function () {});
 
-  Promise.all(["url", "donnees", "gabarit", "gv", "file", "envoyes", "aCorriger", "recents", "derniereSync", "agent", "formulaires", "planif", "planifLocal", "affichage", "fin", "rh", "com", "mis", "treso", "stockv"].map(lire)).then(function (v) {
+  Promise.all(["url", "donnees", "gabarit", "gv", "file", "envoyes", "aCorriger", "recents", "derniereSync", "agent", "formulaires", "planif", "planifLocal", "affichage", "fin", "rh", "com", "mis", "treso", "stockv", "journal"].map(lire)).then(function (v) {
+    S.journal = v[20] || [];
     S.treso = v[18] || null; S.stockv = v[19] || null;
     S.fin = v[14] || null; S.rh = v[15] || null; S.com = v[16] || null; S.mis = v[17] || null;
     S.agent = v[9] || null; S.formulaires = v[10] || null; S.planif = v[11] || null; S.planifLocal = v[12] || {}; S.affichage = v[13] || "auto";

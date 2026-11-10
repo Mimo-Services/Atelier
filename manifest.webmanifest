@@ -3,15 +3,16 @@
   "short_name": "DuoCore",
   "description": "DuoCore — atelier, stock et saisies, même sans réseau.",
   "lang": "fr",
+  "id": "./",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "orientation": "portrait",
+  "orientation": "any",
   "background_color": "#1c1b19",
   "theme_color": "#1f2f45",
   "icons": [
-    { "src": "icone-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "icone-512.png", "sizes": "512x512", "type": "image/png" },
-    { "src": "icone-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    { "src": "duocore-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "duocore-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "duocore-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }
