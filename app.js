@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 KN";
+  var VERSION_APP = "2026-11-14 KO";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -1290,6 +1290,16 @@
         envoyerFin("proposerAnnul", { no: d.no, version: d.version, commentaire: m.trim() }, "Annulation demandée " + d.no, d.no);
       };
     }
+    // DG : annuler une demande déjà exécutée (doublon, erreur de saisie).
+    if (role === "DG" && d.statut === "Exécutée") {
+      A.insertAdjacentHTML("beforeend", "<div class='carte'><button class='bouton second' id='fnAnX'>🚫 Annuler cette exécution (DG)</button><div class='info'>Doublon ou erreur : la demande passe « Annulée ». " +
+        "L'écriture de la feuille Base est à supprimer à la main (la ligne vous est indiquée).</div></div>");
+      $("fnAnX").onclick = function () {
+        var m = prompt("Annuler l'exécution de " + d.no + " (" + gnf(d.montant) + " " + d.devise + ") : motif (ex. doublon de D-…) ?"); if (m === null) return;
+        if (!m.trim()) { alert("⛔ Motif obligatoire."); return; }
+        envoyerFin("annulerExec", { no: d.no, version: d.version, commentaire: m.trim() }, "Annulation exécution " + d.no, d.no);
+      };
+    }
     // Proposition de Walid : le DG accepte ou refuse ; tout le monde voit l'état.
     var PR = d.proposition;
     if (PR) {
@@ -1359,6 +1369,13 @@
         alert("✅ " + r.titre + (r.message ? "\n" + r.message : ""));
         if (r.no || retour) ouvrirDemandeFin(r.no || retour); else afficherFinances();
         rafraichirFin().catch(function () {});   // complet en arrière-plan (factures, soldes…)
+        return;
+      }
+      if (!r.ok && r.doublon) {   // même opération déjà saisie : l'opérateur confirme ou abandonne
+        if (confirm(r.titre + "\n\n" + r.message + "\n\nVérifiez avant d'envoyer.\nOK = envoyer quand même · Annuler = ne pas envoyer")) {
+          donnees.forcerDoublon = true; if (donnees.demande) donnees.demande.forcerDoublon = true;
+          envoyerFin(op, donnees, titre, retour);
+        } else afficherFinances();
         return;
       }
       if (r.ok && !r.enAttente) return rafraichirFin().catch(function () {}).then(function () { alert("✅ " + r.titre + (r.message ? "\n" + r.message : "")); if (r.no || retour) ouvrirDemandeFin(r.no || retour); else afficherFinances(); });
