@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 LF";
+  var VERSION_APP = "2026-11-14 LG";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -4973,9 +4973,9 @@
     };
     $("abGo").onclick = function () {
       if (!AUD.compte) { alert("⛔ Choisissez le compte bancaire du relevé."); return; }
-      $("abGo").disabled = true; $("abGo").textContent = "⏳ Comparaison…";
+      $("abGo").disabled = true; $("abGo").textContent = "⏳ Mise à jour du compte depuis Base, puis comparaison…";
       var yA = window.scrollY;
-      api({ api: "audit", op: "analyser", compte: AUD.compte, fichier: AUD.fichier, lignes: AUD.lignes }, 120000).then(function (r) { AUD.res = r; afficherAudit(); if (AUD.garderPos) window.scrollTo(0, yA); AUD.garderPos = false; },
+      api({ api: "audit", op: "analyser", compte: AUD.compte, fichier: AUD.fichier, lignes: AUD.lignes }, 300000).then(function (r) { AUD.res = r; afficherAudit(); if (AUD.garderPos) window.scrollTo(0, yA); AUD.garderPos = false; },
         function (e) { alert("⛔ " + e.message); afficherAudit(); });
     };
     if (R && $("abIns")) $("abIns").onclick = function () {
@@ -5002,7 +5002,7 @@
         var ecartMt = Math.abs(Math.abs(b.montant) - Math.abs(x.montant)) > 1;
         if (!confirm("Associer :\n• relevé " + x.d + " · " + x.lib.substring(0, 60) + " · " + gnf(x.montant) + "\n• Base " + jourFr(b.date) + " · " + b.lib.substring(0, 60) + " · " + gnf(b.montant) +
           "\n\nLa date de la ligne dans Base devient " + x.d.split("-").reverse().join("/") + " (le relevé fait foi)." + (ecartMt ? "\n\n⚠️ Montants différents : seul la date est corrigée." : ""))) return;
-        api({ api: "audit", op: "associer", compte: R.compte, baseDate: b.date, baseMontant: b.montant, releveDate: x.d, releveLib: x.lib }, 60000).then(function (r) {
+        api({ api: "audit", op: "associer", compte: R.compte, baseDate: b.date, baseMontant: b.montant, releveDate: x.d, releveLib: x.lib }, 200000).then(function (r) {
           if (!r.titre) { alert("⛔ Le script installé ne connaît pas encore l'association : collez la dernière version du script dans BASE et PRODUCTION, puis Nouvelle version du web app."); return; }
           if (!r.ok) { alert("⛔ " + r.titre + "\n" + (r.message || "")); return; }
           // Résultat appliqué tout de suite (la feuille du compte peut mettre quelques secondes à se recalculer) : la paire passe en pointées.
@@ -5021,7 +5021,7 @@
         var sR = rel.reduce(function (s, x) { return s + x.montant; }, 0), sB = bases.reduce(function (s, z) { return s + z.montant; }, 0), dC = rel.map(function (x) { return x.d; }).sort().pop();
         if (!confirm(bases.length ? "Regrouper " + rel.length + " ligne(s) du relevé (" + gnf(sR) + ") avec " + bases.length + " ligne(s) de Base (" + gnf(sB) + ") ?\n\nDate dans Base : " + dC.split("-").reverse().join("/") + " (la plus récente du relevé)."
           : "Neutraliser " + rel.length + " ligne(s) du relevé (débit et crédit de la banque, total " + gnf(sR) + ") ? Rien n'est écrit dans Base.")) return;
-        api({ api: "audit", op: "regrouper", compte: R.compte, rel: rel.map(function (x) { return { d: x.d, debit: x.debit, credit: x.credit, lib: x.lib }; }), bases: bases.map(function (z) { return { bd: z.date, bm: z.montant }; }) }, 90000).then(function (r) {
+        api({ api: "audit", op: "regrouper", compte: R.compte, rel: rel.map(function (x) { return { d: x.d, debit: x.debit, credit: x.credit, lib: x.lib }; }), bases: bases.map(function (z) { return { bd: z.date, bm: z.montant }; }) }, 200000).then(function (r) {
           if (!r.titre) { alert("⛔ Le script installé ne connaît pas encore le regroupement : collez la dernière version du script."); return; }
           if (!r.ok) { alert("⛔ " + r.titre + "\n" + (r.message || "")); return; }
           var iS = rel.map(function (x) { return x.i; }), kS = bases.map(function (z) { return z.k; });
