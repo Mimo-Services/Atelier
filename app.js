@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 LB";
+  var VERSION_APP = "2026-11-14 LC";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -4930,7 +4930,8 @@
         "<tr><td>✅ Pointées (dans Base)</td><td class='v'>" + R.pointees.length + "</td></tr><tr><td>🔁 Prélèvements récurrents</td><td class='v'>" + R.recurrents.length + "</td></tr>" +
         "<tr><td>⚠️ Sur le relevé, absentes de Base</td><td class='v'><b style='color:" + (R.anomalies.length ? "#c62828" : "#2e7d32") + "'>" + R.anomalies.length + "</b></td></tr>" +
         "<tr><td>❓ Dans Base, absentes du relevé</td><td class='v'><b style='color:" + (R.absents.length ? "#e65100" : "#2e7d32") + "'>" + R.absents.length + "</b></td></tr>" +
-        (R.soldeReleve !== null ? "<tr><td>Solde relevé au " + esc(R.soldeAu) + "</td><td class='v'>" + gnf(R.soldeReleve) + " " + esc(dv) + "</td></tr><tr><td>Solde Base à cette date</td><td class='v'>" + (R.soldeBase === null ? "—" : gnf(R.soldeBase)) + "</td></tr>" +
+        (R.soldeReleve !== null ? "<tr><td>Solde relevé au " + esc(R.soldeAu) + "</td><td class='v'>" + gnf(R.soldeReleve) + " " + esc(dv) + "</td></tr>" + (R.nAjust ? "<tr><td>Solde Base à cette date (selon les dates de Base)</td><td class='v'>" + gnf(R.soldeBaseBrut) + "</td></tr><tr><td>± " + R.nAjust + " ligne(s) pointée(s) datée(s) de l'autre côté dans Base</td><td class='v'>" + (R.ajustDates > 0 ? "+ " : "− ") + gnf(Math.abs(R.ajustDates)) + "</td></tr>" : "") +
+          "<tr><td>Solde Base à cette date" + (R.nAjust ? " <b>(dates du relevé)</b>" : "") + "</td><td class='v'>" + (R.soldeBase === null ? "—" : gnf(R.soldeBase)) + "</td></tr>" +
           "<tr><td><b>Écart</b></td><td class='v'><b style='color:" + (R.ecart ? "#c62828" : "#2e7d32") + "'>" + (R.ecart === null ? "—" : gnf(R.ecart)) + "</b></td></tr>" : "") + "</table></div>";
       if (R.recurrents.length) h += "<div class='carte pleine'><h3>🔁 Prélèvements récurrents (" + R.recurrents.length + ")</h3><div class='info'>À inscrire d'office dans Base (opération constatée). Total " + gnf(R.recurrents.reduce(function (t, x) { return t + x.montant; }, 0)) + ".</div>" +
         "<button class='bouton' id='abIns'>✍️ Inscrire les lignes cochées dans Base</button><details><summary class='info' style='cursor:pointer'>Voir / décocher les lignes</summary>" + R.recurrents.map(function (x, i) { return "<label style='font-weight:400;display:flex;gap:8px;border-top:1px solid var(--bord);padding:4px 0'><input type='checkbox' class='abR' data-i='" + i + "' checked style='width:auto'><span style='flex:1'>" + esc(x.d) + " · " + esc(x.lib) + " <small class='info'>(" + esc(x.regle) + " → " + esc(x.cat) + ")</small></span><b>" + gnf(x.montant) + "</b></label>"; }).join("") +
