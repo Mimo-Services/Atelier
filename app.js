@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 KT";
+  var VERSION_APP = "2026-11-14 KV";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -1516,6 +1516,8 @@
   }
 
   // Nouvelle demande (ou correction d'une demande « À corriger »).
+  // Impôts imputables sur la réserve fiscale (code du repère [IMP:code|année]) ; AUTRE = charge courante (non imputée).
+  var IMP_TYPES = [["IMF", "IMF (impôt minimum forfaitaire)"], ["IS1", "IS — 1er acompte"], ["IS2", "IS — 2e acompte"], ["ISS", "IS — solde"], ["AUTRE", "Autre impôt / taxe (charge courante, non imputée)"]];
   function formulaireFin(src) {
     var F = S.fin; src = src || {};
     var A0 = src.achat || {}, AC = F.achat || { categories: [], articles: {}, ouverts: [], typesFrais: [] };
@@ -1526,6 +1528,7 @@
     if (src.limiter) types = ["Achat fournisseur", "Règlement fournisseur"];   // depuis 🏭 Fournisseurs
     else if (!src.no && !src.type) types = types.filter(function (t) { return t !== "Achat fournisseur" && t !== "Règlement fournisseur"; });   // Finances › Nouvelle demande : achats et règlements par 🏭 Fournisseurs
     var CATS_STOCK = ["Fourniture Locale", "Fourniture Importee"];
+    var IMP0 = (function () { var m = String(src.objet || "").match(/\s*\[IMP:([A-Z0-9]+)\|(\d{4})\]/); if (m) src.objet = String(src.objet).replace(m[0], ""); return { code: m ? m[1] : "", annee: m ? m[2] : String(new Date().getFullYear() - 1) }; })();
     var srcAchat = src.type === "Achat fournisseur" || src.type === "Facture d'achat" || (src.type === "Règlement fournisseur" && src.op === "Achat comptant");
     var A1 = { piece: srcAchat && (src.op === "Sans facture" || (src.type === "Règlement fournisseur" && !src.refFacture)) ? "Sans facture (reçu ou rien)" : "Avec facture",
                pay: src.type === "Facture d'achat" ? "À payer plus tard" : "Payé maintenant",
@@ -1619,6 +1622,10 @@
       "<div id='ffRecuB'><label id='ffRecuL'>Montant reçu</label><input id='ffRecu' inputmode='decimal' value='" + esc(src.recu || "") + "'></div>" +
       "<div id='ffEqB'><label id='ffEqL'>Équivalent</label><input id='ffEq' inputmode='decimal' value='" + esc(src.type === "Paiement RH" && src.recu ? src.recu : "") + "'></div>" +
       "<div id='ffCatB'><label>Catégorie (trésorerie)</label><select id='ffCat'>" + opts(F.categories || [], src.categorie, "— choisir —") + "</select></div>" +
+      // 🧾 Impôts : imputés sur la réserve fiscale de l'année concernée (repère [IMP:code|année] dans l'objet)
+      "<div id='ffImpB' class='ligne'><div><label>Impôt</label><select id='ffImp'>" + opts(IMP_TYPES.map(function (x) { return x[1]; }), (IMP_TYPES.filter(function (x) { return x[0] === IMP0.code; })[0] || [])[1] || "", "— choisir —") + "</select></div>" +
+      "<div><label>Année concernée</label><input id='ffImpA' inputmode='numeric' value='" + esc(IMP0.annee) + "'></div></div>" +
+      "<div id='ffImpCB'><label style='font-weight:400'><input type='checkbox' id='ffImpC' style='width:auto'" + (IMP0.code === "COM" ? " checked" : "") + "> 🧾 Liée aux impôts (imputée sur la réserve fiscale de l'année <input id='ffImpCA' inputmode='numeric' style='width:70px;display:inline-block;padding:4px' value='" + esc(IMP0.annee) + "'>)</label></div>" +
       // Achat d'article (Fourniture Locale / Importée) → Suivi Achats
       "<div id='ffAchB' class='carte' style='margin-top:10px'><h3>📦 Achat (Suivi Achats)</h3>" +
       "<label>Nature</label><select id='ffAN'>" + opts(["Article existant", "Nouvel article", "Frais"], A0.nature, "— choisir —") + "</select>" +
@@ -1771,6 +1778,7 @@
       var catAuto = (t === "Mouvement de trésorerie" && !benExt) || t === "Paiement RH" || (t === "Opération constatée" && op === "Credit bancaire") ||
         (achat && (stock || t === "Facture d'achat")) || (regl && !avance && regC.length > 0 && regC.every(function (f) { return f.categorie; }));
       vis("ffCatB", !catAuto);
+      vis("ffImpB", on("ffCatB") && v("ffCat") === "Impôts et taxes"); vis("ffImpCB", on("ffCatB") && v("ffCat") === "Commission");
       $("ffCatB").querySelector("label").textContent = regl && !avance && regC.length ? "Catégorie (factures sans catégorie)" : "Catégorie (trésorerie)";
       var cat = achat && stock ? catStock : on("ffCatB") ? v("ffCat") : "";
       // Bloc achat : catégorie Fourniture (sauf règlement d'une facture qui porte déjà l'achat).
@@ -1834,6 +1842,17 @@
         else { s.reglements = RC.map(function (f) { return { facture: f.no, montant: nb(REG[f.no].mt) }; }); s.facture = RC[0].no; s.fournisseur = RC[0].fournisseur; }
       }
       if (estAvance()) s.facture = "";
+      // 🧾 Impôt / commission liée aux impôts : repère dans l'objet (lu par la Répartition dans Base)
+      if (on("ffImpB")) {
+        var ik = (IMP_TYPES.filter(function (x) { return x[1] === v("ffImp"); })[0] || [])[0], ia = String(v("ffImpA")).trim();
+        if (!ik) { $("ffMsg").textContent = "⛔ Choisissez l'impôt."; return; }
+        if (!/^\d{4}$/.test(ia)) { $("ffMsg").textContent = "⛔ Année concernée (ex. " + (new Date().getFullYear() - 1) + ")."; return; }
+        s.objet = (String(s.objet || "").trim() || v("ffImp") + " " + ia) + " [IMP:" + ik + "|" + ia + "]";
+      } else if (on("ffImpCB") && $("ffImpC").checked) {
+        var ica = String(v("ffImpCA")).trim();
+        if (!/^\d{4}$/.test(ica)) { $("ffMsg").textContent = "⛔ Année de la réserve fiscale (ex. " + (new Date().getFullYear() - 1) + ")."; return; }
+        s.objet = String(s.objet || "").trim() + " [IMP:COM|" + ica + "]";
+      }
       if (on("ffAchB")) s.achat = { nature: v("ffAN"), categorie: v("ffACat"), article: v("ffAArt"), designation: v("ffADes"), catNouvel: v("ffACatN"),
         carac: { y: v("ffAY"), x: v("ffAX"), kg: v("ffAKg"), unites: v("ffAU"), metres: v("ffAM") }, quantite: nb(v("ffAQ")), expediteur: v("ffAExp"), typeFrais: v("ffATF"),
         articles: Array.prototype.filter.call(document.querySelectorAll(".ffAO"), function (c) { return c.checked; }).map(function (c) { return c.value; }),
@@ -4186,6 +4205,7 @@
       Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-rat]"), function (el) { el.onclick = function (e) { e.stopPropagation(); REPV.rat = REPV.rat === el.getAttribute("data-rat") ? null : el.getAttribute("data-rat"); dessiner(""); }; });
       if ($("rtOk")) $("rtOk").onclick = function () { envoyer({ op: "rattacher", src: REPV.rat, ev: $("rtEv").value, type: $("rtTy").value }, function () { REPV.rat = null; }); };
       if ($("pyOk")) $("pyOk").onclick = payer;
+      Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-sur]"), function (b) { b.onclick = function () { transfererSurplus(b.getAttribute("data-sur")); }; });
       if ($("evCl")) $("evCl").onchange = function () { REPV.clos = $("evCl").checked; dessiner(""); };
       if ($("evNv")) $("evNv").onclick = function () { REPV.grp = !REPV.grp; dessiner(""); };
       if ($("evGrOk")) $("evGrOk").onclick = function () {
@@ -4248,7 +4268,7 @@
           "<tr><td>Emna (interne)</td><td style='text-align:right'>dû " + gnf(s(12)) + "</td><td style='text-align:right'>versé " + gnf(v("Commission interne")) + "</td></tr>" +
           "<tr><td>Trésor · Attribution</td><td></td><td style='text-align:right'>versé " + gnf(v("Commission directe (Trésor)") + v("Commission d'attribution")) + "</td></tr>" +
           "<tr style='font-weight:700'><td>Total versé</td><td></td><td style='text-align:right'>" + gnf(tot) + " · " + (ht ? Math.round(tot / ht * 1000) / 10 : 0) + " %</td></tr></table></div>" +
-          (o ? "<div style='margin-top:6px'><b>Versements</b>" + (C.map(function (x) { return ligneCom(D, x); }).join("") || "<p class='info'>Aucun.</p>") + "</div>" +
+          (o ? "<div style='margin-top:6px'><b>Versements</b>" + (C.map(function (x) { return ligneCom(D, x); }).join("") || "<p class='info'>Aucun.</p>") + "</div>" + (e.clos ? "" : blocSurplus(D, e.id)) +
             "<div class='ligne' style='gap:6px;flex-wrap:wrap'>" + (e.clos ? "<span class='info' style='flex:1'>🔒 Clôturé (" + esc(e.closPar) + ")</span>" + (e.closPar !== "situation soldée" ? "<button class='bouton second' data-evr='" + esc(e.id) + "' style='width:auto;flex:0 0 auto'>↩️ Rouvrir</button>" : "")
               : "<button class='bouton' data-evc='" + esc(e.id) + "' style='width:auto;flex:0 0 auto'>🔒 Clôturer l'événement</button>") +
             (e.groupe && !e.clos ? "<button class='bouton second' data-evd='" + esc(e.id) + "' style='width:auto;flex:0 0 auto'>✂️ Dégrouper</button>" : "") + "</div>" : "") + "</div>";
@@ -4323,6 +4343,45 @@
       formulaireFin(banque ? { type: "Mouvement de trésorerie", op: cheque ? "Remise chèque" : "Virement", societe: $("pySo").value, categorie: "Commission", objet: objet, montant: mt, beneficiaire: o.nom }
                            : { type: "Dépense de caisse", societe: $("pySo").value, categorie: "Commission", objet: objet, montant: mt });
     }
+    // 🏦 Surplus transférable vers DG BIG GNF (après commissions) : par société ; réserve fiscale gardée sur le compte BIG GNF,
+    // fonds de roulement commun sur l'ensemble des comptes bancaires GNF de la société (caisses exclues).
+    function blocSurplus(D, ev) {
+      var SU = D.bal && D.bal.surplus; if (!SU || !SU.societes) return "";
+      var dues = repBenef(D).filter(function (o) { return o.du && o.solde > 0; }).reduce(function (t, o) { return t + o.solde; }, 0), cle = ev || "bal";
+      REPV.surp = REPV.surp || {};
+      return "<div class='carte' style='border-left:4px solid #2e7d32'><h3>🏦 Surplus transférable vers " + esc(SU.vers) + "</h3><div class='info'>Après commissions · situation au " + dateCourte(D.genere) +
+        (ev ? " (" + esc(ev) + ")" : "") + " · comptes bancaires GNF, caisses exclues</div>" + SU.societes.map(function (o) {
+          var com = Math.round(dues * o.part), surplus = Math.round(o.surplus - com), k = cle + "|" + o.societe;
+          var CP = o.comptes.filter(function (c) { return c.dispo > 0.5; }).sort(function (a, b) { return b.dispo - a.dispo; });
+          REPV.surp[k] = { societe: o.societe, surplus: surplus, comptes: CP, ev: ev || "" };
+          return "<div style='margin-top:8px;padding-top:6px;border-top:1px solid var(--bord)'><b>" + esc(o.societe) + "</b> <small class='info'>· " + Math.round(o.part * 1000) / 10 + " % des recouvrements</small>" +
+            (o.alerte ? "<div class='carte ko' style='margin:6px 0;padding:8px'>⚠️ " + esc(o.alerte) + "</div>" : "") +
+            "<table style='width:100%;font-size:13px'><tr class='info'><td>Compte</td><td style='text-align:right'>Solde</td><td style='text-align:right'>Engagé</td><td style='text-align:right'>Disponible</td></tr>" +
+            o.comptes.map(function (c) { return "<tr><td>" + esc(c.nom) + (c.big ? " <small class='info'>(− réserve fiscale " + gnf(c.fiscal) + ")</small>" : "") + "</td><td style='text-align:right'>" + gnf(c.solde) + "</td><td style='text-align:right;white-space:nowrap'>" + (c.engage ? "− " + gnf(c.engage) : "") + "</td><td style='text-align:right;font-weight:700'>" + gnf(c.dispo) + "</td></tr>"; }).join("") +
+            "</table><table style='width:100%;font-size:14px'>" +
+            ligneV("Réserve fiscale (sur " + esc(o.big || "—") + ")", gnf(o.fiscal)) +
+            ligneV("<small class='info'>= " + SU.annee + " : " + gnf(o.fiscN) + " + reliquat " + (SU.annee - 1) + " : " + gnf(o.fiscN1) + " − impôts imputés " + gnf(o.impotsN1) + "</small>", "") +
+            ligneV("Disponible des comptes", gnf(o.dispo), 1) +
+            ligneV("− Fonds de roulement commun (" + Math.round(o.part * 1000) / 10 + " % de " + gnf(SU.fdr) + ")", gnf(o.fdr)) +
+            ligneV("− Commissions restant dues (part)", gnf(com)) +
+            "<tr style='font-weight:700;color:" + (surplus > 0 ? "#2e7d32" : "#c62828") + "'><td>▶ " + (surplus > 0 ? "Surplus transférable" : "Manque") + "</td><td style='text-align:right'>" + gnf(Math.abs(surplus)) + "</td></tr></table>" +
+            (surplus > 0 && CP.length ? "<div class='ligne' style='align-items:flex-end;gap:6px'><div style='flex:2'><label>Depuis</label><select id='su_c_" + esc(k) + "'>" +
+              CP.map(function (c) { return "<option value='" + esc(c.nom) + "'>" + esc(c.nom) + " · dispo " + gnf(c.dispo) + "</option>"; }).join("") + "</select></div>" +
+              "<div style='flex:1'><label>Montant</label><input id='su_m_" + esc(k) + "' inputmode='decimal' value='" + Math.round(Math.min(surplus, CP[0].dispo)) + "'></div></div>" +
+              "<button class='bouton' data-sur='" + esc(k) + "'>💸 Transférer vers " + esc(SU.vers) + "</button>" : "") +
+            (o.impots && o.impots.length ? "<details><summary class='info'>Impôts imputés sur la réserve " + (SU.annee - 1) + " (" + o.impots.length + ")</summary>" + o.impots.map(function (x) { return "<div class='info'>" + jourFr(x.d) + " · " + esc(x.c) + " · " + gnf(x.m) + " · " + esc(x.l) + "</div>"; }).join("") + "</details>" : "") + "</div>";
+        }).join("") + "<div class='info' style='margin-top:6px'>Impôts imputés : catégorie « Impôts et taxes » (IMF, IS acomptes / solde ; TVA et « autre impôt » exclus) et commissions cochées « liées aux impôts », sur tous les comptes GNF de la société. Le reliquat de " + (SU.annee - 2) + " et avant est libre.</div></div>";
+    }
+    function transfererSurplus(k) {
+      var z = REPV.surp && REPV.surp[k]; if (!z) return;
+      if (!S.fin) { alert("⛔ Ouvrez d'abord Finances une fois (données Finances absentes)."); return; }
+      var cpt = $("su_c_" + k).value, c = z.comptes.filter(function (x) { return x.nom === cpt; })[0] || {}, mt = parseFloat(String($("su_m_" + k).value).replace(/\s/g, "").replace(",", "."));
+      if (!(mt > 0)) { alert("⛔ Indiquez le montant."); return; }
+      if (mt > c.dispo + 0.5 && !confirm("⚠️ " + gnf(mt) + " dépasse le disponible de " + cpt + " (" + gnf(c.dispo) + ", réserve fiscale et paiements engagés déduits). Continuer ?")) return;
+      if (mt > z.surplus + 0.5 && !confirm("⚠️ " + gnf(mt) + " dépasse le surplus de " + z.societe + " (" + gnf(z.surplus) + "). Continuer ?")) return;
+      formulaireFin({ type: "Mouvement de trésorerie", op: "Virement", mode: "Virement", societe: z.societe, compte: cpt, contrepartie: (S.rep.data.bal.surplus || {}).vers || "DG BIG GNF", categorie: "Alimentation",
+        objet: "Transfert du surplus " + z.societe + " (après réserves fiscale et FDR)" + (z.ev ? " — " + z.ev : ""), montant: mt });
+    }
     // ⚖️ Balances
     function vueBal(R, D) {
       var X = D.bal || {}, P = D.factures.filter(function (f) { return f.prev; });
@@ -4333,7 +4392,7 @@
         bloc("🏭 Fonds de roulement (arriérés de charges)", [ligneV("Arriérés depuis " + jourFr(X.debut), gnf(X.fdrCumul)), ligneV("Amorti par les factures réglées", gnf(X.chRecup)), ligneV("Amorti par les engagées (prévisionnel)", gnf(s(10))),
           ligneV("Non couvert", gnf(Math.max(0, X.fdrCumul - X.chRecup - s(10))), 1)]) +
         bloc("🛡️ Réserve fonds de roulement", [ligneV("Constituée (factures réglées)", gnf(X.resCum)), ligneV("+ prévisionnel", gnf(X.resProj)), ligneV("Objectif", gnf(X.objectif)), ligneV("Écart", gnf(Math.max(0, X.objectif - X.resCum)), 1)]) +
-        bloc("🧾 Réserve fiscale", [ligneV("Réservée depuis le " + jourFr(X.fiscalDepuis) + " (à verser l'année suivante)", gnf(X.fiscalCumul), 1)]);
+        bloc("🧾 Réserve fiscale", [ligneV("Réservée depuis le " + jourFr(X.fiscalDepuis) + " (à verser l'année suivante)", gnf(X.fiscalCumul), 1)]) + blocSurplus(D, "");
     }
     // ⚙️ Paramètres
     function vuePar(R) {
