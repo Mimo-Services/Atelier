@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 LE";
+  var VERSION_APP = "2026-11-14 LF";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -4941,7 +4941,7 @@
         R.groupes.map(function (g, i) { return "<div style='border-top:1px solid var(--bord);padding:6px 0'><div class='info' style='margin:0'>Relevé</div>" + g.rel.map(lgR).join("") + "<div class='info' style='margin:2px 0 0'>= Base</div>" + g.bases.map(lgB).join("") +
           "<div class='ligne' style='gap:6px'><button class='bouton' data-gv='" + i + "' style='width:auto;flex:0 0 auto;padding:4px 10px;margin:4px 0 0'>✅ Valider</button><button class='bouton second' data-gx='" + i + "' style='width:auto;flex:0 0 auto;padding:4px 10px;margin:4px 0 0'>✕ Rejeter</button></div></div>"; }).join("") + "</div>";
       h += "<div class='carte pleine'><div class='ligne' style='justify-content:space-between;align-items:center'><b>🧩 Regroupement manuel</b><button class='bouton second' id='abGm' style='width:auto;flex:0 0 auto;padding:4px 10px;margin:0'>" + (AUD.grpMan ? "Fermer" : "Ouvrir") + "</button></div>" +
-        (AUD.grpMan ? "<div class='info'>Cochez les lignes du relevé et de Base qui forment la même opération (au moins 2 d'un côté). Les totaux doivent être égaux.</div>" +
+        (AUD.grpMan ? "<div class='info'>Cochez les lignes du relevé et de Base qui forment la même opération (au moins 2 d'un côté). Les totaux doivent être égaux. Erreur de la banque (débit puis crédit) : cochez seulement les lignes du relevé dont le total est nul → 🔄 Neutraliser.</div>" +
           "<b style='font-size:13px'>Relevé (non pointées)</b>" + R.anomalies.concat(R.recurrents).sort(function (a, b) { return a.d < b.d ? -1 : 1; }).map(function (x) { return "<label style='font-weight:400;display:flex;gap:6px;align-items:flex-start'><input type='checkbox' class='abMR' data-i='" + x.i + "' style='width:auto;margin-top:3px'>" + lgR(x).replace("<div style='display:flex", "<div style='flex:1;display:flex") + "</label>"; }).join("") +
           "<b style='font-size:13px;display:block;margin-top:6px'>Base (absentes du relevé)</b>" + R.absents.map(function (z) { return "<label style='font-weight:400;display:flex;gap:6px;align-items:flex-start'><input type='checkbox' class='abMB' data-k='" + z.k + "' style='width:auto;margin-top:3px'>" + lgB(z).replace("<div style='display:flex", "<div style='flex:1;display:flex") + "</label>"; }).join("") +
           "<div id='abMT' class='info' style='font-weight:700'></div><button class='bouton' id='abMOk' disabled>✅ Valider le regroupement</button>" : "") + "</div>";
@@ -5019,7 +5019,8 @@
       // 🧩 validation d'un regroupement (proposé ou manuel)
       function regrouper(rel, bases, g) {
         var sR = rel.reduce(function (s, x) { return s + x.montant; }, 0), sB = bases.reduce(function (s, z) { return s + z.montant; }, 0), dC = rel.map(function (x) { return x.d; }).sort().pop();
-        if (!confirm("Regrouper " + rel.length + " ligne(s) du relevé (" + gnf(sR) + ") avec " + bases.length + " ligne(s) de Base (" + gnf(sB) + ") ?\n\nDate dans Base : " + dC.split("-").reverse().join("/") + " (la plus récente du relevé).")) return;
+        if (!confirm(bases.length ? "Regrouper " + rel.length + " ligne(s) du relevé (" + gnf(sR) + ") avec " + bases.length + " ligne(s) de Base (" + gnf(sB) + ") ?\n\nDate dans Base : " + dC.split("-").reverse().join("/") + " (la plus récente du relevé)."
+          : "Neutraliser " + rel.length + " ligne(s) du relevé (débit et crédit de la banque, total " + gnf(sR) + ") ? Rien n'est écrit dans Base.")) return;
         api({ api: "audit", op: "regrouper", compte: R.compte, rel: rel.map(function (x) { return { d: x.d, debit: x.debit, credit: x.credit, lib: x.lib }; }), bases: bases.map(function (z) { return { bd: z.date, bm: z.montant }; }) }, 90000).then(function (r) {
           if (!r.titre) { alert("⛔ Le script installé ne connaît pas encore le regroupement : collez la dernière version du script."); return; }
           if (!r.ok) { alert("⛔ " + r.titre + "\n" + (r.message || "")); return; }
@@ -5028,9 +5029,9 @@
           R.absents = R.absents.filter(function (z) { return kS.indexOf(z.k) < 0; }); if (g) R.groupes = R.groupes.filter(function (y) { return y !== g; });
           R.anomalies.forEach(function (z) { if (kS.indexOf(z.prop) >= 0) delete z.prop; });
           if (R.soldeAu) { var cp = audCoupe(R); bases.forEach(function (z) { if (dC <= R.soldeAu && z.date > cp) audMajSolde(R, z.montant); else if (dC > R.soldeAu && z.date <= cp) audMajSolde(R, -z.montant); }); }
-          var txt = "🧩 " + bases.map(function (z) { return z.lib; }).join(" + ");
+          var txt = bases.length ? "🧩 " + bases.map(function (z) { return z.lib; }).join(" + ") : "🔄 Neutralisé (débit et crédit de la banque)";
           rel.forEach(function (x) { R.pointees.push({ i: x.i, d: x.d, lib: x.lib, montant: x.montant, base: txt }); });
-          (R.associees = R.associees || []).push("🧩 " + rel.length + " ligne(s) du relevé (" + gnf(sR) + ") ↔ " + bases.length + " ligne(s) de Base · date " + dC.split("-").reverse().join("/"));
+          (R.associees = R.associees || []).push(!bases.length ? "🔄 " + rel.length + " ligne(s) neutralisée(s) (erreur de la banque)" : "🧩 " + rel.length + " ligne(s) du relevé (" + gnf(sR) + ") ↔ " + bases.length + " ligne(s) de Base · date " + dC.split("-").reverse().join("/"));
           var y = window.scrollY; afficherAudit("banque"); window.scrollTo(0, y);
           alert("✅ " + r.titre + "\n" + r.message);
         }, function (e) { alert("⛔ " + e.message); });
@@ -5047,9 +5048,10 @@
         return { rel: rel, bases: bases };
       }
       Array.prototype.forEach.call(document.querySelectorAll(".abMR, .abMB"), function (c) { c.onchange = function () {
-        var s = selMan(), sR = s.rel.reduce(function (t, x) { return t + x.montant; }, 0), sB = s.bases.reduce(function (t, z) { return t + z.montant; }, 0), ok = s.rel.length && s.bases.length && s.rel.length + s.bases.length >= 3 && Math.abs(sR - sB) <= 1;
+        var s = selMan(), sR = s.rel.reduce(function (t, x) { return t + x.montant; }, 0), sB = s.bases.reduce(function (t, z) { return t + z.montant; }, 0);
+        var neutre = !s.bases.length && s.rel.length >= 2, ok = s.rel.length && (neutre || (s.bases.length && s.rel.length + s.bases.length >= 3)) && Math.abs(sR - sB) <= 1;
         $("abMT").innerHTML = "Relevé " + s.rel.length + " ligne(s) : " + gnf(sR) + " · Base " + s.bases.length + " ligne(s) : " + gnf(sB) + " · " + (ok ? "<span style='color:#2e7d32'>✅ totaux égaux</span>" : "<span style='color:#c62828'>écart " + gnf(sR - sB) + "</span>");
-        $("abMOk").disabled = !ok; }; });
+        $("abMOk").disabled = !ok; $("abMOk").textContent = neutre ? "🔄 Neutraliser (erreur de la banque : débit + crédit)" : "✅ Valider le regroupement"; }; });
       if ($("abMOk")) $("abMOk").onclick = function () { var s = selMan(); regrouper(s.rel, s.bases, null); };
       Array.prototype.forEach.call(document.querySelectorAll("[data-abp]"), function (b) { b.onclick = function () {
         var x = R.anomalies[+b.getAttribute("data-abp")], k = +b.getAttribute("data-k"); associer(x, R.absents.filter(function (z) { return z.k === k; })[0]); }; });
