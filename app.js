@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 KV";
+  var VERSION_APP = "2026-11-14 KW";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -4906,7 +4906,11 @@
     if (R) {
       var dv = R.devise || "";
       h += "<div class='carte pleine'><h3>Résultat · " + esc(R.compte) + "</h3><table>" +
-        "<tr><td>Période du relevé</td><td class='v'>" + esc(R.du) + " → " + esc(R.au) + " (" + R.nb + " lignes)</td></tr>" +
+        "<tr><td>Période comparée</td><td class='v'>" + esc(R.du) + " → " + esc(R.au) + " (" + R.nb + " lignes)</td></tr>" +
+        (R.ouverture ? "<tr><td>Début de Base pour ce compte</td><td class='v'>" + esc(R.ouverture.debut) + (R.ignorees ? " · <small>" + R.ignorees + " ligne(s) du relevé antérieures ignorées</small>" : "") + "</td></tr>" +
+          (R.ouverture.releve !== null ? "<tr><td>Solde d'ouverture : relevé au " + esc(R.ouverture.releveAu) + "</td><td class='v'>" + gnf(R.ouverture.releve) + "</td></tr>" +
+            "<tr><td>Solde d'ouverture : Base" + (R.ouverture.ligne ? " <small>(" + esc(R.ouverture.ligne) + ")</small>" : "") + "</td><td class='v'>" + (R.ouverture.base === null ? "—" : gnf(R.ouverture.base)) + "</td></tr>" +
+            "<tr><td><b>Écart d'ouverture</b></td><td class='v'><b style='color:" + (R.ouverture.ecart ? "#c62828" : "#2e7d32") + "'>" + (R.ouverture.ecart === null ? "—" : gnf(R.ouverture.ecart)) + "</b></td></tr>" : "") : "") +
         "<tr><td>✅ Pointées (dans Base)</td><td class='v'>" + R.pointees.length + "</td></tr><tr><td>🔁 Prélèvements récurrents</td><td class='v'>" + R.recurrents.length + "</td></tr>" +
         "<tr><td>⚠️ Sur le relevé, absentes de Base</td><td class='v'><b style='color:" + (R.anomalies.length ? "#c62828" : "#2e7d32") + "'>" + R.anomalies.length + "</b></td></tr>" +
         "<tr><td>❓ Dans Base, absentes du relevé</td><td class='v'><b style='color:" + (R.absents.length ? "#e65100" : "#2e7d32") + "'>" + R.absents.length + "</b></td></tr>" +
