@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 KZ";
+  var VERSION_APP = "2026-11-14 LA";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -1453,6 +1453,7 @@
   function envoyerFin(op, donnees, titre, retour) {
     var it = { type: "fin", op: op, jeton: nouveauJeton(), horodatage: Date.now(), agent: S.agent.nom, code: S.agent.code, donnees: donnees, titre: titre, resume: "Finances", essais: 0 };
     soumettre(it).then(function (r) {
+      if (r.ok && !r.enAttente && op === "creer" && AUD.creation) audEcritureCreee(donnees && donnees.demande);
       if (r.ok && !r.enAttente && r.maj && r.maj.length && S.fin) {   // ⚡ demande à jour reçue : affichage immédiat
         r.maj.forEach(function (z) { var i = -1; S.fin.demandes.forEach(function (x, k) { if (x.no === z.no) i = k; }); if (i >= 0) S.fin.demandes[i] = z; else S.fin.demandes.unshift(z); });
         ecrire("fin", S.fin); majCloche();
@@ -4843,6 +4844,15 @@
 
   /* ---------- 🔎 Audit bancaire (relevé Excel / PDF ↔ Base) et 💵 audit de caisse ---------- */
   var AUD = { vue: "", compte: "", lignes: null, fichier: "", res: null, msg: "" };
+  // Écriture créée depuis une anomalie du relevé : la ligne passe tout de suite en « pointées » (au lieu d'attendre une nouvelle comparaison).
+  function audEcritureCreee(dm) {
+    var c = AUD.creation; if (!c || !dm || Math.abs((+dm.montant || 0) - Math.abs(c.x.montant)) > 1) return;   // une autre demande : rien
+    AUD.creation = null; if (AUD.res !== c.R) return;
+    var R = c.R, x = c.x;
+    R.anomalies = R.anomalies.filter(function (z) { return z !== x; });
+    R.pointees.push({ i: x.i, d: x.d, lib: x.lib, montant: x.montant, base: "➕ écriture créée" });
+    (R.associees = R.associees || []).push(x.d + " · " + x.lib.substring(0, 60) + " · " + gnf(x.montant) + " → ➕ écriture créée dans Base");
+  }
   function afficherAudit(vue) {
     if (vue !== undefined) { AUD.vue = vue; AUD.msg = ""; }
     var T = S.treso || { comptes: [] }, B = T.comptes.filter(function (c) { return c.type === "Banque"; }), Cs = T.comptes.filter(function (c) { return c.type === "Caisse"; });
@@ -4908,7 +4918,7 @@
     if (R) {
       var dv = R.devise || "";
       h += "<div class='carte pleine'><h3>Résultat · " + esc(R.compte) + "</h3><table>" +
-        (R.associees && R.associees.length ? "<tr><td colspan='2' style='background:rgba(46,125,50,.12)'>🔗 <b>Associées (" + R.associees.length + ")</b><br><small>" + R.associees.map(esc).join("<br>") + "</small></td></tr>" : "") +
+        (R.associees && R.associees.length ? "<tr><td colspan='2' style='background:rgba(46,125,50,.12)'>✔️ <b>Résolues dans cette session (" + R.associees.length + ")</b><br><small>" + R.associees.map(esc).join("<br>") + "</small></td></tr>" : "") +
         "<tr><td>Période comparée</td><td class='v'>" + esc(R.du) + " → " + esc(R.au) + " (" + R.nb + " lignes)</td></tr>" +
         (R.ouverture ? "<tr><td>Début de Base pour ce compte</td><td class='v'>" + esc(R.ouverture.debut) + (R.ignorees ? " · <small>" + R.ignorees + " ligne(s) du relevé antérieures ignorées</small>" : "") + "</td></tr>" +
           (R.ouverture.releve !== null ? "<tr><td>Solde d'ouverture : relevé au " + esc(R.ouverture.releveAu) + "</td><td class='v'>" + gnf(R.ouverture.releve) + "</td></tr>" +
@@ -4962,6 +4972,7 @@
     };
     if (R) {
       Array.prototype.forEach.call(document.querySelectorAll("[data-abc]"), function (b) { b.onclick = function () { var x = R.anomalies[+b.getAttribute("data-abc")];
+        AUD.creation = { x: x, R: R };
         var ouvrir = function () { formulaireFin({ type: "Opération constatée", op: x.montant < 0 ? "Prelevement bancaire" : "Credit bancaire", compte: R.compte, montant: Math.abs(x.montant), objet: "Relevé : " + x.lib.substring(0, 150), dateEffet: new Date(x.d + "T12:00:00").getTime() }); };
         if (S.fin) ouvrir(); else rafraichirFin().then(ouvrir, function () { alert("⛔ Finances indisponible (réseau)."); }); }; });
       function associer(x, b) {
