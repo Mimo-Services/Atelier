@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 LG";
+  var VERSION_APP = "2026-11-14 LH";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -4927,7 +4927,7 @@
         (R.alignees ? "<tr><td colspan='2' class='info'>📅 " + R.alignees + " date(s) de Base alignée(s) sur le relevé</td></tr>" : "") +
         "<tr><td>✅ Pointées (dans Base)</td><td class='v'>" + R.pointees.length + "</td></tr><tr><td>🔁 Prélèvements récurrents</td><td class='v'>" + R.recurrents.length + "</td></tr>" +
         "<tr><td>⚠️ Sur le relevé, absentes de Base</td><td class='v'><b style='color:" + (R.anomalies.length ? "#c62828" : "#2e7d32") + "'>" + R.anomalies.length + "</b></td></tr>" +
-        "<tr><td>❓ Dans Base, absentes du relevé</td><td class='v'><b style='color:" + (R.absents.length ? "#e65100" : "#2e7d32") + "'>" + R.absents.length + "</b></td></tr>" +
+        "<tr><td>❓ Dans Base, absentes du relevé</td><td class='v'><b style='color:" + (R.absents.some(function (x) { return !x.apres; }) ? "#e65100" : "#2e7d32") + "'>" + R.absents.filter(function (x) { return !x.apres; }).length + "</b></td></tr>" +
         (R.soldeReleve !== null ? "<tr style='border-top:2px solid var(--bord)'><td><b>Solde relevé au " + esc(R.soldeAu.split("-").reverse().join("/")) + "</b></td><td class='v'><b>" + gnf(R.soldeReleve) + " " + esc(dv) + "</b></td></tr>" +
           "<tr><td><b>Solde Base au " + esc(R.soldeAu.split("-").reverse().join("/")) + "</b></td><td class='v'><b>" + (R.soldeBase === null ? "—" : gnf(R.soldeBase) + " " + esc(dv)) + "</b></td></tr>" +
           "<tr><td><b>Écart</b></td><td class='v'><b style='color:" + (Math.abs(R.ecart || 0) > 0.5 ? "#c62828" : "#2e7d32") + "'>" + (R.ecart === null ? "—" : gnf(R.ecart)) + "</b></td></tr>" : "") + "</table></div>";
@@ -4960,8 +4960,10 @@
               return "<option value='" + z.k + "'>" + (Math.abs(Math.abs(z.montant) - Math.abs(x.montant)) <= 1 ? "= " : "≠ ") + jourFr(z.date) + " · " + esc(z.lib.substring(0, 70)) + " · " + gnf(z.montant) + "</option>"; }).join("") + "</select>" +
               "<div class='ligne' style='gap:6px'><button class='bouton' id='abAsOk' data-i='" + i + "'>✅ Associer et corriger la date</button><button class='bouton second' id='abAsX'>Annuler</button></div></div>";
           })() : "") + "</div>"; }).join("") + "</div>";
-      if (R.absents.length) h += "<div class='carte pleine'><h3>❓ Dans Base, absentes du relevé (" + R.absents.length + ")</h3><div class='info'>Opération pas encore passée en banque, mauvais compte ou montant différent : à vérifier.</div>" +
-        R.absents.map(function (x) { return "<div style='border-top:1px solid var(--bord);padding:4px 0;display:flex;gap:6px'><span class='info' style='margin:0'>" + jourFr(x.date) + "</span><span style='flex:1'>" + esc(x.lib) + "</span><b>" + gnf(x.montant) + "</b></div>"; }).join("") + "</div>";
+      var ABv = R.absents.filter(function (x) { return !x.apres; }), ABa = R.absents.filter(function (x) { return x.apres; });
+      function lgAbs(x) { return "<div style='border-top:1px solid var(--bord);padding:4px 0;display:flex;gap:6px'><span class='info' style='margin:0'>" + jourFr(x.date) + "</span><span style='flex:1'>" + esc(x.lib) + "</span><b>" + gnf(x.montant) + "</b></div>"; }
+      if (ABv.length) h += "<div class='carte pleine'><h3>❓ Dans Base, absentes du relevé (" + ABv.length + ")</h3><div class='info'>Opération pas encore passée en banque, mauvais compte ou montant différent : à vérifier.</div>" + ABv.map(lgAbs).join("") + "</div>";
+      if (ABa.length) h += "<details class='carte pleine'><summary><b>🕒 Saisies dans Base après la fin du relevé (" + ABa.length + ")</b></summary><div class='info'>Datées après le " + esc(R.au.split("-").reverse().join("/")) + " : normales si l'opération n'est pas encore passée en banque ; sinon associez-les à leur ligne du relevé (🔗).</div>" + ABa.map(lgAbs).join("") + "</details>";
       if (R.pointees.length) h += "<details class='carte pleine'><summary><b>✅ Lignes pointées (" + R.pointees.length + ")</b></summary>" + R.pointees.map(function (x) { return "<div style='border-top:1px solid var(--bord);padding:3px 0;font-size:13px'>" + esc(x.d) + " · " + esc(x.lib) + " · <b>" + gnf(x.montant) + "</b><div class='info' style='margin:0'>↔ " + esc(x.base) + "</div></div>"; }).join("") + "</details>";
     }
     $("vueListe").innerHTML = h; montrer("vueListe");
