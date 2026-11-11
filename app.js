@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 LC";
+  var VERSION_APP = "2026-11-14 LD";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -4844,12 +4844,16 @@
 
   /* ---------- 🔎 Audit bancaire (relevé Excel / PDF ↔ Base) et 💵 audit de caisse ---------- */
   var AUD = { vue: "", compte: "", lignes: null, fichier: "", res: null, msg: "" };
+  // Solde Base (à la date du solde du relevé) mis à jour sans nouvelle comparaison.
+  function audMajSolde(R, delta) { if (R.soldeBase === null || R.soldeBase === undefined || !delta) return; R.soldeBase += delta; R.ecart = Math.round((R.soldeReleve - R.soldeBase) * 100) / 100; }
+  function audCoupe(R) { return R.soldeAu ? new Date(R.soldeAu + "T12:00:00").getTime() + 86400000 : 0; }
   // Écriture créée depuis une anomalie du relevé : la ligne passe tout de suite en « pointées » (au lieu d'attendre une nouvelle comparaison).
   function audEcritureCreee(dm) {
     var c = AUD.creation; if (!c || !dm || Math.abs((+dm.montant || 0) - Math.abs(c.x.montant)) > 1) return;   // une autre demande : rien
     AUD.creation = null; if (AUD.res !== c.R) return;
     var R = c.R, x = c.x;
     R.anomalies = R.anomalies.filter(function (z) { return z !== x; });
+    if (R.soldeAu && x.d <= R.soldeAu) audMajSolde(R, x.montant);
     R.pointees.push({ i: x.i, d: x.d, lib: x.lib, montant: x.montant, base: "➕ écriture créée" });
     (R.associees = R.associees || []).push(x.d + " · " + x.lib.substring(0, 60) + " · " + gnf(x.montant) + " → ➕ écriture créée dans Base");
   }
@@ -4919,20 +4923,14 @@
       var dv = R.devise || "";
       h += "<div class='carte pleine'><h3>Résultat · " + esc(R.compte) + "</h3><table>" +
         (R.associees && R.associees.length ? "<tr><td colspan='2' style='background:rgba(46,125,50,.12)'>✔️ <b>Résolues dans cette session (" + R.associees.length + ")</b><br><small>" + R.associees.map(esc).join("<br>") + "</small></td></tr>" : "") +
-        (function () { var DC = R.pointees.filter(function (x) { return x.decale && x.bd; });
-          return DC.length ? "<tr><td colspan='2' style='background:rgba(230,126,34,.12)'>📅 <b>" + DC.length + " ligne(s) pointée(s) à une autre date dans Base</b><br><small>" + DC.slice(0, 6).map(function (x) { return esc(x.d.split("-").reverse().join("/")) + " ← " + jourFr(x.bd) + " · " + esc(x.lib.substring(0, 45)) + " · " + gnf(x.montant); }).join("<br>") + (DC.length > 6 ? "<br>…" : "") +
-            "<br>Le solde « à cette date » en est faussé.</small><br><button class='bouton' id='abAl' style='width:auto;padding:4px 10px;margin:6px 0 0'>📅 Aligner les dates de Base sur le relevé</button></td></tr>" : ""; })() +
-        "<tr><td>Période comparée</td><td class='v'>" + esc(R.du) + " → " + esc(R.au) + " (" + R.nb + " lignes)</td></tr>" +
-        (R.ouverture ? "<tr><td>Début de Base pour ce compte</td><td class='v'>" + esc(R.ouverture.debut) + (R.ignorees ? " · <small>" + R.ignorees + " ligne(s) du relevé antérieures ignorées</small>" : "") + "</td></tr>" +
-          (R.ouverture.releve !== null ? "<tr><td>Solde d'ouverture : relevé au " + esc(R.ouverture.releveAu) + "</td><td class='v'>" + gnf(R.ouverture.releve) + "</td></tr>" +
-            "<tr><td>Solde d'ouverture : Base" + (R.ouverture.ligne ? " <small>(" + esc(R.ouverture.ligne) + ")</small>" : "") + "</td><td class='v'>" + (R.ouverture.base === null ? "—" : gnf(R.ouverture.base)) + "</td></tr>" +
-            "<tr><td><b>Écart d'ouverture</b></td><td class='v'><b style='color:" + (R.ouverture.ecart ? "#c62828" : "#2e7d32") + "'>" + (R.ouverture.ecart === null ? "—" : gnf(R.ouverture.ecart)) + "</b></td></tr>" : "") : "") +
+        "<tr><td>Période comparée</td><td class='v'>" + esc(R.du) + " → " + esc(R.au) + " (" + R.nb + " lignes" + (R.ignorees ? ", " + R.ignorees + " antérieures au début de Base ignorées" : "") + ")</td></tr>" +
+        (R.alignees ? "<tr><td colspan='2' class='info'>📅 " + R.alignees + " date(s) de Base alignée(s) sur le relevé</td></tr>" : "") +
         "<tr><td>✅ Pointées (dans Base)</td><td class='v'>" + R.pointees.length + "</td></tr><tr><td>🔁 Prélèvements récurrents</td><td class='v'>" + R.recurrents.length + "</td></tr>" +
         "<tr><td>⚠️ Sur le relevé, absentes de Base</td><td class='v'><b style='color:" + (R.anomalies.length ? "#c62828" : "#2e7d32") + "'>" + R.anomalies.length + "</b></td></tr>" +
         "<tr><td>❓ Dans Base, absentes du relevé</td><td class='v'><b style='color:" + (R.absents.length ? "#e65100" : "#2e7d32") + "'>" + R.absents.length + "</b></td></tr>" +
-        (R.soldeReleve !== null ? "<tr><td>Solde relevé au " + esc(R.soldeAu) + "</td><td class='v'>" + gnf(R.soldeReleve) + " " + esc(dv) + "</td></tr>" + (R.nAjust ? "<tr><td>Solde Base à cette date (selon les dates de Base)</td><td class='v'>" + gnf(R.soldeBaseBrut) + "</td></tr><tr><td>± " + R.nAjust + " ligne(s) pointée(s) datée(s) de l'autre côté dans Base</td><td class='v'>" + (R.ajustDates > 0 ? "+ " : "− ") + gnf(Math.abs(R.ajustDates)) + "</td></tr>" : "") +
-          "<tr><td>Solde Base à cette date" + (R.nAjust ? " <b>(dates du relevé)</b>" : "") + "</td><td class='v'>" + (R.soldeBase === null ? "—" : gnf(R.soldeBase)) + "</td></tr>" +
-          "<tr><td><b>Écart</b></td><td class='v'><b style='color:" + (R.ecart ? "#c62828" : "#2e7d32") + "'>" + (R.ecart === null ? "—" : gnf(R.ecart)) + "</b></td></tr>" : "") + "</table></div>";
+        (R.soldeReleve !== null ? "<tr style='border-top:2px solid var(--bord)'><td><b>Solde relevé au " + esc(R.soldeAu.split("-").reverse().join("/")) + "</b></td><td class='v'><b>" + gnf(R.soldeReleve) + " " + esc(dv) + "</b></td></tr>" +
+          "<tr><td><b>Solde Base au " + esc(R.soldeAu.split("-").reverse().join("/")) + "</b></td><td class='v'><b>" + (R.soldeBase === null ? "—" : gnf(R.soldeBase) + " " + esc(dv)) + "</b></td></tr>" +
+          "<tr><td><b>Écart</b></td><td class='v'><b style='color:" + (Math.abs(R.ecart || 0) > 0.5 ? "#c62828" : "#2e7d32") + "'>" + (R.ecart === null ? "—" : gnf(R.ecart)) + "</b></td></tr>" : "") + "</table></div>";
       if (R.recurrents.length) h += "<div class='carte pleine'><h3>🔁 Prélèvements récurrents (" + R.recurrents.length + ")</h3><div class='info'>À inscrire d'office dans Base (opération constatée). Total " + gnf(R.recurrents.reduce(function (t, x) { return t + x.montant; }, 0)) + ".</div>" +
         "<button class='bouton' id='abIns'>✍️ Inscrire les lignes cochées dans Base</button><details><summary class='info' style='cursor:pointer'>Voir / décocher les lignes</summary>" + R.recurrents.map(function (x, i) { return "<label style='font-weight:400;display:flex;gap:8px;border-top:1px solid var(--bord);padding:4px 0'><input type='checkbox' class='abR' data-i='" + i + "' checked style='width:auto'><span style='flex:1'>" + esc(x.d) + " · " + esc(x.lib) + " <small class='info'>(" + esc(x.regle) + " → " + esc(x.cat) + ")</small></span><b>" + gnf(x.montant) + "</b></label>"; }).join("") +
         "</details></div>";
@@ -4999,11 +4997,12 @@
           // Résultat appliqué tout de suite (la feuille du compte peut mettre quelques secondes à se recalculer) : la paire passe en pointées.
           R.anomalies = R.anomalies.filter(function (z) { return z !== x; });
           R.absents = R.absents.filter(function (z) { return z.k !== b.k; });
+          if (!r.deja && R.soldeAu) { var cp = audCoupe(R); if (x.d <= R.soldeAu && b.date > cp) audMajSolde(R, b.montant); else if (x.d > R.soldeAu && b.date <= cp) audMajSolde(R, -b.montant); }
           R.anomalies.forEach(function (z) { if (z.prop === b.k) delete z.prop; if (z.cands) z.cands = z.cands.filter(function (k) { return k !== b.k; }); });
           R.pointees.push({ i: x.i, d: x.d, lib: x.lib, montant: x.montant, base: "🔗 " + b.lib + " (date " + jourFr(b.date) + " → " + x.d.split("-").reverse().join("/") + ")" });
           (R.associees = R.associees || []).push(x.d + " · " + x.lib.substring(0, 60) + " · " + gnf(x.montant) + " ↔ Base ligne " + r.ligne + (r.deja ? " (déjà à la bonne date)" : " : " + r.avant + " → " + r.apres));
           AUD.assoc = null; var y = window.scrollY; afficherAudit("banque"); window.scrollTo(0, y);
-          alert("✅ " + r.titre + "\n" + r.message + "\n\nLa paire est passée dans « Lignes pointées ». Relancez « Comparer avec Base » plus tard pour l'écart de solde à jour.");
+          alert("✅ " + r.titre + "\n" + r.message + "\n\nLa paire est passée dans « Lignes pointées » ; solde Base et écart mis à jour.");
         }, function (e) { alert("⛔ " + e.message); });
       }
       Array.prototype.forEach.call(document.querySelectorAll("[data-abp]"), function (b) { b.onclick = function () {
