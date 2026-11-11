@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 KX";
+  var VERSION_APP = "2026-11-14 KZ";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -4889,6 +4889,8 @@
       api({ api: "audit", op: "liste" }).then(function (r) {
         $("vueListe").innerHTML = "<div class='carte pleine'><h3>📋 Historique des audits</h3>" + (r.audits.map(function (a) {
           var ec = +a.ecart || 0;
+          if (a.type === "Association") return "<div style='border-top:1px solid var(--bord);padding:6px 0'><b>🔗 " + esc(a.compte) + "</b> · " + dateCourte(a.date) + " · " + esc(a.agent) +
+            "<div class='info' style='margin:0'>Association relevé ↔ Base · " + esc(a.com) + "</div></div>";
           return "<div style='border-top:1px solid var(--bord);padding:6px 0'><b>" + (a.type === "Caisse" ? "💵 " : "🏦 ") + esc(a.compte) + "</b> · " + dateCourte(a.date) + " · " + esc(a.agent) +
             "<div class='info' style='margin:0'>" + (a.type === "Banque" ? "Relevé du " + esc(a.du) + " au " + esc(a.au) + " · " + (a.pointees || 0) + " pointée(s) · " + (a.anomalies || 0) + " anomalie(s) · " + (a.recurrents || 0) + " récurrent(s) · " : "") +
             (a.solde !== "" ? (a.type === "Caisse" ? "compté " : "solde relevé ") + gnf(a.solde) + " · Base " + gnf(a.base) + " · " : "") + "<b style='color:" + (ec ? "#c62828" : "#2e7d32") + "'>écart " + gnf(ec) + "</b>" + (a.com ? " · " + esc(a.com) : "") + "</div></div>";
@@ -4906,6 +4908,7 @@
     if (R) {
       var dv = R.devise || "";
       h += "<div class='carte pleine'><h3>Résultat · " + esc(R.compte) + "</h3><table>" +
+        (R.associees && R.associees.length ? "<tr><td colspan='2' style='background:rgba(46,125,50,.12)'>🔗 <b>Associées (" + R.associees.length + ")</b><br><small>" + R.associees.map(esc).join("<br>") + "</small></td></tr>" : "") +
         "<tr><td>Période comparée</td><td class='v'>" + esc(R.du) + " → " + esc(R.au) + " (" + R.nb + " lignes)</td></tr>" +
         (R.ouverture ? "<tr><td>Début de Base pour ce compte</td><td class='v'>" + esc(R.ouverture.debut) + (R.ignorees ? " · <small>" + R.ignorees + " ligne(s) du relevé antérieures ignorées</small>" : "") + "</td></tr>" +
           (R.ouverture.releve !== null ? "<tr><td>Solde d'ouverture : relevé au " + esc(R.ouverture.releveAu) + "</td><td class='v'>" + gnf(R.ouverture.releve) + "</td></tr>" +
@@ -4966,8 +4969,16 @@
         if (!confirm("Associer :\n• relevé " + x.d + " · " + x.lib.substring(0, 60) + " · " + gnf(x.montant) + "\n• Base " + jourFr(b.date) + " · " + b.lib.substring(0, 60) + " · " + gnf(b.montant) +
           "\n\nLa date de la ligne dans Base devient " + x.d.split("-").reverse().join("/") + " (le relevé fait foi)." + (ecartMt ? "\n\n⚠️ Montants différents : seul la date est corrigée." : ""))) return;
         api({ api: "audit", op: "associer", compte: R.compte, baseDate: b.date, baseMontant: b.montant, releveDate: x.d, releveLib: x.lib }, 60000).then(function (r) {
-          if (!r.ok) { alert("⛔ " + (r.titre || "") + "\n" + (r.message || "")); return; }
-          AUD.assoc = null; AUD.garderPos = true; alert("✅ " + r.titre + "\n" + r.message); $("abGo").click();
+          if (!r.titre) { alert("⛔ Le script installé ne connaît pas encore l'association : collez la dernière version du script dans BASE et PRODUCTION, puis Nouvelle version du web app."); return; }
+          if (!r.ok) { alert("⛔ " + r.titre + "\n" + (r.message || "")); return; }
+          // Résultat appliqué tout de suite (la feuille du compte peut mettre quelques secondes à se recalculer) : la paire passe en pointées.
+          R.anomalies = R.anomalies.filter(function (z) { return z !== x; });
+          R.absents = R.absents.filter(function (z) { return z.k !== b.k; });
+          R.anomalies.forEach(function (z) { if (z.prop === b.k) delete z.prop; if (z.cands) z.cands = z.cands.filter(function (k) { return k !== b.k; }); });
+          R.pointees.push({ i: x.i, d: x.d, lib: x.lib, montant: x.montant, base: "🔗 " + b.lib + " (date " + jourFr(b.date) + " → " + x.d.split("-").reverse().join("/") + ")" });
+          (R.associees = R.associees || []).push(x.d + " · " + x.lib.substring(0, 60) + " · " + gnf(x.montant) + " ↔ Base ligne " + r.ligne + (r.deja ? " (déjà à la bonne date)" : " : " + r.avant + " → " + r.apres));
+          AUD.assoc = null; var y = window.scrollY; afficherAudit("banque"); window.scrollTo(0, y);
+          alert("✅ " + r.titre + "\n" + r.message + "\n\nLa paire est passée dans « Lignes pointées ». Relancez « Comparer avec Base » plus tard pour l'écart de solde à jour.");
         }, function (e) { alert("⛔ " + e.message); });
       }
       Array.prototype.forEach.call(document.querySelectorAll("[data-abp]"), function (b) { b.onclick = function () {
