@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 KW";
+  var VERSION_APP = "2026-11-14 KX";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -4921,7 +4921,19 @@
         "</details></div>";
       if (R.anomalies.length) h += "<div class='carte pleine'><h3>⚠️ Sur le relevé, absentes de Base (" + R.anomalies.length + ")</h3>" +
         R.anomalies.map(function (x, i) { return "<div style='border-top:1px solid var(--bord);padding:6px 0'><div class='ligne' style='justify-content:space-between'><span>" + esc(x.d) + " · " + esc(x.lib) + "</span><b style='flex:0;white-space:nowrap;color:" + (x.montant < 0 ? "#c62828" : "#2e7d32") + "'>" + gnf(x.montant) + "</b></div>" +
-          "<div class='ligne' style='gap:6px'><button class='bouton second' data-abc='" + i + "' style='width:auto;flex:0 0 auto;padding:4px 10px;margin:0'>➕ Créer l'écriture</button><button class='bouton second' data-abr='" + i + "' style='width:auto;flex:0 0 auto;padding:4px 10px;margin:0'>🔁 En faire un récurrent</button></div></div>"; }).join("") + "</div>";
+          (function () {   // 🔗 correspondance probable (même montant, date différente)
+            var b = x.prop !== undefined ? R.absents.filter(function (z) { return z.k === x.prop; })[0] : null;
+            return b ? "<div style='margin:4px 0;padding:6px 8px;border-radius:8px;background:rgba(46,125,50,.12)'>🔗 <b>Correspondance probable</b> : " + jourFr(b.date) + " · " + esc(b.lib) + " · " + gnf(b.montant) +
+              "<br><button class='bouton' data-abp='" + i + "' data-k='" + b.k + "' style='width:auto;padding:4px 10px;margin:4px 0 0'>✅ Associer (date Base " + jourFr(b.date) + " → " + esc(x.d.split("-").reverse().join("/")) + ")</button></div>" : "";
+          })() +
+          "<div class='ligne' style='gap:6px;flex-wrap:wrap'><button class='bouton second' data-abc='" + i + "' style='width:auto;flex:0 0 auto;padding:4px 10px;margin:0'>➕ Créer l'écriture</button><button class='bouton second' data-abr='" + i + "' style='width:auto;flex:0 0 auto;padding:4px 10px;margin:0'>🔁 En faire un récurrent</button>" +
+          (R.absents.some(function (z) { return (z.montant < 0) === (x.montant < 0); }) ? "<button class='bouton second' data-aba='" + i + "' style='width:auto;flex:0 0 auto;padding:4px 10px;margin:0'>🔗 Associer…</button>" : "") + "</div>" +
+          (AUD.assoc === i ? (function () {
+            var L = R.absents.filter(function (z) { return (z.montant < 0) === (x.montant < 0); }).sort(function (a, b) { return Math.abs(Math.abs(a.montant) - Math.abs(x.montant)) - Math.abs(Math.abs(b.montant) - Math.abs(x.montant)) || Math.abs(a.date - new Date(x.d).getTime()) - Math.abs(b.date - new Date(x.d).getTime()); });
+            return "<div class='carte' style='margin:6px 0;background:var(--fond)'><label>Ligne de Base correspondante (dans Base, absente du relevé)</label><select id='abAsS'>" + L.map(function (z) {
+              return "<option value='" + z.k + "'>" + (Math.abs(Math.abs(z.montant) - Math.abs(x.montant)) <= 1 ? "= " : "≠ ") + jourFr(z.date) + " · " + esc(z.lib.substring(0, 70)) + " · " + gnf(z.montant) + "</option>"; }).join("") + "</select>" +
+              "<div class='ligne' style='gap:6px'><button class='bouton' id='abAsOk' data-i='" + i + "'>✅ Associer et corriger la date</button><button class='bouton second' id='abAsX'>Annuler</button></div></div>";
+          })() : "") + "</div>"; }).join("") + "</div>";
       if (R.absents.length) h += "<div class='carte pleine'><h3>❓ Dans Base, absentes du relevé (" + R.absents.length + ")</h3><div class='info'>Opération pas encore passée en banque, mauvais compte ou montant différent : à vérifier.</div>" +
         R.absents.map(function (x) { return "<div style='border-top:1px solid var(--bord);padding:4px 0;display:flex;gap:6px'><span class='info' style='margin:0'>" + jourFr(x.date) + "</span><span style='flex:1'>" + esc(x.lib) + "</span><b>" + gnf(x.montant) + "</b></div>"; }).join("") + "</div>";
       if (R.pointees.length) h += "<details class='carte pleine'><summary><b>✅ Lignes pointées (" + R.pointees.length + ")</b></summary>" + R.pointees.map(function (x) { return "<div style='border-top:1px solid var(--bord);padding:3px 0;font-size:13px'>" + esc(x.d) + " · " + esc(x.lib) + " · <b>" + gnf(x.montant) + "</b><div class='info' style='margin:0'>↔ " + esc(x.base) + "</div></div>"; }).join("") + "</details>";
@@ -4936,7 +4948,8 @@
     $("abGo").onclick = function () {
       if (!AUD.compte) { alert("⛔ Choisissez le compte bancaire du relevé."); return; }
       $("abGo").disabled = true; $("abGo").textContent = "⏳ Comparaison…";
-      api({ api: "audit", op: "analyser", compte: AUD.compte, fichier: AUD.fichier, lignes: AUD.lignes }, 120000).then(function (r) { AUD.res = r; afficherAudit(); },
+      var yA = window.scrollY;
+      api({ api: "audit", op: "analyser", compte: AUD.compte, fichier: AUD.fichier, lignes: AUD.lignes }, 120000).then(function (r) { AUD.res = r; afficherAudit(); if (AUD.garderPos) window.scrollTo(0, yA); AUD.garderPos = false; },
         function (e) { alert("⛔ " + e.message); afficherAudit(); });
     };
     if (R && $("abIns")) $("abIns").onclick = function () {
@@ -4948,6 +4961,20 @@
       Array.prototype.forEach.call(document.querySelectorAll("[data-abc]"), function (b) { b.onclick = function () { var x = R.anomalies[+b.getAttribute("data-abc")];
         var ouvrir = function () { formulaireFin({ type: "Opération constatée", op: x.montant < 0 ? "Prelevement bancaire" : "Credit bancaire", compte: R.compte, montant: Math.abs(x.montant), objet: "Relevé : " + x.lib.substring(0, 150), dateEffet: new Date(x.d + "T12:00:00").getTime() }); };
         if (S.fin) ouvrir(); else rafraichirFin().then(ouvrir, function () { alert("⛔ Finances indisponible (réseau)."); }); }; });
+      function associer(x, b) {
+        var ecartMt = Math.abs(Math.abs(b.montant) - Math.abs(x.montant)) > 1;
+        if (!confirm("Associer :\n• relevé " + x.d + " · " + x.lib.substring(0, 60) + " · " + gnf(x.montant) + "\n• Base " + jourFr(b.date) + " · " + b.lib.substring(0, 60) + " · " + gnf(b.montant) +
+          "\n\nLa date de la ligne dans Base devient " + x.d.split("-").reverse().join("/") + " (le relevé fait foi)." + (ecartMt ? "\n\n⚠️ Montants différents : seul la date est corrigée." : ""))) return;
+        api({ api: "audit", op: "associer", compte: R.compte, baseDate: b.date, baseMontant: b.montant, releveDate: x.d, releveLib: x.lib }, 60000).then(function (r) {
+          if (!r.ok) { alert("⛔ " + (r.titre || "") + "\n" + (r.message || "")); return; }
+          AUD.assoc = null; AUD.garderPos = true; alert("✅ " + r.titre + "\n" + r.message); $("abGo").click();
+        }, function (e) { alert("⛔ " + e.message); });
+      }
+      Array.prototype.forEach.call(document.querySelectorAll("[data-abp]"), function (b) { b.onclick = function () {
+        var x = R.anomalies[+b.getAttribute("data-abp")], k = +b.getAttribute("data-k"); associer(x, R.absents.filter(function (z) { return z.k === k; })[0]); }; });
+      Array.prototype.forEach.call(document.querySelectorAll("[data-aba]"), function (b) { b.onclick = function () { var i = +b.getAttribute("data-aba"); AUD.assoc = AUD.assoc === i ? null : i; var y = window.scrollY; afficherAudit("banque"); window.scrollTo(0, y); }; });
+      if ($("abAsX")) $("abAsX").onclick = function () { AUD.assoc = null; var y = window.scrollY; afficherAudit("banque"); window.scrollTo(0, y); };
+      if ($("abAsOk")) $("abAsOk").onclick = function () { var x = R.anomalies[+$("abAsOk").getAttribute("data-i")], k = +$("abAsS").value; associer(x, R.absents.filter(function (z) { return z.k === k; })[0]); };
       Array.prototype.forEach.call(document.querySelectorAll("[data-abr]"), function (b) { b.onclick = function () { var x = R.anomalies[+b.getAttribute("data-abr")];
         AUD.motif = x.lib.replace(/\s*-?\s*Ref No.*$/i, "").replace(/\d{6,}/g, "").trim().substring(0, 40); AUD.edit = null; afficherAudit("regles"); }; });
     }
