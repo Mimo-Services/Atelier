@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 LA";
+  var VERSION_APP = "2026-11-14 LB";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -4919,6 +4919,9 @@
       var dv = R.devise || "";
       h += "<div class='carte pleine'><h3>Résultat · " + esc(R.compte) + "</h3><table>" +
         (R.associees && R.associees.length ? "<tr><td colspan='2' style='background:rgba(46,125,50,.12)'>✔️ <b>Résolues dans cette session (" + R.associees.length + ")</b><br><small>" + R.associees.map(esc).join("<br>") + "</small></td></tr>" : "") +
+        (function () { var DC = R.pointees.filter(function (x) { return x.decale && x.bd; });
+          return DC.length ? "<tr><td colspan='2' style='background:rgba(230,126,34,.12)'>📅 <b>" + DC.length + " ligne(s) pointée(s) à une autre date dans Base</b><br><small>" + DC.slice(0, 6).map(function (x) { return esc(x.d.split("-").reverse().join("/")) + " ← " + jourFr(x.bd) + " · " + esc(x.lib.substring(0, 45)) + " · " + gnf(x.montant); }).join("<br>") + (DC.length > 6 ? "<br>…" : "") +
+            "<br>Le solde « à cette date » en est faussé.</small><br><button class='bouton' id='abAl' style='width:auto;padding:4px 10px;margin:6px 0 0'>📅 Aligner les dates de Base sur le relevé</button></td></tr>" : ""; })() +
         "<tr><td>Période comparée</td><td class='v'>" + esc(R.du) + " → " + esc(R.au) + " (" + R.nb + " lignes)</td></tr>" +
         (R.ouverture ? "<tr><td>Début de Base pour ce compte</td><td class='v'>" + esc(R.ouverture.debut) + (R.ignorees ? " · <small>" + R.ignorees + " ligne(s) du relevé antérieures ignorées</small>" : "") + "</td></tr>" +
           (R.ouverture.releve !== null ? "<tr><td>Solde d'ouverture : relevé au " + esc(R.ouverture.releveAu) + "</td><td class='v'>" + gnf(R.ouverture.releve) + "</td></tr>" +
@@ -4975,6 +4978,16 @@
         AUD.creation = { x: x, R: R };
         var ouvrir = function () { formulaireFin({ type: "Opération constatée", op: x.montant < 0 ? "Prelevement bancaire" : "Credit bancaire", compte: R.compte, montant: Math.abs(x.montant), objet: "Relevé : " + x.lib.substring(0, 150), dateEffet: new Date(x.d + "T12:00:00").getTime() }); };
         if (S.fin) ouvrir(); else rafraichirFin().then(ouvrir, function () { alert("⛔ Finances indisponible (réseau)."); }); }; });
+      if ($("abAl")) $("abAl").onclick = function () {
+        var DC = R.pointees.filter(function (x) { return x.decale && x.bd; });
+        if (!confirm("Mettre dans Base la date du relevé pour " + DC.length + " ligne(s) pointée(s) (heure de saisie conservée) ?")) return;
+        $("abAl").disabled = true; $("abAl").textContent = "⏳ Alignement…";
+        api({ api: "audit", op: "aligner", compte: R.compte, lignes: DC.map(function (x) { return { d: x.d, bd: x.bd, bm: x.bm, lib: x.lib }; }) }, 180000).then(function (r) {
+          if (!r.titre) { alert("⛔ Le script installé ne connaît pas encore cette opération : collez la dernière version du script."); return; }
+          alert((r.ok ? "✅ " : "⛔ ") + r.titre + "\n" + (r.message || "").split("\n").slice(0, 15).join("\n"));
+          AUD.garderPos = true; setTimeout(function () { $("abGo").click(); }, 4000);   // la feuille du compte se recalcule
+        }, function (e) { alert("⛔ " + e.message); afficherAudit(); });
+      };
       function associer(x, b) {
         var ecartMt = Math.abs(Math.abs(b.montant) - Math.abs(x.montant)) > 1;
         if (!confirm("Associer :\n• relevé " + x.d + " · " + x.lib.substring(0, 60) + " · " + gnf(x.montant) + "\n• Base " + jourFr(b.date) + " · " + b.lib.substring(0, 60) + " · " + gnf(b.montant) +
