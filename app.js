@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 LD";
+  var VERSION_APP = "2026-11-14 LE";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -4934,6 +4934,17 @@
       if (R.recurrents.length) h += "<div class='carte pleine'><h3>🔁 Prélèvements récurrents (" + R.recurrents.length + ")</h3><div class='info'>À inscrire d'office dans Base (opération constatée). Total " + gnf(R.recurrents.reduce(function (t, x) { return t + x.montant; }, 0)) + ".</div>" +
         "<button class='bouton' id='abIns'>✍️ Inscrire les lignes cochées dans Base</button><details><summary class='info' style='cursor:pointer'>Voir / décocher les lignes</summary>" + R.recurrents.map(function (x, i) { return "<label style='font-weight:400;display:flex;gap:8px;border-top:1px solid var(--bord);padding:4px 0'><input type='checkbox' class='abR' data-i='" + i + "' checked style='width:auto'><span style='flex:1'>" + esc(x.d) + " · " + esc(x.lib) + " <small class='info'>(" + esc(x.regle) + " → " + esc(x.cat) + ")</small></span><b>" + gnf(x.montant) + "</b></label>"; }).join("") +
         "</details></div>";
+      // 🧩 Regroupements : proposés par le serveur + manuel (cases à cocher, totaux égaux)
+      function lgR(x) { return "<div style='display:flex;gap:6px;font-size:13px'><span class='info' style='margin:0;white-space:nowrap'>" + esc(x.d.split("-").reverse().join("/").slice(0, 5)) + "</span><span style='flex:1'>" + esc(x.lib.substring(0, 80)) + "</span><b style='white-space:nowrap'>" + gnf(x.montant) + "</b></div>"; }
+      function lgB(z) { return "<div style='display:flex;gap:6px;font-size:13px'><span class='info' style='margin:0;white-space:nowrap'>" + jourFr(z.date).slice(0, 5) + "</span><span style='flex:1'>" + esc(z.lib.substring(0, 80)) + "</span><b style='white-space:nowrap'>" + gnf(z.montant) + "</b></div>"; }
+      if ((R.groupes || []).length) h += "<div class='carte pleine'><h3>🧩 Regroupements proposés (" + R.groupes.length + ")</h3><div class='info'>Totaux égaux entre lignes du relevé et lignes de Base. Valider : la date dans Base devient la plus récente du relevé.</div>" +
+        R.groupes.map(function (g, i) { return "<div style='border-top:1px solid var(--bord);padding:6px 0'><div class='info' style='margin:0'>Relevé</div>" + g.rel.map(lgR).join("") + "<div class='info' style='margin:2px 0 0'>= Base</div>" + g.bases.map(lgB).join("") +
+          "<div class='ligne' style='gap:6px'><button class='bouton' data-gv='" + i + "' style='width:auto;flex:0 0 auto;padding:4px 10px;margin:4px 0 0'>✅ Valider</button><button class='bouton second' data-gx='" + i + "' style='width:auto;flex:0 0 auto;padding:4px 10px;margin:4px 0 0'>✕ Rejeter</button></div></div>"; }).join("") + "</div>";
+      h += "<div class='carte pleine'><div class='ligne' style='justify-content:space-between;align-items:center'><b>🧩 Regroupement manuel</b><button class='bouton second' id='abGm' style='width:auto;flex:0 0 auto;padding:4px 10px;margin:0'>" + (AUD.grpMan ? "Fermer" : "Ouvrir") + "</button></div>" +
+        (AUD.grpMan ? "<div class='info'>Cochez les lignes du relevé et de Base qui forment la même opération (au moins 2 d'un côté). Les totaux doivent être égaux.</div>" +
+          "<b style='font-size:13px'>Relevé (non pointées)</b>" + R.anomalies.concat(R.recurrents).sort(function (a, b) { return a.d < b.d ? -1 : 1; }).map(function (x) { return "<label style='font-weight:400;display:flex;gap:6px;align-items:flex-start'><input type='checkbox' class='abMR' data-i='" + x.i + "' style='width:auto;margin-top:3px'>" + lgR(x).replace("<div style='display:flex", "<div style='flex:1;display:flex") + "</label>"; }).join("") +
+          "<b style='font-size:13px;display:block;margin-top:6px'>Base (absentes du relevé)</b>" + R.absents.map(function (z) { return "<label style='font-weight:400;display:flex;gap:6px;align-items:flex-start'><input type='checkbox' class='abMB' data-k='" + z.k + "' style='width:auto;margin-top:3px'>" + lgB(z).replace("<div style='display:flex", "<div style='flex:1;display:flex") + "</label>"; }).join("") +
+          "<div id='abMT' class='info' style='font-weight:700'></div><button class='bouton' id='abMOk' disabled>✅ Valider le regroupement</button>" : "") + "</div>";
       if (R.anomalies.length) h += "<div class='carte pleine'><h3>⚠️ Sur le relevé, absentes de Base (" + R.anomalies.length + ")</h3>" +
         R.anomalies.map(function (x, i) { return "<div style='border-top:1px solid var(--bord);padding:6px 0'><div class='ligne' style='justify-content:space-between'><span>" + esc(x.d) + " · " + esc(x.lib) + "</span><b style='flex:0;white-space:nowrap;color:" + (x.montant < 0 ? "#c62828" : "#2e7d32") + "'>" + gnf(x.montant) + "</b></div>" +
           (function () {   // 🔗 correspondance probable (même montant, date différente)
@@ -5005,6 +5016,41 @@
           alert("✅ " + r.titre + "\n" + r.message + "\n\nLa paire est passée dans « Lignes pointées » ; solde Base et écart mis à jour.");
         }, function (e) { alert("⛔ " + e.message); });
       }
+      // 🧩 validation d'un regroupement (proposé ou manuel)
+      function regrouper(rel, bases, g) {
+        var sR = rel.reduce(function (s, x) { return s + x.montant; }, 0), sB = bases.reduce(function (s, z) { return s + z.montant; }, 0), dC = rel.map(function (x) { return x.d; }).sort().pop();
+        if (!confirm("Regrouper " + rel.length + " ligne(s) du relevé (" + gnf(sR) + ") avec " + bases.length + " ligne(s) de Base (" + gnf(sB) + ") ?\n\nDate dans Base : " + dC.split("-").reverse().join("/") + " (la plus récente du relevé).")) return;
+        api({ api: "audit", op: "regrouper", compte: R.compte, rel: rel.map(function (x) { return { d: x.d, debit: x.debit, credit: x.credit, lib: x.lib }; }), bases: bases.map(function (z) { return { bd: z.date, bm: z.montant }; }) }, 90000).then(function (r) {
+          if (!r.titre) { alert("⛔ Le script installé ne connaît pas encore le regroupement : collez la dernière version du script."); return; }
+          if (!r.ok) { alert("⛔ " + r.titre + "\n" + (r.message || "")); return; }
+          var iS = rel.map(function (x) { return x.i; }), kS = bases.map(function (z) { return z.k; });
+          R.anomalies = R.anomalies.filter(function (x) { return iS.indexOf(x.i) < 0; }); R.recurrents = R.recurrents.filter(function (x) { return iS.indexOf(x.i) < 0; });
+          R.absents = R.absents.filter(function (z) { return kS.indexOf(z.k) < 0; }); if (g) R.groupes = R.groupes.filter(function (y) { return y !== g; });
+          R.anomalies.forEach(function (z) { if (kS.indexOf(z.prop) >= 0) delete z.prop; });
+          if (R.soldeAu) { var cp = audCoupe(R); bases.forEach(function (z) { if (dC <= R.soldeAu && z.date > cp) audMajSolde(R, z.montant); else if (dC > R.soldeAu && z.date <= cp) audMajSolde(R, -z.montant); }); }
+          var txt = "🧩 " + bases.map(function (z) { return z.lib; }).join(" + ");
+          rel.forEach(function (x) { R.pointees.push({ i: x.i, d: x.d, lib: x.lib, montant: x.montant, base: txt }); });
+          (R.associees = R.associees || []).push("🧩 " + rel.length + " ligne(s) du relevé (" + gnf(sR) + ") ↔ " + bases.length + " ligne(s) de Base · date " + dC.split("-").reverse().join("/"));
+          var y = window.scrollY; afficherAudit("banque"); window.scrollTo(0, y);
+          alert("✅ " + r.titre + "\n" + r.message);
+        }, function (e) { alert("⛔ " + e.message); });
+      }
+      Array.prototype.forEach.call(document.querySelectorAll("[data-gv]"), function (b) { b.onclick = function () { var g = R.groupes[+b.getAttribute("data-gv")]; regrouper(g.rel, g.bases, g); }; });
+      Array.prototype.forEach.call(document.querySelectorAll("[data-gx]"), function (b) { b.onclick = function () { var g = R.groupes[+b.getAttribute("data-gx")];
+        R.groupes = R.groupes.filter(function (y) { return y !== g; }); R.anomalies = R.anomalies.concat(g.rel); R.absents = R.absents.concat(g.bases);
+        var y = window.scrollY; afficherAudit("banque"); window.scrollTo(0, y); }; });
+      if ($("abGm")) $("abGm").onclick = function () { AUD.grpMan = !AUD.grpMan; var y = window.scrollY; afficherAudit("banque"); window.scrollTo(0, y); };
+      function selMan() {
+        var tous = R.anomalies.concat(R.recurrents);
+        var rel = Array.prototype.filter.call(document.querySelectorAll(".abMR"), function (c) { return c.checked; }).map(function (c) { var i = +c.getAttribute("data-i"); return tous.filter(function (x) { return x.i === i; })[0]; });
+        var bases = Array.prototype.filter.call(document.querySelectorAll(".abMB"), function (c) { return c.checked; }).map(function (c) { var k = +c.getAttribute("data-k"); return R.absents.filter(function (z) { return z.k === k; })[0]; });
+        return { rel: rel, bases: bases };
+      }
+      Array.prototype.forEach.call(document.querySelectorAll(".abMR, .abMB"), function (c) { c.onchange = function () {
+        var s = selMan(), sR = s.rel.reduce(function (t, x) { return t + x.montant; }, 0), sB = s.bases.reduce(function (t, z) { return t + z.montant; }, 0), ok = s.rel.length && s.bases.length && s.rel.length + s.bases.length >= 3 && Math.abs(sR - sB) <= 1;
+        $("abMT").innerHTML = "Relevé " + s.rel.length + " ligne(s) : " + gnf(sR) + " · Base " + s.bases.length + " ligne(s) : " + gnf(sB) + " · " + (ok ? "<span style='color:#2e7d32'>✅ totaux égaux</span>" : "<span style='color:#c62828'>écart " + gnf(sR - sB) + "</span>");
+        $("abMOk").disabled = !ok; }; });
+      if ($("abMOk")) $("abMOk").onclick = function () { var s = selMan(); regrouper(s.rel, s.bases, null); };
       Array.prototype.forEach.call(document.querySelectorAll("[data-abp]"), function (b) { b.onclick = function () {
         var x = R.anomalies[+b.getAttribute("data-abp")], k = +b.getAttribute("data-k"); associer(x, R.absents.filter(function (z) { return z.k === k; })[0]); }; });
       Array.prototype.forEach.call(document.querySelectorAll("[data-aba]"), function (b) { b.onclick = function () { var i = +b.getAttribute("data-aba"); AUD.assoc = AUD.assoc === i ? null : i; var y = window.scrollY; afficherAudit("banque"); window.scrollTo(0, y); }; });
