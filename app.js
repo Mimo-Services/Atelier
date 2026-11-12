@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 LH";
+  var VERSION_APP = "2026-11-14 LI";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -1596,7 +1596,7 @@
       "<label>Destination</label><select id='ffDest'>" + opts(["📦 Stock · fourniture locale (Suivi Achats)", "📦 Stock · fourniture importée (Suivi Achats)", "💸 Charge ou prestation (passe directement)"], A1.dest) + "</select></div>" +
       "<div id='ffOpB'><label>Mouvement</label><select id='ffOp'>" + opts(F.opsBanque, src.type === "Mouvement de trésorerie" ? (src.op === "Dépôt de chèque" || (src.op === "Virement" && src.mode === "Chèque") ? "Remise chèque" : src.op) : "", "— choisir —") + "</select></div>" +
       "<div id='ffOcB'><label>Opération constatée (sans validation)</label><select id='ffOc'>" + opts(F.opsConstatees || [], src.type === "Opération constatée" ? src.op : "", "— choisir —") + "</select></div>" +
-      "<div class='ligne'><div><label id='ffSocL'>Société (payeuse)</label><select id='ffSoc'>" + opts(["AB", "M2S", "CASAFINO"], (srcAchat && (src.pourCompte || (fourSrc && fourSrc.societe))) || src.societe || "AB") + "</select></div>" +
+      "<div class='ligne'><div><label id='ffSocL'>Société (payeuse)</label><select id='ffSoc'>" + opts(["AB", "M2S", "CASAFINO"].concat(src.societe === "DG" ? ["DG"] : []), (srcAchat && (src.pourCompte || (fourSrc && fourSrc.societe))) || src.societe || "AB") + "</select></div>" +
       "<div id='ffPaySB'><label>Société payeuse</label><select id='ffPayS'>" + opts(["AB", "M2S", "CASAFINO", "DG"], src.type === "Règlement fournisseur" && src.op === "Achat comptant" ? src.societe : "") + "</select><div class='info'>Caisse / compte proposés : ceux de la société payeuse. Différente de la bénéficiaire → 🔁 Inter-sociétés.</div></div>" +
       "<div id='ffProjB'><label>Projet / affectation (facultatif)</label><input id='ffProj' list='ffProjL' value='" + esc(fourSrc && fourSrc.projet ? fourSrc.projet : "") + "' placeholder='ex. Dépôt Nongo, Entretien et réparation Imprimerie'><datalist id='ffProjL'>" +
         (F.projets || []).map(function (x) { return "<option value='" + esc(x) + "'>"; }).join("") + "</datalist></div>" +
@@ -3711,11 +3711,12 @@
           }).join("");
         });
       }
-      var bt = T ? ("<div class='carte pleine'><div class='ligne' style='flex-wrap:wrap;gap:6px'>" + (T.tous ? "<button class='bouton' id='trAB' style='width:auto;flex:0 0 auto;margin:0'>🔎 Audit bancaire</button>" : "") +
+      var bt = T ? ("<div class='carte pleine'><div class='ligne' style='flex-wrap:wrap;gap:6px'>" + (T.tous ? "<button class='bouton' id='trAH' style='width:auto;flex:0 0 auto;margin:0'>📥 Relevés de la semaine</button><button class='bouton' id='trAB' style='width:auto;flex:0 0 auto;margin:0'>🔎 Audit bancaire</button>" : "") +
         (T.comptes.some(function (c) { return c.type === "Caisse"; }) ? "<button class='bouton' id='trAC' style='width:auto;flex:0 0 auto;margin:0'>💵 Audit de caisse</button>" : "") +
         "<button class='bouton second' id='trAL' style='width:auto;flex:0 0 auto;margin:0'>📋 Historique des audits</button>" + (T.tous ? "<button class='bouton second' id='trAR' style='width:auto;flex:0 0 auto;margin:0'>⚙️ Prélèvements récurrents</button>" : "") + "</div></div>") : "";
       $("vueListe").innerHTML = bt + h; montrer("vueListe");
       if ($("trAB")) $("trAB").onclick = function () { afficherAudit("banque"); };
+      if ($("trAH")) $("trAH").onclick = function () { afficherAudit("hebdo"); };
       if ($("trAC")) $("trAC").onclick = function () { afficherAudit("caisse"); };
       if ($("trAL")) $("trAL").onclick = function () { afficherAudit("liste"); };
       if ($("trAR")) $("trAR").onclick = function () { AUD.edit = null; afficherAudit("regles"); };
@@ -4589,6 +4590,7 @@
     if (d.vue === "missions" && droitMis()) { afficherMis(d.id); return true; }
     if (d.vue === "stockval" && droitStockVal()) { afficherStockVal(d.id); return true; }
     if (d.vue === "magasins") { afficherMagasins(""); return true; }
+    if (d.vue === "audit") { afficherAudit("hebdo"); return true; }
     montrer("vueAccueil"); return true;
   }
   function ouvrirDepuisNotif(d) {
@@ -4848,6 +4850,11 @@
   function audMajSolde(R, delta) { if (R.soldeBase === null || R.soldeBase === undefined || !delta) return; R.soldeBase += delta; R.ecart = Math.round((R.soldeReleve - R.soldeBase) * 100) / 100; }
   function audCoupe(R) { return R.soldeAu ? new Date(R.soldeAu + "T12:00:00").getTime() + 86400000 : 0; }
   // Écriture créée depuis une anomalie du relevé : la ligne passe tout de suite en « pointées » (au lieu d'attendre une nouvelle comparaison).
+  // Fichier → base64 (copie du relevé gardée dans Drive) ; au-delà de 8 Mo, pas de copie.
+  function audLireBase64(f) {
+    return new Promise(function (ok) { if (!f || f.size > 8 * 1024 * 1024) return ok({ data: "", mime: "" });
+      var rd = new FileReader(); rd.onload = function () { var s = String(rd.result || ""); ok({ data: s.substring(s.indexOf(",") + 1), mime: f.type || "" }); }; rd.onerror = function () { ok({ data: "", mime: "" }); }; rd.readAsDataURL(f); });
+  }
   function audEcritureCreee(dm) {
     var c = AUD.creation; if (!c || !dm || Math.abs((+dm.montant || 0) - Math.abs(c.x.montant)) > 1) return;   // une autre demande : rien
     AUD.creation = null; if (AUD.res !== c.R) return;
@@ -4860,7 +4867,7 @@
   function afficherAudit(vue) {
     if (vue !== undefined) { AUD.vue = vue; AUD.msg = ""; }
     var T = S.treso || { comptes: [] }, B = T.comptes.filter(function (c) { return c.type === "Banque"; }), Cs = T.comptes.filter(function (c) { return c.type === "Caisse"; });
-    $("titre").textContent = AUD.vue === "caisse" ? "Audit de caisse" : AUD.vue === "regles" ? "Prélèvements récurrents" : AUD.vue === "liste" ? "Historique des audits" : "Audit bancaire";
+    $("titre").textContent = AUD.vue === "caisse" ? "Audit de caisse" : AUD.vue === "regles" ? "Prélèvements récurrents" : AUD.vue === "liste" ? "Historique des audits" : AUD.vue === "hebdo" ? "Relevés de la semaine" : "Audit bancaire";
     var h = "";
     if (AUD.vue === "caisse") {
       h = "<div class='carte pleine'><h3>💵 Audit de caisse</h3><label>Caisse</label><select id='acC'>" + optsM(Cs.map(function (c) { return c.nom; }), AUD.compte, "— choisir —") + "</select><div class='info' id='acS'></div>" +
@@ -4898,6 +4905,42 @@
       }, function (e) { $("vueListe").innerHTML = "<div class='carte'><p class='info'>⛔ " + esc(e.message) + "</p></div>"; });
       return;
     }
+    if (AUD.vue === "hebdo") {   // 📥 Relevés de la semaine : un dépôt par compte bancaire ; audit automatique quand tout est là
+      $("vueListe").innerHTML = "<div class='carte pleine'><h3>📥 Relevés de la semaine</h3><p class='info'>⏳ Chargement…</p></div>"; montrer("vueListe");
+      var dessinerH = function (E) {
+        var nOk = E.comptes.filter(function (c) { return c.depot; }).length;
+        var h = "<div class='carte pleine'><h3>📥 Relevés de la semaine du " + esc(E.semaine.split("-").reverse().join("/")) + "</h3><div class='info'>" + nOk + " / " + E.comptes.length + " compte(s) traité(s)." +
+          (E.enCours ? " ⏳ Audit automatique en cours (rapport par notification)." : E.dernierAuto ? " Dernier audit automatique : " + dateCourte(E.dernierAuto) + "." : "") +
+          " Dès que tous les relevés sont déposés, l'audit se lance seul en arrière-plan.</div>" +
+          "<button class='bouton second' id='ahGo' style='width:auto;margin:6px 0 0'" + (E.comptes.some(function (c) { return c.depot && c.depot.statut === "Déposé"; }) ? "" : " disabled") + ">▶️ Lancer l'audit automatique maintenant</button></div>";
+        h += E.comptes.map(function (c, i) { var d = c.depot, st = !d ? "⏳ à déposer" : d.statut === "Sans relevé" ? "⏭️ sans relevé" : d.statut === "Déposé" ? "📄 déposé, en attente d'audit" : d.statut === "Erreur" ? "⛔ erreur" : "✅ " + d.statut.toLowerCase();
+          return "<div class='carte'><div class='ligne' style='justify-content:space-between'><b>🏦 " + esc(c.nom) + "</b><span class='info' style='margin:0'>" + st + "</span></div>" +
+            (d ? "<div class='info' style='margin:2px 0'>" + (d.du ? "du " + esc(d.du) + " au " + esc(d.au) + " · " : "") + (d.agent ? esc(d.agent) + " · " + dateCourte(d.le) : "") + (d.lien ? " · <a href='" + esc(d.lien) + "' target='_blank' rel='noopener'>📎 copie</a>" : "") + (d.resultat ? "<br>" + esc(d.resultat) : "") + "</div>" : "") +
+            "<div class='ligne' style='gap:6px;flex-wrap:wrap'><label class='bouton" + (d ? " second" : "") + "' style='width:auto;flex:0 0 auto;margin:0;cursor:pointer'>📎 " + (d && d.statut !== "Sans relevé" ? "Remplacer" : "Déposer") + " le relevé<input type='file' data-ahf='" + i + "' accept='.xlsx,.xls,.csv,.pdf,application/pdf' style='display:none'></label>" +
+            (!d ? "<button class='bouton second' data-ahp='" + i + "' style='width:auto;flex:0 0 auto;margin:0'>⏭️ Pas de relevé</button>" : "") +
+            (d && d.statut !== "Sans relevé" ? "<button class='bouton second' data-aho='" + i + "' style='width:auto;flex:0 0 auto;margin:0'>🔎 Ouvrir l'audit</button>" : "") + "</div><div class='info' id='ahM" + i + "'></div></div>"; }).join("");
+        $("vueListe").innerHTML = h; montrer("vueListe");
+        var envoyerH = function (q, ok) { api(Object.assign({ api: "audit" }, q), 240000).then(function (r) { if (!r.ok) { alert("⛔ " + (r.titre || "") + "\n" + (r.message || "")); return; } if (r.message) alert("✅ " + r.message); dessinerH(r); if (ok) ok(r); }, function (e) { alert("⛔ " + e.message); }); };
+        $("ahGo").onclick = function () { if (confirm("Lancer maintenant l'audit automatique des relevés déposés ?")) envoyerH({ op: "lancer" }); };
+        Array.prototype.forEach.call(document.querySelectorAll("[data-ahp]"), function (b) { b.onclick = function () { var c = E.comptes[+b.getAttribute("data-ahp")]; if (confirm(c.nom + " : pas de relevé cette semaine ?")) envoyerH({ op: "passer", compte: c.nom }); }; });
+        Array.prototype.forEach.call(document.querySelectorAll("[data-aho]"), function (b) { b.onclick = function () { var c = E.comptes[+b.getAttribute("data-aho")];
+          b.disabled = true; b.textContent = "⏳…";
+          api({ api: "audit", op: "lignesDepot", compte: c.nom }, 120000).then(function (r) { if (!r.ok) { alert("⛔ " + r.message); b.disabled = false; return; }
+            AUD.compte = c.nom; AUD.lignes = r.lignes; AUD.fichier = r.fichier; AUD.fichierData = null; AUD.lien = (c.depot && c.depot.lien) || ""; AUD.res = null; afficherAudit("banque"); if ($("abGo")) $("abGo").click(); }, function (e) { alert("⛔ " + e.message); b.disabled = false; }); }; });
+        Array.prototype.forEach.call(document.querySelectorAll("[data-ahf]"), function (inp) { inp.onchange = function () {
+          var i = +inp.getAttribute("data-ahf"), c = E.comptes[i], f = inp.files[0]; if (!f) return;
+          $("ahM" + i).textContent = "⏳ Lecture de " + f.name + "…";
+          Promise.all([relLireFichier(f), audLireBase64(f)]).then(function (x) {
+            var L = x[0]; if (!L.length) throw new Error("aucune opération reconnue dans ce fichier");
+            $("ahM" + i).textContent = "⏳ Envoi de " + L.length + " ligne(s)…";
+            envoyerH({ op: "deposer", compte: c.nom, lignes: L, fichier: f.name, fichierData: x[1].data, mime: x[1].mime });
+          }).catch(function (e) { $("ahM" + i).textContent = "⛔ " + e.message; });
+        }; });
+      };
+      api({ api: "audit", op: "hebdo" }, 60000).then(function (r) { if (!r.ok) { $("vueListe").innerHTML = "<div class='carte'><p class='info'>⛔ " + esc(r.message || "") + "</p></div>"; return; } dessinerH(r); },
+        function (e) { $("vueListe").innerHTML = "<div class='carte'><p class='info'>⛔ " + esc(e.message) + " (réseau nécessaire)</p></div>"; });
+      return;
+    }
     if (AUD.vue === "liste") {
       $("vueListe").innerHTML = "<div class='carte pleine'><h3>📋 Historique des audits</h3><p class='info'>⏳ Chargement…</p></div>"; montrer("vueListe");
       api({ api: "audit", op: "liste" }).then(function (r) {
@@ -4907,7 +4950,7 @@
             "<div class='info' style='margin:0'>Association relevé ↔ Base · " + esc(a.com) + "</div></div>";
           return "<div style='border-top:1px solid var(--bord);padding:6px 0'><b>" + (a.type === "Caisse" ? "💵 " : "🏦 ") + esc(a.compte) + "</b> · " + dateCourte(a.date) + " · " + esc(a.agent) +
             "<div class='info' style='margin:0'>" + (a.type === "Banque" ? "Relevé du " + esc(a.du) + " au " + esc(a.au) + " · " + (a.pointees || 0) + " pointée(s) · " + (a.anomalies || 0) + " anomalie(s) · " + (a.recurrents || 0) + " récurrent(s) · " : "") +
-            (a.solde !== "" ? (a.type === "Caisse" ? "compté " : "solde relevé ") + gnf(a.solde) + " · Base " + gnf(a.base) + " · " : "") + "<b style='color:" + (ec ? "#c62828" : "#2e7d32") + "'>écart " + gnf(ec) + "</b>" + (a.com ? " · " + esc(a.com) : "") + "</div></div>";
+            (a.solde !== "" ? (a.type === "Caisse" ? "compté " : "solde relevé ") + gnf(a.solde) + " · Base " + gnf(a.base) + " · " : "") + "<b style='color:" + (ec ? "#c62828" : "#2e7d32") + "'>écart " + gnf(ec) + "</b>" + (a.com ? " · " + esc(a.com) : "") + (a.lien ? " · <a href='" + esc(a.lien) + "' target='_blank' rel='noopener'>📎 copie du relevé</a>" : "") + "</div></div>";
         }).join("") || "<p class='info'>Aucun audit.</p>") + "</div>";
       }, function (e) { $("vueListe").innerHTML = "<div class='carte'><p class='info'>⛔ " + esc(e.message) + "</p></div>"; });
       return;
@@ -4921,7 +4964,7 @@
       "<button class='bouton' id='abGo'" + (AUD.lignes ? "" : " disabled") + ">🔎 Comparer avec Base</button></div>";
     if (R) {
       var dv = R.devise || "";
-      h += "<div class='carte pleine'><h3>Résultat · " + esc(R.compte) + "</h3><table>" +
+      h += "<div class='carte pleine'><h3>Résultat · " + esc(R.compte) + "</h3>" + (R.lien ? "<div class='info' style='margin:0 0 4px'>📎 <a href='" + esc(R.lien) + "' target='_blank' rel='noopener'>Copie du relevé gardée dans Drive</a></div>" : "") + "<table>" +
         (R.associees && R.associees.length ? "<tr><td colspan='2' style='background:rgba(46,125,50,.12)'>✔️ <b>Résolues dans cette session (" + R.associees.length + ")</b><br><small>" + R.associees.map(esc).join("<br>") + "</small></td></tr>" : "") +
         "<tr><td>Période comparée</td><td class='v'>" + esc(R.du) + " → " + esc(R.au) + " (" + R.nb + " lignes" + (R.ignorees ? ", " + R.ignorees + " antérieures au début de Base ignorées" : "") + ")</td></tr>" +
         (R.alignees ? "<tr><td colspan='2' class='info'>📅 " + R.alignees + " date(s) de Base alignée(s) sur le relevé</td></tr>" : "") +
@@ -4969,7 +5012,8 @@
     $("vueListe").innerHTML = h; montrer("vueListe");
     $("abC").onchange = function () { AUD.compte = this.value; AUD.res = null; };
     $("abF").onchange = function () {
-      var f = this.files[0]; if (!f) return; AUD.res = null; AUD.lignes = null; AUD.fichier = f.name; AUD.msg = "⏳ Lecture de " + f.name + "…"; $("abI").textContent = AUD.msg;
+      var f = this.files[0]; if (!f) return; AUD.res = null; AUD.lignes = null; AUD.fichier = f.name; AUD.fichierData = null; AUD.lien = ""; AUD.msg = "⏳ Lecture de " + f.name + "…"; $("abI").textContent = AUD.msg;
+      audLireBase64(f).then(function (b) { AUD.fichierData = b.data; AUD.mime = b.mime; });
       relLireFichier(f).then(function (L) { if (!L.length) throw new Error("aucune opération reconnue dans ce fichier"); AUD.lignes = L; afficherAudit(); },
         function (e) { AUD.msg = "⛔ " + e.message; afficherAudit(); });
     };
@@ -4977,7 +5021,7 @@
       if (!AUD.compte) { alert("⛔ Choisissez le compte bancaire du relevé."); return; }
       $("abGo").disabled = true; $("abGo").textContent = "⏳ Mise à jour du compte depuis Base, puis comparaison…";
       var yA = window.scrollY;
-      api({ api: "audit", op: "analyser", compte: AUD.compte, fichier: AUD.fichier, lignes: AUD.lignes }, 300000).then(function (r) { AUD.res = r; afficherAudit(); if (AUD.garderPos) window.scrollTo(0, yA); AUD.garderPos = false; },
+      api({ api: "audit", op: "analyser", compte: AUD.compte, fichier: AUD.fichier, lignes: AUD.lignes, fichierData: AUD.fichierData || "", mime: AUD.mime || "" }, 300000).then(function (r) { if (r && r.ok) { if (r.lien) { AUD.lien = r.lien; AUD.fichierData = null; } else if (AUD.lien) r.lien = AUD.lien; } AUD.res = r; afficherAudit(); if (AUD.garderPos) window.scrollTo(0, yA); AUD.garderPos = false; },
         function (e) { alert("⛔ " + e.message); afficherAudit(); });
     };
     if (R && $("abIns")) $("abIns").onclick = function () {
@@ -4988,7 +5032,10 @@
     if (R) {
       Array.prototype.forEach.call(document.querySelectorAll("[data-abc]"), function (b) { b.onclick = function () { var x = R.anomalies[+b.getAttribute("data-abc")];
         AUD.creation = { x: x, R: R };
-        var ouvrir = function () { formulaireFin({ type: "Opération constatée", op: x.montant < 0 ? "Prelevement bancaire" : "Credit bancaire", compte: R.compte, montant: Math.abs(x.montant), objet: "Relevé : " + x.lib.substring(0, 150), dateEffet: new Date(x.d + "T12:00:00").getTime() }); };
+        var ouvrir = function () {   // tout pré-rempli : société du compte, compte, opération, montant, date du relevé, objet, catégorie proposée
+          var cF = ((S.fin && S.fin.comptes) || []).concat((S.treso && S.treso.comptes) || []).filter(function (c) { return String(c.nom).toUpperCase() === String(R.compte).toUpperCase() && c.societe; })[0];
+          formulaireFin({ type: "Opération constatée", op: x.montant < 0 ? "Prelevement bancaire" : "Credit bancaire", societe: cF ? cF.societe : "", compte: R.compte, devise: R.devise || (cF && cF.devise) || "GNF", montant: Math.abs(x.montant),
+            objet: "Relevé : " + x.lib.substring(0, 150), categorie: x.catSug || "", dateEffet: new Date(x.d + "T12:00:00").getTime() }); };
         if (S.fin) ouvrir(); else rafraichirFin().then(ouvrir, function () { alert("⛔ Finances indisponible (réseau)."); }); }; });
       if ($("abAl")) $("abAl").onclick = function () {
         var DC = R.pointees.filter(function (x) { return x.decale && x.bd; });
