@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 LL";
+  var VERSION_APP = "2026-11-14 LM";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -4685,8 +4685,8 @@
     if (typeof x === "number" && x > 30000 && x < 80000) { var d = new Date(Math.round((x - 25569) * 864e5)); return d.getUTCFullYear() + "-" + relZ(d.getUTCMonth() + 1) + "-" + relZ(d.getUTCDate()); }
     var t = String(x == null ? "" : x).trim(), m = t.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})\b/);
     if (m) return (m[3].length === 2 ? "20" + m[3] : m[3]) + "-" + relZ(+m[2]) + "-" + relZ(+m[1]);
-    m = relSansAccent(t).match(/^(\d{1,2})[\s,.\-]+([a-z]{3,9})\.?[\s,.\-]+(\d{4})\b/);
-    if (m && MOIS_REL[m[2]]) return m[3] + "-" + relZ(MOIS_REL[m[2]]) + "-" + relZ(+m[1]);
+    m = relSansAccent(t).match(/^(\d{1,2})[\s,.\-]+([a-z]{3,9})\.?[\s,.\-]+(\d{4}|\d{2})\b/);
+    if (m && MOIS_REL[m[2]]) return (m[3].length === 2 ? "20" + m[3] : m[3]) + "-" + relZ(MOIS_REL[m[2]]) + "-" + relZ(+m[1]);
     m = t.match(/^(\d{4})-(\d{2})-(\d{2})/); if (m) return m[1] + "-" + m[2] + "-" + m[3];
     return "";
   }
@@ -4738,7 +4738,7 @@
     return L;
   }
   // Mots positionnés d'un PDF [{s, x, w, y (haut→bas), p}] : lignes, colonnes d'après l'en-tête (Débit, Crédit, Solde), une opération par ligne datée.
-  var RE_MONTANT = /^-?\(?\d{1,3}(?:[,.\s\u00a0\u202f]\d{3})+(?:[.,]\d{1,2})?\)?-?$|^-?\d+[.,]\d{2}$|^-?\d{1,3}$/;
+  var RE_MONTANT = /^-?\(?\d{1,3}(?:[,.\s\u00a0\u202f]\d{3})+(?:[.,]\d{1,3})?\)?-?$|^-?\d+[.,]\d{2,3}$|^-?\d{1,3}$/;
   function relDepuisMots(mots) {
     var L = [], cur = null, C = null, P = {};
     mots.forEach(function (m) { (P[m.p] = P[m.p] || []).push(m); });
@@ -4748,12 +4748,15 @@
       lignes.sort(function (a, b) { return a.y - b.y; }).forEach(function (l) {
         l.t.sort(function (a, b) { return a.x - b.x; });
         var txt = l.t.map(function (t) { return t.s; }).join(" "), n = relSansAccent(txt);
-        if (/(debit|retrait)/.test(n) && /(credit|depot)/.test(n) && /(solde|balance)/.test(n)) {
+        if (L.ouverture === undefined && !L.length && /solde\s*(de\s*)?d[eé]part|solde\s*initial|ancien\s*solde|solde\s*pr[eé]c[eé]dent|solde\s*d.ouverture|report\s*(a\s*)?nouveau|opening\s*balance/.test(n)) {   // solde d'ouverture (relevés sans colonne Solde)
+          var mo = txt.replace(/\b\d{1,2}[\s\/.\-]+(?:[A-Za-zéûÉÛ]{3,9}\.?|\d{1,2})[\s\/.\-]+\d{2,4}\b/g, " ").match(/(-?\d[\d\s  .,]*\d)\s*$/); if (mo && relNombre(mo[1]) !== null) L.ouverture = relNombre(mo[1]);
+        }
+        if (/(debit|retrait)/.test(n) && /(credit|depot)/.test(n)) {
           C = {}; l.t.forEach(function (t) { var k = relSansAccent(t.s), cx = t.x + t.w / 2;
             if (/^(debit|retrait)/.test(k)) C.debit = cx; else if (/^(credit|depot)/.test(k)) C.credit = cx; else if (/^(solde|balance)/.test(k)) C.solde = cx;
             else if (/^(descr|libell|remarq|transac|operation)/.test(k) && C.lib === undefined) C.lib = t.x;
             if (/^date/.test(k) && C.date === undefined) C.date = t.x; if (/^(valeur|date|l.operation)/.test(k)) C.datex = Math.max(C.datex || 0, t.x + t.w); });
-          C.lim = Math.min(C.debit, C.credit, C.solde) - 70; cur = null; prevY = l.y; return;
+          C.lim = Math.min.apply(null, [C.debit, C.credit, C.solde].filter(function (v) { return v !== undefined; })) - 70; cur = null; prevY = l.y; return;
         }
         if (!C || C.debit === undefined || C.credit === undefined) return;
         var d = relDate(txt), nums = { debit: null, credit: null, solde: null }, mots2 = [], nbDates = 0;
@@ -4767,13 +4770,15 @@
           if (relDate(t.s) && nbDates < 3 && t.x < (C.datex || C.lim) + 40) { nbDates++; return; }
           mots2.push(t.s);
         });
-        var de = relNombre(nums.debit), cr = relNombre(nums.credit), so = relNombre(nums.solde), lib = mots2.join(" ").replace(/\s+/g, " ").trim();
+        var de = relNombre(nums.debit), cr = relNombre(nums.credit), so = relNombre(nums.solde), lib = mots2.join(" ").replace(/\b\d{1,2}\s+[A-Za-zéûÉÛ]{3,9}\.?\s+\d{2,4}\b/g, " ").replace(/\s+/g, " ").trim();
         if (d && (de || cr)) { cur = { d: d, lib: lib, debit: Math.abs(de || 0), credit: Math.abs(cr || 0), solde: so }; L.push(cur); }
         else if (!d && cur && lib && de === null && cr === null && so === null && prevY !== null && l.y - prevY < 26 && l.t[0].x >= (C.datex || 0) - 5 && l.t[0].x < C.lim) cur.lib = (cur.lib + " " + lib).trim();
         else if (!d) cur = null;
         prevY = l.y;
       });
     });
+    // Pas de colonne Solde mais un solde d'ouverture : soldes recalculés ligne à ligne.
+    if (L.length && L.ouverture !== undefined && L.every(function (x) { return x.solde === null; })) { var s = L.ouverture; L.forEach(function (x) { s = Math.round((s + x.credit - x.debit) * 1000) / 1000; x.solde = s; }); }
     return L;
   }
   // .xlsx = archive ZIP : lecture sans bibliothèque (DecompressionStream) de la 1re feuille.
@@ -4841,7 +4846,7 @@
   // N° de compte imprimé dans l'en-tête du relevé (après « Numéro de compte », « Compte n° », RIB, IBAN…), sinon 1re suite de 10 à 24 chiffres.
   function relNumeroCompte(txt) {
     txt = String(txt || "");
-    var m = txt.match(/(?:num[ée]ro\s*(?:de\s*)?compte|n[°o]\s*(?:de\s*)?compte|compte\s*n[°o]|account\s*(?:no|number|n°)|\bRIB\b|\bIBAN\b)\s*[:.]?\s*([A-Z]{0,4}\d[\d \t-]{8,34}\d)/i)
+    var m = txt.match(/(?:num[ée]ro\s*(?:de\s*)?compte|n[°o]\s*(?:de\s*)?compte|compte\s*n[°o]|account\s*(?:no|number|n°)|\bRIB\b|\bIBAN\b)\s*[:.]?\s*([A-Z]{0,4}\d[\d \t-]{6,34}\d)/i)
       || txt.match(/\b(\d{10,24})\b/);
     return m ? m[1].replace(/[^0-9A-Z]/gi, "").toUpperCase() : "";
   }
