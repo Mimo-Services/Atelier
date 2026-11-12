@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 LI";
+  var VERSION_APP = "2026-11-14 LK";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -1519,6 +1519,8 @@
   // Nouvelle demande (ou correction d'une demande « À corriger »).
   // Impôts imputables sur la réserve fiscale (code du repère [IMP:code|année]) ; AUTRE = charge courante (non imputée).
   var IMP_TYPES = [["IMF", "IMF (impôt minimum forfaitaire)"], ["IS1", "IS — 1er acompte"], ["IS2", "IS — 2e acompte"], ["ISS", "IS — solde"], ["AUTRE", "Autre impôt / taxe (charge courante, non imputée)"]];
+  // Catégories proposées : « Prélèvement DG » est automatique (virement vers un compte personnel) ; « Dépenses personnelles DG » réservée au DG.
+  function catsFin(F) { return (F.categories || []).filter(function (c) { return c !== "Prélèvement DG" && (c !== "Dépenses personnelles DG" || F.role === "DG"); }); }
   function formulaireFin(src) {
     var F = S.fin; src = src || {};
     var A0 = src.achat || {}, AC = F.achat || { categories: [], articles: {}, ouverts: [], typesFrais: [] };
@@ -1622,7 +1624,7 @@
       "<div id='ffChqI' class='info'>Chèque client (recouvrement) : à déclarer en COMMERCIAL › Recouvrement, pas ici.</div>" +
       "<div id='ffRecuB'><label id='ffRecuL'>Montant reçu</label><input id='ffRecu' inputmode='decimal' value='" + esc(src.recu || "") + "'></div>" +
       "<div id='ffEqB'><label id='ffEqL'>Équivalent</label><input id='ffEq' inputmode='decimal' value='" + esc(src.type === "Paiement RH" && src.recu ? src.recu : "") + "'></div>" +
-      "<div id='ffCatB'><label>Catégorie (trésorerie)</label><select id='ffCat'>" + opts(F.categories || [], src.categorie, "— choisir —") + "</select></div>" +
+      "<div id='ffCatB'><label>Catégorie (trésorerie)</label><select id='ffCat'>" + opts(catsFin(F), src.categorie, "— choisir —") + "</select></div>" +
       // 🧾 Impôts : imputés sur la réserve fiscale de l'année concernée (repère [IMP:code|année] dans l'objet)
       "<div id='ffImpB' class='ligne'><div><label>Impôt</label><select id='ffImp'>" + opts(IMP_TYPES.map(function (x) { return x[1]; }), (IMP_TYPES.filter(function (x) { return x[0] === IMP0.code; })[0] || [])[1] || "", "— choisir —") + "</select></div>" +
       "<div><label>Année concernée</label><input id='ffImpA' inputmode='numeric' value='" + esc(IMP0.annee) + "'></div></div>" +
@@ -1668,7 +1670,7 @@
       if (achat && !payManuel && $("ffPayS").value !== v("ffSoc")) $("ffPayS").value = v("ffSoc");   // par défaut : la bénéficiaire
       if (socsV.join("|") !== $("ffSoc").getAttribute("data-l")) { var so0 = $("ffSoc").value; $("ffSoc").innerHTML = opts(socsV, socsV.indexOf(so0) >= 0 ? so0 : "AB"); $("ffSoc").setAttribute("data-l", socsV.join("|")); }
       // Catégories : Stock → fournitures (Suivi Achats) ; Charge → les autres.
-      var catsL = (F.categories || []).filter(function (c) { return !achat || (stock ? CATS_STOCK.indexOf(c) >= 0 : CATS_STOCK.indexOf(c) < 0); });
+      var catsL = catsFin(F).filter(function (c) { return !achat || (stock ? CATS_STOCK.indexOf(c) >= 0 : CATS_STOCK.indexOf(c) < 0); });
       if (catsL.join("|") !== $("ffCat").getAttribute("data-l")) {
         var curCat = $("ffCat").value || src.categorie || "";
         $("ffCat").innerHTML = opts(catsL, catsL.indexOf(curCat) >= 0 ? curCat : catsL.length === 1 ? catsL[0] : "", catsL.length === 1 ? "" : "— choisir —"); $("ffCat").setAttribute("data-l", catsL.join("|"));
@@ -3700,7 +3702,7 @@
     function dessiner(msg) {
       var T = S.treso, h = "<div class='carte pleine'><h3>🏦 Comptes et caisses</h3><div class='info'>" + (T ? (T.tous ? "Tous les comptes" : "Vos comptes") + " · données du " + dateCourte(T.recu || T.genere) : "") + (msg ? " · " + esc(msg) : "") + "</div></div>";
       if (T) {
-        var G = {}; T.comptes.forEach(function (c) { var g = c.type === "Caisse" ? "Caisses" : "Comptes bancaires"; (G[g] = G[g] || []).push(c); });
+        var G = {}; T.comptes.forEach(function (c) { var g = c.perso ? "🔒 Comptes personnels DG (hors trésorerie des sociétés)" : c.type === "Caisse" ? "Caisses" : "Comptes bancaires"; (G[g] = G[g] || []).push(c); });
         Object.keys(G).forEach(function (g) {
           h += "<div class='carte pleine'><h3>" + esc(g) + "</h3></div>" + G[g].map(function (c) {
             var apres = c.solde - c.aPayer + c.aRecevoir;
@@ -4830,17 +4832,27 @@
           var x = it.transform[4], y = vp.height - it.transform[5], w = it.width || s.length * 4.5, cw = w / Math.max(1, it.str.length), pos = 0;
           String(it.str).split(/(\s{2,})/).forEach(function (part) { if (/^\s+$/.test(part) || !part) { pos += part.length; return; } var t = part.trim(); if (t) mots.push({ s: t, x: x + pos * cw, w: part.length * cw, y: y, p: no }); pos += part.length; });
         }); }); }));
-      return Promise.all(P).then(function () { return relDepuisMots(mots); });
+      return Promise.all(P).then(function () {
+        var L = relDepuisMots(mots), p1 = mots.filter(function (w) { return w.p === 1; }).sort(function (a, b) { return Math.abs(a.y - b.y) > 4 ? a.y - b.y : a.x - b.x; });
+        var txt = "", y0 = null; p1.forEach(function (w) { txt += (y0 !== null && Math.abs(w.y - y0) > 4 ? "\n" : " ") + w.s; y0 = w.y; });
+        L.numero = relNumeroCompte(txt); return L; });
     });
+  }
+  // N° de compte imprimé dans l'en-tête du relevé (après « Numéro de compte », « Compte n° », RIB, IBAN…), sinon 1re suite de 10 à 24 chiffres.
+  function relNumeroCompte(txt) {
+    txt = String(txt || "");
+    var m = txt.match(/(?:num[ée]ro\s*(?:de\s*)?compte|n[°o]\s*(?:de\s*)?compte|compte\s*n[°o]|account\s*(?:no|number|n°)|\bRIB\b|\bIBAN\b)\s*[:.]?\s*([A-Z]{0,4}\d[\d \t-]{8,34}\d)/i)
+      || txt.match(/\b(\d{10,24})\b/);
+    return m ? m[1].replace(/[^0-9A-Z]/gi, "").toUpperCase() : "";
   }
   function relLireFichier(file) {
     var nom = String(file.name || "").toLowerCase();
     return file.arrayBuffer().then(function (buf) {
       var u = new Uint8Array(buf, 0, 4);
       if (u[0] === 0x25 && u[1] === 0x50) return relLirePdf(buf);                      // %PDF
-      if (u[0] === 0x50 && u[1] === 0x4b) return relLireXlsx(buf).then(relDepuisTableau);   // PK (xlsx, même nommé .xls)
+      if (u[0] === 0x50 && u[1] === 0x4b) return relLireXlsx(buf).then(function (rows) { var L = relDepuisTableau(rows); L.numero = relNumeroCompte(rows.slice(0, 40).map(function (r) { return (r || []).join(" "); }).join("\n")); return L; });   // PK (xlsx, même nommé .xls)
       if (u[0] === 0xd0 && u[1] === 0xcf) throw new Error("ancien format Excel (.xls 97-2003) : ouvrez-le et enregistrez-le en .xlsx, ou envoyez le PDF");
-      return relDepuisTableau(relLireCsv(new TextDecoder().decode(buf)));
+      var txt = new TextDecoder().decode(buf), L2 = relDepuisTableau(relLireCsv(txt)); L2.numero = relNumeroCompte(txt.split("\n").slice(0, 40).join("\n")); return L2;
     });
   }
 
@@ -4866,7 +4878,7 @@
   }
   function afficherAudit(vue) {
     if (vue !== undefined) { AUD.vue = vue; AUD.msg = ""; }
-    var T = S.treso || { comptes: [] }, B = T.comptes.filter(function (c) { return c.type === "Banque"; }), Cs = T.comptes.filter(function (c) { return c.type === "Caisse"; });
+    var T = S.treso || { comptes: [] }, B = T.comptes.filter(function (c) { return c.type === "Banque" && !c.perso; }), Cs = T.comptes.filter(function (c) { return c.type === "Caisse"; });
     $("titre").textContent = AUD.vue === "caisse" ? "Audit de caisse" : AUD.vue === "regles" ? "Prélèvements récurrents" : AUD.vue === "liste" ? "Historique des audits" : AUD.vue === "hebdo" ? "Relevés de la semaine" : "Audit bancaire";
     var h = "";
     if (AUD.vue === "caisse") {
@@ -4909,31 +4921,37 @@
       $("vueListe").innerHTML = "<div class='carte pleine'><h3>📥 Relevés de la semaine</h3><p class='info'>⏳ Chargement…</p></div>"; montrer("vueListe");
       var dessinerH = function (E) {
         var nOk = E.comptes.filter(function (c) { return c.depot; }).length;
-        var h = "<div class='carte pleine'><h3>📥 Relevés de la semaine du " + esc(E.semaine.split("-").reverse().join("/")) + "</h3><div class='info'>" + nOk + " / " + E.comptes.length + " compte(s) traité(s)." +
+        var fr = function (s) { return String(s || "").split("-").reverse().join("/"); }, AF = E.comptes.filter(function (c) { return !c.aJour; }), duMin = AF.map(function (c) { return c.auditDu; }).filter(String).sort()[0];
+        nOk = E.comptes.filter(function (c) { return c.depot || c.aJour; }).length;
+        var h = "<div class='carte pleine'><h3>📥 Audit bancaire · période à auditer " + (duMin ? "du " + fr(duMin) + " " : "") + "jusqu'au samedi " + fr(E.semaine) + "</h3><div class='info'>La semaine en cours sera demandée samedi prochain. " + nOk + " / " + E.comptes.length + " compte(s) traité(s)." +
           (E.enCours ? " ⏳ Audit automatique en cours (rapport par notification)." : E.dernierAuto ? " Dernier audit automatique : " + dateCourte(E.dernierAuto) + "." : "") +
           " Dès que tous les relevés sont déposés, l'audit se lance seul en arrière-plan.</div>" +
           "<button class='bouton second' id='ahGo' style='width:auto;margin:6px 0 0'" + (E.comptes.some(function (c) { return c.depot && c.depot.statut === "Déposé"; }) ? "" : " disabled") + ">▶️ Lancer l'audit automatique maintenant</button></div>";
         h += E.comptes.map(function (c, i) { var d = c.depot, st = !d ? "⏳ à déposer" : d.statut === "Sans relevé" ? "⏭️ sans relevé" : d.statut === "Déposé" ? "📄 déposé, en attente d'audit" : d.statut === "Erreur" ? "⛔ erreur" : "✅ " + d.statut.toLowerCase();
+          if (!d && c.aJour) st = "✅ à jour (audité jusqu'au " + fr(String(c.auditDu ? (function () { var x = new Date(c.auditDu + "T12:00:00"); x.setDate(x.getDate() - 1); return x.toISOString().slice(0, 10); })() : "")) + ")";
           return "<div class='carte'><div class='ligne' style='justify-content:space-between'><b>🏦 " + esc(c.nom) + "</b><span class='info' style='margin:0'>" + st + "</span></div>" +
+            (!c.aJour ? "<div class='info' style='margin:2px 0'>📅 À auditer : " + (c.auditDu ? "du " + fr(c.auditDu) : "depuis le début de Base") + " au " + fr(c.auditAu) + "</div>" : "") +
             (d ? "<div class='info' style='margin:2px 0'>" + (d.du ? "du " + esc(d.du) + " au " + esc(d.au) + " · " : "") + (d.agent ? esc(d.agent) + " · " + dateCourte(d.le) : "") + (d.lien ? " · <a href='" + esc(d.lien) + "' target='_blank' rel='noopener'>📎 copie</a>" : "") + (d.resultat ? "<br>" + esc(d.resultat) : "") + "</div>" : "") +
-            "<div class='ligne' style='gap:6px;flex-wrap:wrap'><label class='bouton" + (d ? " second" : "") + "' style='width:auto;flex:0 0 auto;margin:0;cursor:pointer'>📎 " + (d && d.statut !== "Sans relevé" ? "Remplacer" : "Déposer") + " le relevé<input type='file' data-ahf='" + i + "' accept='.xlsx,.xls,.csv,.pdf,application/pdf' style='display:none'></label>" +
-            (!d ? "<button class='bouton second' data-ahp='" + i + "' style='width:auto;flex:0 0 auto;margin:0'>⏭️ Pas de relevé</button>" : "") +
+            "<div class='ligne' style='gap:6px;flex-wrap:wrap'><label class='bouton" + (d || c.aJour ? " second" : "") + "' style='width:auto;flex:0 0 auto;margin:0;cursor:pointer'>📎 " + (d && d.statut !== "Sans relevé" ? "Remplacer" : "Déposer") + " le relevé<input type='file' data-ahf='" + i + "' accept='.xlsx,.xls,.csv,.pdf,application/pdf' style='display:none'></label>" +
+            (!d && !c.aJour ? "<button class='bouton second' data-ahp='" + i + "' style='width:auto;flex:0 0 auto;margin:0'>⏭️ Pas de relevé</button>" : "") +
             (d && d.statut !== "Sans relevé" ? "<button class='bouton second' data-aho='" + i + "' style='width:auto;flex:0 0 auto;margin:0'>🔎 Ouvrir l'audit</button>" : "") + "</div><div class='info' id='ahM" + i + "'></div></div>"; }).join("");
         $("vueListe").innerHTML = h; montrer("vueListe");
-        var envoyerH = function (q, ok) { api(Object.assign({ api: "audit" }, q), 240000).then(function (r) { if (!r.ok) { alert("⛔ " + (r.titre || "") + "\n" + (r.message || "")); return; } if (r.message) alert("✅ " + r.message); dessinerH(r); if (ok) ok(r); }, function (e) { alert("⛔ " + e.message); }); };
+        var envoyerH = function (q, ok) { api(Object.assign({ api: "audit" }, q), 240000).then(function (r) {
+          if (r.confirmerNumero) { if (confirm(r.titre + "\n\n" + r.message)) envoyerH(Object.assign({}, q, { confirmeNumero: true }), ok); else dessinerH(E); return; }
+          if (!r.ok) { alert("⛔ " + (r.titre || "") + "\n" + (r.message || "")); return; } if (r.message) alert("✅ " + r.message); dessinerH(r); if (ok) ok(r); }, function (e) { alert("⛔ " + e.message); }); };
         $("ahGo").onclick = function () { if (confirm("Lancer maintenant l'audit automatique des relevés déposés ?")) envoyerH({ op: "lancer" }); };
         Array.prototype.forEach.call(document.querySelectorAll("[data-ahp]"), function (b) { b.onclick = function () { var c = E.comptes[+b.getAttribute("data-ahp")]; if (confirm(c.nom + " : pas de relevé cette semaine ?")) envoyerH({ op: "passer", compte: c.nom }); }; });
         Array.prototype.forEach.call(document.querySelectorAll("[data-aho]"), function (b) { b.onclick = function () { var c = E.comptes[+b.getAttribute("data-aho")];
           b.disabled = true; b.textContent = "⏳…";
           api({ api: "audit", op: "lignesDepot", compte: c.nom }, 120000).then(function (r) { if (!r.ok) { alert("⛔ " + r.message); b.disabled = false; return; }
-            AUD.compte = c.nom; AUD.lignes = r.lignes; AUD.fichier = r.fichier; AUD.fichierData = null; AUD.lien = (c.depot && c.depot.lien) || ""; AUD.res = null; afficherAudit("banque"); if ($("abGo")) $("abGo").click(); }, function (e) { alert("⛔ " + e.message); b.disabled = false; }); }; });
+            AUD.compte = c.nom; AUD.lignes = r.lignes; AUD.fichier = r.fichier; AUD.fichierData = null; AUD.depuisDepot = true; AUD.lien = (c.depot && c.depot.lien) || ""; AUD.res = null; afficherAudit("banque"); if ($("abGo")) $("abGo").click(); }, function (e) { alert("⛔ " + e.message); b.disabled = false; }); }; });
         Array.prototype.forEach.call(document.querySelectorAll("[data-ahf]"), function (inp) { inp.onchange = function () {
           var i = +inp.getAttribute("data-ahf"), c = E.comptes[i], f = inp.files[0]; if (!f) return;
           $("ahM" + i).textContent = "⏳ Lecture de " + f.name + "…";
           Promise.all([relLireFichier(f), audLireBase64(f)]).then(function (x) {
             var L = x[0]; if (!L.length) throw new Error("aucune opération reconnue dans ce fichier");
             $("ahM" + i).textContent = "⏳ Envoi de " + L.length + " ligne(s)…";
-            envoyerH({ op: "deposer", compte: c.nom, lignes: L, fichier: f.name, fichierData: x[1].data, mime: x[1].mime });
+            envoyerH({ op: "deposer", compte: c.nom, lignes: L, numero: L.numero || "", fichier: f.name, fichierData: x[1].data, mime: x[1].mime });
           }).catch(function (e) { $("ahM" + i).textContent = "⛔ " + e.message; });
         }; });
       };
@@ -4964,7 +4982,7 @@
       "<button class='bouton' id='abGo'" + (AUD.lignes ? "" : " disabled") + ">🔎 Comparer avec Base</button></div>";
     if (R) {
       var dv = R.devise || "";
-      h += "<div class='carte pleine'><h3>Résultat · " + esc(R.compte) + "</h3>" + (R.lien ? "<div class='info' style='margin:0 0 4px'>📎 <a href='" + esc(R.lien) + "' target='_blank' rel='noopener'>Copie du relevé gardée dans Drive</a></div>" : "") + "<table>" +
+      h += "<div class='carte pleine'><h3>Résultat · " + esc(R.compte) + "</h3>" + (R.avertissement ? "<div class='carte ko' style='margin:0 0 6px;padding:8px'>⚠️ " + esc(R.avertissement) + "</div>" : "") + (R.lien ? "<div class='info' style='margin:0 0 4px'>📎 <a href='" + esc(R.lien) + "' target='_blank' rel='noopener'>Copie du relevé gardée dans Drive</a></div>" : "") + "<table>" +
         (R.associees && R.associees.length ? "<tr><td colspan='2' style='background:rgba(46,125,50,.12)'>✔️ <b>Résolues dans cette session (" + R.associees.length + ")</b><br><small>" + R.associees.map(esc).join("<br>") + "</small></td></tr>" : "") +
         "<tr><td>Période comparée</td><td class='v'>" + esc(R.du) + " → " + esc(R.au) + " (" + R.nb + " lignes" + (R.ignorees ? ", " + R.ignorees + " antérieures au début de Base ignorées" : "") + ")</td></tr>" +
         (R.alignees ? "<tr><td colspan='2' class='info'>📅 " + R.alignees + " date(s) de Base alignée(s) sur le relevé</td></tr>" : "") +
@@ -5014,14 +5032,16 @@
     $("abF").onchange = function () {
       var f = this.files[0]; if (!f) return; AUD.res = null; AUD.lignes = null; AUD.fichier = f.name; AUD.fichierData = null; AUD.lien = ""; AUD.msg = "⏳ Lecture de " + f.name + "…"; $("abI").textContent = AUD.msg;
       audLireBase64(f).then(function (b) { AUD.fichierData = b.data; AUD.mime = b.mime; });
-      relLireFichier(f).then(function (L) { if (!L.length) throw new Error("aucune opération reconnue dans ce fichier"); AUD.lignes = L; afficherAudit(); },
+      relLireFichier(f).then(function (L) { if (!L.length) throw new Error("aucune opération reconnue dans ce fichier"); AUD.lignes = L; AUD.numero = L.numero || ""; AUD.depuisDepot = false; afficherAudit(); },
         function (e) { AUD.msg = "⛔ " + e.message; afficherAudit(); });
     };
     $("abGo").onclick = function () {
       if (!AUD.compte) { alert("⛔ Choisissez le compte bancaire du relevé."); return; }
       $("abGo").disabled = true; $("abGo").textContent = "⏳ Mise à jour du compte depuis Base, puis comparaison…";
       var yA = window.scrollY;
-      api({ api: "audit", op: "analyser", compte: AUD.compte, fichier: AUD.fichier, lignes: AUD.lignes, fichierData: AUD.fichierData || "", mime: AUD.mime || "" }, 300000).then(function (r) { if (r && r.ok) { if (r.lien) { AUD.lien = r.lien; AUD.fichierData = null; } else if (AUD.lien) r.lien = AUD.lien; } AUD.res = r; afficherAudit(); if (AUD.garderPos) window.scrollTo(0, yA); AUD.garderPos = false; },
+      api({ api: "audit", op: "analyser", compte: AUD.compte, fichier: AUD.fichier, lignes: AUD.lignes, fichierData: AUD.fichierData || "", mime: AUD.mime || "", numero: AUD.numero || "", confirmeNumero: !!AUD.confirmeNumero, sansControle: !!AUD.depuisDepot }, 300000).then(function (r) {
+        AUD.confirmeNumero = false;
+        if (r && r.confirmerNumero) { if (confirm(r.titre + "\n\n" + r.message)) { AUD.confirmeNumero = true; $("abGo").disabled = false; $("abGo").click(); } else afficherAudit(); return; } if (r && r.ok) { if (r.lien) { AUD.lien = r.lien; AUD.fichierData = null; } else if (AUD.lien) r.lien = AUD.lien; } AUD.res = r; afficherAudit(); if (AUD.garderPos) window.scrollTo(0, yA); AUD.garderPos = false; },
         function (e) { alert("⛔ " + e.message); afficherAudit(); });
     };
     if (R && $("abIns")) $("abIns").onclick = function () {
