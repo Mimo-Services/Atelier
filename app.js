@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 LM";
+  var VERSION_APP = "2026-11-14 LN";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -1521,6 +1521,7 @@
   var IMP_TYPES = [["IMF", "IMF (impôt minimum forfaitaire)"], ["IS1", "IS — 1er acompte"], ["IS2", "IS — 2e acompte"], ["ISS", "IS — solde"], ["AUTRE", "Autre impôt / taxe (charge courante, non imputée)"]];
   // Catégories proposées : « Prélèvement DG » est automatique (virement vers un compte personnel) ; « Dépenses personnelles DG » réservée au DG.
   function catsFin(F) { return (F.categories || []).filter(function (c) { return c !== "Prélèvement DG" && (c !== "Dépenses personnelles DG" || F.role === "DG"); }); }
+  var USAGES_DIRECTS = ["Projet / chantier", "BDC / lot de production", "Entretien machine", "Usage général"];
   function formulaireFin(src) {
     var F = S.fin; src = src || {};
     var A0 = src.achat || {}, AC = F.achat || { categories: [], articles: {}, ouverts: [], typesFrais: [] };
@@ -1632,6 +1633,10 @@
       // Achat d'article (Fourniture Locale / Importée) → Suivi Achats
       "<div id='ffAchB' class='carte' style='margin-top:10px'><h3>📦 Achat (Suivi Achats)</h3>" +
       "<label>Nature</label><select id='ffAN'>" + opts(["Article existant", "Nouvel article", "Frais"], A0.nature, "— choisir —") + "</select>" +
+      // ⚡ Utilisation directe : entrée au Suivi Achats puis sortie aussitôt (stock inchangé, coût tracé)
+      "<div id='ffAUsB'><label>Destination</label><select id='ffAUs'>" + opts(["📦 Mettre en stock", "⚡ Utilisation directe (sans stockage)"], A0.usage && A0.usage.type ? "⚡ Utilisation directe (sans stockage)" : "📦 Mettre en stock") + "</select>" +
+      "<div id='ffAUdB' class='ligne'><div style='flex:1.3;min-width:150px'><label>Utilisé pour</label><select id='ffAUt'>" + opts(USAGES_DIRECTS, (A0.usage || {}).type || "", "— choisir —") + "</select></div>" +
+      "<div style='flex:2' id='ffAUrB'><label id='ffAUrL'>Précision</label><input id='ffAUr' list='ffAUrD' value='" + esc((A0.usage || {}).ref || "") + "'><datalist id='ffAUrD'></datalist></div></div></div>" +
       "<div id='ffAMagB'><label>🏬 Magasin de destination</label><select id='ffAMag'></select></div>" +
       "<div id='ffAEx'><div class='ligne'><div><label>Catégorie d'article</label><select id='ffACat'>" + opts(AC.categories, A0.categorie, "— choisir —") + "</select></div>" +
       "<div style='flex:2'><label>Article</label><select id='ffAArt'></select></div></div></div>" +
@@ -1788,7 +1793,16 @@
       vis("ffAchB", (achat ? stock : on("ffCatB") && (cat === "Fourniture Locale" || cat === "Fourniture Importee")) && t !== "Opération constatée" && !(achat && v("ffSoc") === "CASAFINO") && !(on("ffPcB") && v("ffPc") === "CASAFINO"));
       // Magasin de destination : par défaut celui de la société bénéficiaire (sinon le magasin de la production).
       var MG = AC.magasins || [], socB = v("ffSoc");
-      vis("ffAMagB", on("ffAchB") && v("ffAN") !== "Frais" && MG.length > 0);
+      vis("ffAUsB", on("ffAchB") && v("ffAN") !== "Frais");
+      var direct = on("ffAUsB") && /^⚡/.test(v("ffAUs")), ut = v("ffAUt");
+      vis("ffAUdB", direct); vis("ffAUrB", direct && ut && ut !== "Usage général");
+      if (direct && $("ffAUrB").getAttribute("data-t") !== ut) {   // liste d'aide selon le rattachement
+        $("ffAUrB").setAttribute("data-t", ut);
+        $("ffAUrL").textContent = ut === "Projet / chantier" ? "Projet" : ut === "BDC / lot de production" ? "BDC (n° ou client)" : ut === "Entretien machine" ? "Machine" : "Précision";
+        var LS = ut === "Projet / chantier" ? (F.projets || []) : ut === "BDC / lot de production" ? (function () { var b = {}; ((S.donnees && S.donnees.lots) || []).forEach(function (l) { if (l.bdc) b[l.bdc] = 1; }); return Object.keys(b).sort(); })() : [];
+        $("ffAUrD").innerHTML = LS.map(function (x) { return "<option value='" + esc(x) + "'>"; }).join("");
+      }
+      vis("ffAMagB", on("ffAchB") && v("ffAN") !== "Frais" && !direct && MG.length > 0);
       if (MG.map(function (m) { return m.nom; }).join("|") !== $("ffAMag").getAttribute("data-l")) {
         var mDef = A0.magasin || (MG.filter(function (m) { return m.societe === socB && m.nom === AC.magDefaut; })[0] || MG.filter(function (m) { return m.societe === socB; })[0] || {}).nom || AC.magDefaut;
         $("ffAMag").innerHTML = MG.map(function (m) { return "<option" + (m.nom === mDef ? " selected" : "") + ">" + esc(m.nom) + "</option>"; }).join("");
@@ -1819,7 +1833,7 @@
       $("ffRegle").innerHTML = "🔐 Validation : <b>" + regle + "</b> · 📷 " + photo + (t !== "Facture d'achat" && t !== "Opération constatée" && F.role !== "DG" ? ((t === "Mouvement de trésorerie" && (op === "Retrait" || op === "Transfert entre caisses")) || (t === "Règlement fournisseur" && mode === "Chèque" && cat === "Commission") || cat === "Commission" ? " · clôture sans autre pièce (le chèque / justificatif joint suffit)" : " · preuve du paiement à joindre après validation" + (t === "Dépense de caisse" ? " (facultative)" : "")) : "");
       $("ffEnv").textContent = t === "Opération constatée" ? "📒 Enregistrer" : "📤 Envoyer la demande";
     }
-    ["ffType", "ffPiece", "ffPay", "ffPayS", "ffDest", "ffRegM", "ffRegS", "ffRegP", "ffAvS", "ffOp", "ffOc", "ffDev", "ffSoc", "ffPc", "ffFourC", "ffMode", "ffFact", "ffCpt", "ffCtp", "ffCat", "ffAN", "ffACat", "ffACatN", "ffPers", "ffMotRH"].forEach(function (id) { $(id).onchange = maj; });
+    ["ffType", "ffPiece", "ffPay", "ffPayS", "ffDest", "ffRegM", "ffRegS", "ffRegP", "ffAvS", "ffOp", "ffOc", "ffDev", "ffSoc", "ffPc", "ffFourC", "ffMode", "ffFact", "ffCpt", "ffCtp", "ffCat", "ffAN", "ffAUs", "ffAUt", "ffACat", "ffACatN", "ffPers", "ffMotRH"].forEach(function (id) { $(id).onchange = maj; });
     $("ffPayS").onchange = function () { payManuel = true; maj(); };
     ["ffMt", "ffTaux", "ffFour", "ffProj"].forEach(function (id) { $(id).oninput = maj; });
     maj();
@@ -1859,13 +1873,14 @@
       if (on("ffAchB")) s.achat = { nature: v("ffAN"), categorie: v("ffACat"), article: v("ffAArt"), designation: v("ffADes"), catNouvel: v("ffACatN"),
         carac: { y: v("ffAY"), x: v("ffAX"), kg: v("ffAKg"), unites: v("ffAU"), metres: v("ffAM") }, quantite: nb(v("ffAQ")), expediteur: v("ffAExp"), typeFrais: v("ffATF"),
         articles: Array.prototype.filter.call(document.querySelectorAll(".ffAO"), function (c) { return c.checked; }).map(function (c) { return c.value; }),
-        magasin: on("ffAMagB") ? v("ffAMag") : "" };
+        magasin: on("ffAMagB") ? v("ffAMag") : (on("ffAUdB") ? v("ffAMag") || "" : ""),
+        usage: on("ffAUdB") ? { type: v("ffAUt"), ref: on("ffAUrB") ? v("ffAUr").trim() : "" } : null };
       var A = s.achat;
       var err = t === "Paiement RH" && !s.personnel ? "personnel" : t === "Paiement RH" && !s.motifRH ? "motif RH" : on("ffModeB") && !s.mode ? "mode de paiement" :
         !s.compte && t !== "Facture d'achat" ? "compte" : on("ffCatB") && !s.categorie && t !== "Facture d'achat" ? "catégorie" : on("ffRecuB") && !(s.recu > 0) ? "montant reçu" : on("ffEqB") && !(s.recu > 0) ? "équivalent dans la devise du salaire" : on("ffMoisB") && !s.moisEffet ? "mois du salaire" :
         on("ffCtpB") && !s.contrepartie && !((op === "Virement" || op === "Remise chèque") && s.beneficiaire) ? "compte de destination" : !(s.montant > 0) ? "montant" : s.devise !== "GNF" && !(s.taux > 0) ? "taux de change" :
         (t === "Mouvement de trésorerie" || t === "Opération constatée") && !op ? "opération" : (t === "Facture d'achat" || t === "Règlement fournisseur") && !s.fournisseur ? "fournisseur" :
-        A && !A.nature ? "nature de l'achat" : A && A.nature === "Article existant" && !A.article ? "article acheté" : A && A.nature === "Nouvel article" && !(A.designation && A.catNouvel) ? "nouvel article (désignation et catégorie)" :
+        A && !A.nature ? "nature de l'achat" : A && A.usage && !A.usage.type ? "à quoi sert l'achat (utilisation directe)" : A && A.usage && A.usage.type !== "Usage général" && !A.usage.ref ? "précision de l'utilisation (projet, BDC ou machine)" : A && A.nature === "Article existant" && !A.article ? "article acheté" : A && A.nature === "Nouvel article" && !(A.designation && A.catNouvel) ? "nouvel article (désignation et catégorie)" :
         A && A.nature !== "Frais" && !(A.quantite > 0) ? "quantité commandée" : A && A.nature === "Frais" && !A.articles.length ? "article concerné par le frais" : "";
       if (err) { m.textContent = "⛔ Indiquez : " + err + "."; return; }
       var nbP = (FICH.ffP || []).length + ((src.pieces || []).length);
