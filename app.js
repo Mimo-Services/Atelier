@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 LN";
+  var VERSION_APP = "2026-11-14 LO";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -1632,11 +1632,11 @@
       "<div id='ffImpCB'><label style='font-weight:400'><input type='checkbox' id='ffImpC' style='width:auto'" + (IMP0.code === "COM" ? " checked" : "") + "> 🧾 Liée aux impôts (imputée sur la réserve fiscale de l'année <input id='ffImpCA' inputmode='numeric' style='width:70px;display:inline-block;padding:4px' value='" + esc(IMP0.annee) + "'>)</label></div>" +
       // Achat d'article (Fourniture Locale / Importée) → Suivi Achats
       "<div id='ffAchB' class='carte' style='margin-top:10px'><h3>📦 Achat (Suivi Achats)</h3>" +
-      "<label>Nature</label><select id='ffAN'>" + opts(["Article existant", "Nouvel article", "Frais"], A0.nature, "— choisir —") + "</select>" +
       // ⚡ Utilisation directe : entrée au Suivi Achats puis sortie aussitôt (stock inchangé, coût tracé)
       "<div id='ffAUsB'><label>Destination</label><select id='ffAUs'>" + opts(["📦 Mettre en stock", "⚡ Utilisation directe (sans stockage)"], A0.usage && A0.usage.type ? "⚡ Utilisation directe (sans stockage)" : "📦 Mettre en stock") + "</select>" +
       "<div id='ffAUdB' class='ligne'><div style='flex:1.3;min-width:150px'><label>Utilisé pour</label><select id='ffAUt'>" + opts(USAGES_DIRECTS, (A0.usage || {}).type || "", "— choisir —") + "</select></div>" +
       "<div style='flex:2' id='ffAUrB'><label id='ffAUrL'>Précision</label><input id='ffAUr' list='ffAUrD' value='" + esc((A0.usage || {}).ref || "") + "'><datalist id='ffAUrD'></datalist></div></div></div>" +
+      "<label>Nature (quel article ?)</label><select id='ffAN'>" + opts(["Article existant", "Nouvel article", "Frais"], A0.nature, "— choisir —") + "</select>" +
       "<div id='ffAMagB'><label>🏬 Magasin de destination</label><select id='ffAMag'></select></div>" +
       "<div id='ffAEx'><div class='ligne'><div><label>Catégorie d'article</label><select id='ffACat'>" + opts(AC.categories, A0.categorie, "— choisir —") + "</select></div>" +
       "<div style='flex:2'><label>Article</label><select id='ffAArt'></select></div></div></div>" +
@@ -1794,6 +1794,7 @@
       // Magasin de destination : par défaut celui de la société bénéficiaire (sinon le magasin de la production).
       var MG = AC.magasins || [], socB = v("ffSoc");
       vis("ffAUsB", on("ffAchB") && v("ffAN") !== "Frais");
+      if (on("ffAchB")) $("ffAN").options[0].textContent = "— choisir : article existant ou nouvel article —";
       var direct = on("ffAUsB") && /^⚡/.test(v("ffAUs")), ut = v("ffAUt");
       vis("ffAUdB", direct); vis("ffAUrB", direct && ut && ut !== "Usage général");
       if (direct && $("ffAUrB").getAttribute("data-t") !== ut) {   // liste d'aide selon le rattachement
@@ -1882,7 +1883,10 @@
         (t === "Mouvement de trésorerie" || t === "Opération constatée") && !op ? "opération" : (t === "Facture d'achat" || t === "Règlement fournisseur") && !s.fournisseur ? "fournisseur" :
         A && !A.nature ? "nature de l'achat" : A && A.usage && !A.usage.type ? "à quoi sert l'achat (utilisation directe)" : A && A.usage && A.usage.type !== "Usage général" && !A.usage.ref ? "précision de l'utilisation (projet, BDC ou machine)" : A && A.nature === "Article existant" && !A.article ? "article acheté" : A && A.nature === "Nouvel article" && !(A.designation && A.catNouvel) ? "nouvel article (désignation et catégorie)" :
         A && A.nature !== "Frais" && !(A.quantite > 0) ? "quantité commandée" : A && A.nature === "Frais" && !A.articles.length ? "article concerné par le frais" : "";
-      if (err) { m.textContent = "⛔ Indiquez : " + err + "."; return; }
+      if (err) { m.textContent = "⛔ Indiquez : " + err + ".";
+        var champ = { "nature de l'achat": "ffAN", "article acheté": "ffAArt", "quantité": "ffAQ", "catégorie": "ffCat", "compte": "ffCpt", "montant": "ffMt", "fournisseur": "ffFour" }[err] || (/utilisation|sert/.test(err) ? "ffAUt" : /précision/.test(err) ? "ffAUr" : "");
+        if (champ && $(champ) && on(champ)) { $(champ).scrollIntoView({ block: "center" }); $(champ).focus(); $(champ).style.outline = "2px solid #c62828"; setTimeout(function () { if ($(champ)) $(champ).style.outline = ""; }, 4000); }
+        return; }
       var nbP = (FICH.ffP || []).length + ((src.pieces || []).length);
       if (/obligatoire/.test($("ffRegle").textContent) && !nbP) { m.textContent = "⛔ Photo obligatoire (voir ci-dessus)."; return; }
       var lib = reglF ? "Règlement " + (s.reglements && s.reglements.length > 1 ? s.reglements.length + " factures" : "facture") + " · " + v("ffFour").trim() : estAvance() ? "Avance · " + v("ffFour").trim() : achat ? "Achat " + (t === "Facture d'achat" ? "à payer" : "payé") + (avecF ? "" : " sans facture") + " · " + (s.fourRaison || s.fournisseur) + (s.fourSociete ? " · pour " + s.fourSociete : "") + (s.fourProjet ? " · " + s.fourProjet : "") : (op || t) + (t === "Paiement RH" ? " · " + s.personnel : "");
