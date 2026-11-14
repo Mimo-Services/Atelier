@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 LR";
+  var VERSION_APP = "2026-11-14 LS";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -5412,6 +5412,7 @@
             "<a class='bouton second' href='" + esc(f.url) + "' target='_blank' rel='noopener'>🔗 Drive</a></div></div>";
         }).join("") : "<p class='info'>Aucune fiche pour ce BDC" + (b.fichesRecu ? "" : " sur cet appareil : ⟳ avec réseau") + ". Les fiches sont créées à la publication.</p>") +
         "<button class='bouton second' id='fcRefaire'>🔄 Refaire la Fiche Montage</button>" +
+        (L.some(function (f) { return f.type !== "montage"; }) ? "<button class='bouton second' id='fcPasse'>✍️ Mettre à jour les fiches d'atelier (Nettes / Passe / Total)</button>" : "") +
         (att ? "<div class='carte att'>⏳ Fiche Montage demandée — " + (att.essais ? "envoi en cours" : "attend l'envoi") + ".</div>" : "") +
         "<div id='fcMsg' class='info' style='white-space:pre-line;margin-top:6px'>" + esc(etat.msg) + "</div></div>" +
         (pc ? "<iframe id='fcApercu' title='Aperçu' style='display:none;width:100%;height:75vh;border:0;border-radius:10px;margin-top:10px;background:#fff'></iframe>" : "");
@@ -5437,6 +5438,13 @@
           }, function (e) { if (w) w.close(); C.querySelector("#fcMsg").textContent = "⛔ " + e.message; });
         };
       });
+      if (C.querySelector("#fcPasse")) C.querySelector("#fcPasse").onclick = function () {
+        if (!confirm("Ajouter Nettes / Passe / Total à tirer aux fiches d'atelier de « " + b.libelle + " » ? (Impression, Numérotation, Hologramme ; le reste de la fiche ne change pas)")) return;
+        var it = { type: "planif", op: "majPasseFiches", jeton: nouveauJeton(), horodatage: Date.now(), agent: S.agent.nom, code: S.agent.code,
+                   donnees: { id: b.id, bdc: b.libelle }, titre: "Fiches d'atelier (passe)", resume: b.libelle, essais: 0 };
+        etat.msg = "⏳ Demande envoyée…"; dessiner();
+        soumettre(it).then(function (r) { etat.msg = (r.enAttente ? "📥 " : r.ok ? "✅ " : "⛔ ") + (r.titre || "") + "\n" + (r.message || ""); if (r.ok && !r.enAttente) charger(); else dessiner(); });
+      };
       C.querySelector("#fcRefaire").onclick = function () {
         if (!confirm("Refaire la Fiche Montage de « " + b.libelle + " » ? (30 s à 1 min sur le serveur)")) return;
         var it = { type: "planif", op: "refaireFicheMontage", jeton: nouveauJeton(), horodatage: Date.now(), agent: S.agent.nom, code: S.agent.code,
