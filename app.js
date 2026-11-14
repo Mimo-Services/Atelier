@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 LP";
+  var VERSION_APP = "2026-11-14 LR";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -280,7 +280,8 @@
     return {
       dispoParent: dispoParent(lot), etapes: lot.etapes, etats: resume, globale: q, globaleLot: q, div: div,
       qteSeule: c.qteSeule, validation: c.validation, passages: c.passages, sansCtp: c.sansCtp,
-      multiOp: c.multiOp, unOp: c.unOp, evtBar: c.evtBar, sortieLibre: c.sortieLibre, stock: stock
+      multiOp: c.multiOp, unOp: c.unOp, evtBar: c.evtBar, sortieLibre: c.sortieLibre, stock: stock,
+      passe: lot.passe || null, etPasse: c.etPasse || ["Impression", "Numérotation", "Hologramme / Gaufrage"]
     };
   }
   /* Avertissements au scan (lot terminé, lot précédent pas commencé). */
@@ -4645,7 +4646,20 @@
     if (d.vue === "audit") { afficherAudit("hebdo"); return true; }
     montrer("vueAccueil"); return true;
   }
+  // Demande d'ouverture laissée par le service worker (notification touchée) : traitée une seule fois, si récente (2 min).
+  var NOTIF_DERNIERE = "";
+  function ouvrirNotifEnAttente() {
+    return lire("notifOuvrir").then(function (o) {
+      if (!o || !o.t || Date.now() - o.t > 120000) return;
+      ecrire("notifOuvrir", null);
+      ouvrirDepuisNotif({ vue: o.vue, id: o.id });
+    }).catch(function () {});
+  }
   function ouvrirDepuisNotif(d) {
+    var k = (d.vue || "") + "|" + (d.id || ""), maint = Date.now();
+    if (NOTIF_DERNIERE === k + "|" + Math.floor(maint / 5000)) return;   // même notification reçue par deux voies : une seule ouverture
+    NOTIF_DERNIERE = k + "|" + Math.floor(maint / 5000);
+    ecrire("notifOuvrir", null);
     var marque = ++NOTIF_MARQUE;
     marquerNotifLue(d);
     if (d.vue === "maj") { routerNotif(d); return; }
@@ -4654,6 +4668,7 @@
     if (!trouve) $("titre").textContent = "⏳ " + (d.id || "Chargement…");
     synchroniser(true).catch(function () {}).then(function () {
       if (marque !== NOTIF_MARQUE) return;
+      if (d.vue === "finances" && d.id && droitFin() && !(S.fin && S.fin.demandes.some(function (x) { return x.no === d.id; }))) return rafraichirFin().catch(function () {}).then(function () { if (marque === NOTIF_MARQUE) routerNotif(d); });
       if (!trouve || $("titre").textContent === titre) routerNotif(d);   // mise à jour seulement si l'agent n'a pas changé d'écran
     });
   }
@@ -5966,7 +5981,8 @@
     setTimeout(verifierNotifications, 4000);
     setTimeout(majCloche, 1200);
     verifierMajAuDemarrage();
-    document.addEventListener("visibilitychange", function () { if (!document.hidden) majCloche(); });
+    document.addEventListener("visibilitychange", function () { if (!document.hidden) { majCloche(); setTimeout(ouvrirNotifEnAttente, 400); } });
+    if (!q.get("notif")) setTimeout(ouvrirNotifEnAttente, 600);
     if (cle) history.replaceState(null, "", location.pathname);
     if (cle && S.donnees) { ouvrirLot(bdc || "", cle); synchroniser(false); }
     else {

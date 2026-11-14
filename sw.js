@@ -1,6 +1,6 @@
 // Service worker : garde l'application sur le téléphone pour qu'elle s'ouvre sans réseau.
 // Changer VERSION à chaque mise à jour des fichiers de l'application.
-var VERSION = "duocore-2026-11-14-LP";
+var VERSION = "duocore-2026-11-14-LR";
 var FICHIERS = ["./", "index.html", "app.js", "config.js", "manifest.webmanifest",
   "icone-192.png", "icone-512.png", "notif-finances.png", "notif-rh.png", "notif-commercial.png", "notif-missions.png", "notif-stockval.png", "notif-maj.png", "notif-accueil.png", "notif-planif.png", "icone-maskable-512.png", "apple-touch-icon.png", "aide.js", "duocore-192.png", "duocore-512.png", "duocore-maskable-512.png"];
 var JSQR = "https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js";
@@ -34,6 +34,15 @@ self.addEventListener("activate", function (e) {
   }).then(function () { return self.clients.claim(); }));
 });
 
+// Notification touchée : demande d'ouverture gardée dans la base de l'appareil (lue par l'app au retour au premier plan, même si le message se perd).
+function garderOuverture(d) {
+  return new Promise(function (ok) {
+    try { var r = indexedDB.open("atelier", 1);
+      r.onupgradeneeded = function () { r.result.createObjectStore("kv"); }; r.onerror = function () { ok(); };
+      r.onsuccess = function () { var t = r.result.transaction("kv", "readwrite"); t.objectStore("kv").put({ vue: d.vue || "", id: d.id || "", t: Date.now() }, "notifOuvrir"); t.oncomplete = function () { ok(); }; t.onerror = function () { ok(); }; };
+    } catch (x) { ok(); }
+  });
+}
 // Historique (🔔 dans l'app) : gardé 30 jours dans la base de l'appareil (même base que l'app, clé « notifs »).
 function garderNotif(titre, d) {
   return new Promise(function (ok) {
@@ -68,8 +77,8 @@ self.addEventListener("push", function (e) {
 self.addEventListener("notificationclick", function (e) {
   e.notification.close();
   var d = e.notification.data || {}, cible = "./?notif=" + encodeURIComponent(d.vue || "accueil") + (d.id ? "&id=" + encodeURIComponent(d.id) : "");
-  e.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(function (cl) {
-    for (var i = 0; i < cl.length; i++) { if ("focus" in cl[i]) { cl[i].postMessage({ type: "ouvrir", data: d }); return cl[i].focus(); } }
+  e.waitUntil(garderOuverture(d).then(function () { return self.clients.matchAll({ type: "window", includeUncontrolled: true }); }).then(function (cl) {
+    for (var i = 0; i < cl.length; i++) { if ("focus" in cl[i]) { var c = cl[i]; return c.focus().then(function (w) { (w || c).postMessage({ type: "ouvrir", data: d }); return w; }, function () { c.postMessage({ type: "ouvrir", data: d }); }); } }
     return self.clients.openWindow(cible);
   }));
 });
