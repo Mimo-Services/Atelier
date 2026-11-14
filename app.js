@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 LO";
+  var VERSION_APP = "2026-11-14 LP";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -1166,7 +1166,7 @@
     if (no) { ouvrirDemandeFin(no); return; }
     var nouv = S.file.filter(function (x) { return x.type === "fin" && x.op === "creer"; });
     var h = "<div class='carte'><h3>💰 Finances</h3><div class='info'>" + esc(F.agent) + (F.role ? " · valideur " + esc(F.role) : F.comptable ? " · comptable (lecture)" : "") + " · données du " + dateCourte(F.recu || F.genere) + "</div>" +
-      "<div class='ligne'><button class='bouton' id='fnNouv'>➕ Nouvelle demande</button><button class='bouton second' id='fnFour'>🏭 Fournisseurs</button></div>" +
+      "<div class='ligne'><button class='bouton' id='fnNouv'>➕ Nouvelle demande</button><button class='bouton second' id='fnFour'>🏭 Fournisseurs</button><button class='bouton second' id='fnUsg'>📁 Achats par projet</button></div>" +
       (F.role || F.comptable ? "<div class='ligne'><button class='bouton second' id='fnSol'>📊 Soldes</button><button class='bouton second' id='fnIc'>🔁 Inter-sociétés</button><button class='bouton second' id='fnExp'>📤 Export du mois</button></div>" : "") +
       (F.suiviAchat || F.comptable ? "<button class='bouton second' id='fnAch'>📦 Suivi des achats (" + ((F.achat && F.achat.ouverts) || []).length + ")</button>" : "") +
       "<div class='onglets' style='margin-top:10px'>" + [["traiter", "À traiter (" + finNbOuvertes() + (finNbATraiter() ? " · 👉 " + finNbATraiter() : "") + ")"], ["miennes", "Mes demandes"]].concat(F.role || F.comptable ? [["toutes", "Toutes"]] : [])
@@ -1196,6 +1196,7 @@
     Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-f]"), function (b) { b.onclick = function () { FIN.filtre = b.getAttribute("data-f"); afficherFinances(); }; });
     $("fnCherche").oninput = liste; liste();
     $("fnNouv").onclick = function () { formulaireFin(null); };
+    if ($("fnUsg")) $("fnUsg").onclick = function () { afficherAchatsUsage(); };
     $("fnFour").onclick = afficherFournisseurs;
     if ($("fnAch")) $("fnAch").onclick = function () { afficherSuiviAchats(); };
     if ($("fnSol")) $("fnSol").onclick = function () { afficherSoldes("fournisseurs"); };
@@ -1224,6 +1225,34 @@
       return "<button class='bouton second' data-p='" + k + i + "' style='display:inline-block;width:auto;padding:8px 12px;margin-right:6px'>" + (p.type === "pdf" ? "📄 " : "🖼️ ") + esc(p.nom.replace(d.no + " ", "")) + "</button>";
     }).join("") + "<div id='pv" + k + "'></div></div>";
   }
+  // 📁 Achats en utilisation directe, regroupés par projet / BDC / machine : demandes, montants, pièces (factures).
+  var USG = { type: "Projet / chantier", ref: "" };
+  function afficherAchatsUsage() {
+    var F = S.fin; if (!F) { afficherFinances(); return; }
+    $("titre").textContent = "Achats par projet"; montrer("vueListe");
+    var D = F.demandes.filter(function (d) { return d.achat && d.achat.usage && d.achat.usage.type && ["Refusée", "Annulée"].indexOf(d.statut) < 0; });
+    function cle(d) { return d.achat.usage.type + "|" + (d.achat.usage.ref || ""); }
+    var G = {}; D.forEach(function (d) { var k = cle(d); (G[k] = G[k] || []).push(d); });
+    var refs = Object.keys(G).filter(function (k) { return k.indexOf(USG.type + "|") === 0; }).map(function (k) { return k.split("|")[1]; }).sort();
+    if (USG.ref && refs.indexOf(USG.ref) < 0) USG.ref = "";
+    var h = "<div class='carte pleine'><h3>📁 Achats en utilisation directe</h3><div class='ligne'><div><label>Utilisé pour</label><select id='usT'>" + USAGES_DIRECTS.map(function (x) { return "<option" + (x === USG.type ? " selected" : "") + ">" + esc(x) + "</option>"; }).join("") + "</select></div>" +
+      (USG.type !== "Usage général" ? "<div style='flex:2'><label>" + (USG.type === "Projet / chantier" ? "Projet" : USG.type === "BDC / lot de production" ? "BDC" : "Machine") + "</label><select id='usR'><option value=''>— tous —</option>" + refs.map(function (r) { return "<option" + (r === USG.ref ? " selected" : "") + ">" + esc(r) + "</option>"; }).join("") + "</select></div>" : "") + "</div></div>";
+    var L = D.filter(function (d) { return d.achat.usage.type === USG.type && (!USG.ref || d.achat.usage.ref === USG.ref); }).sort(function (a, b) { return (a.execute || a.date) - (b.execute || b.date); });
+    var parRef = {}; L.forEach(function (d) { var r = d.achat.usage.ref || "—"; (parRef[r] = parRef[r] || []).push(d); });
+    var tot = 0;
+    h += Object.keys(parRef).sort().map(function (r) { var Lr = parRef[r], st = 0;
+      var lignes = Lr.map(function (d, i) { var g = d.gnf || d.montant || 0; st += g; var np = (d.pieces || []).length + (d.preuves || []).length;
+        return "<div style='border-top:1px solid var(--bord);padding:5px 0;cursor:pointer' data-no='" + esc(d.no) + "'><div class='ligne' style='justify-content:space-between'><span>" + jourFr(d.execute || d.date) + " · <b>" + esc(d.no) + "</b> · " + esc(d.fournisseur || d.objet || libelleFin(d)) + "</span><b style='white-space:nowrap'>" + gnf(g) + " GNF</b></div>" +
+          "<div class='info' style='margin:0'>" + esc(d.objet || "") + " · " + esc(statutFin(d)) + (np ? " · 📎 " + np + " pièce(s)" : " · ⚠️ sans facture") + "</div></div>"; }).join("");
+      tot += st;
+      return "<div class='carte'><div class='ligne' style='justify-content:space-between'><h3 style='margin:0'>" + esc(USG.type === "Usage général" ? "Usage général" : r) + "</h3><b>" + gnf(st) + " GNF</b></div><div class='info'>" + Lr.length + " achat(s)</div>" + lignes + "</div>"; }).join("") ||
+      "<p class='info'>Aucun achat en utilisation directe pour ce choix.</p>";
+    if (Object.keys(parRef).length > 1) h += "<div class='carte'><div class='ligne' style='justify-content:space-between'><b>Total</b><b>" + gnf(tot) + " GNF</b></div></div>";
+    $("vueListe").innerHTML = h;
+    $("usT").onchange = function () { USG.type = this.value; USG.ref = ""; afficherAchatsUsage(); };
+    if ($("usR")) $("usR").onchange = function () { USG.ref = this.value; afficherAchatsUsage(); };
+    Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-no]"), function (el) { el.onclick = function () { ouvrirDemandeFin(el.getAttribute("data-no")); }; });
+  }
   function ouvrirDemandeFin(no) {
     var F = S.fin, d = F && F.demandes.filter(function (x) { return x.no === no; })[0];
     if (!d) { afficherFinances(); return; }
@@ -1238,7 +1267,7 @@
       ligne("Fournisseur", esc(d.fournisseur)) + ligne("Facture", d.facture ? esc(d.facture) : d.refFacture ? "Réf. " + esc(d.refFacture) : "") +
       ligne("Objet", esc(d.objet)) + ligne("Mode", esc(d.mode)) + ligne("Compte", esc(d.compte) + (d.contrepartie ? " → " + esc(d.contrepartie) : "")) +
       ligne("Personnel", esc(d.personnel) + (d.motifRH ? " · " + esc(d.motifRH) : "")) +
-      ligne("Achat", d.achat ? esc(d.achat.nature + " · " + (d.achat.article || d.achat.designation || (d.achat.articles || []).join(", ")) + (d.achat.quantite ? " · qté " + d.achat.quantite : "") + (d.achat.magasin ? " · 🏬 " + d.achat.magasin : "")) + (d.achatId ? " [" + esc(d.achatId) + "]" : "") : "") +
+      ligne("Achat", d.achat && d.achat.usage && !d.achat.nature ? esc("⚡ Utilisation directe · " + d.achat.usage.type + (d.achat.usage.ref ? " : " + d.achat.usage.ref : "")) : d.achat ? esc(d.achat.nature + " · " + (d.achat.article || d.achat.designation || (d.achat.articles || []).join(", ")) + (d.achat.quantite ? " · qté " + d.achat.quantite : "") + (d.achat.magasin ? " · 🏬 " + d.achat.magasin : "")) + (d.achatId ? " [" + esc(d.achatId) + "]" : "") : "") +
       ligne("Pour le compte de", d.pourCompte ? "<b>" + esc(d.pourCompte) + "</b> (dette envers " + esc(d.societe) + ")" : "") + ligne("Bénéficiaire", esc(d.beneficiaire)) + ligne("Catégorie", esc(d.categorie)) + ligne(d.type === "Paiement RH" ? "Équivalent" : "Reçu", d.recu ? gnf(d.recu) + " " + esc(d.deviseRecue) : "") +
       (d.type === "Paiement RH" && d.motifRH === "SALAIRE (RH)" ? ligne("Mois", d.dateEffet ? moisLib(d.dateEffet) : "")
         : ligne("Date d'effet", d.dateEffet ? "<b>" + jourFr(d.dateEffet) + "</b>" : d.statut === "Exécutée" ? "= date d'exécution" : "")) +
@@ -1636,7 +1665,7 @@
       "<div id='ffAUsB'><label>Destination</label><select id='ffAUs'>" + opts(["📦 Mettre en stock", "⚡ Utilisation directe (sans stockage)"], A0.usage && A0.usage.type ? "⚡ Utilisation directe (sans stockage)" : "📦 Mettre en stock") + "</select>" +
       "<div id='ffAUdB' class='ligne'><div style='flex:1.3;min-width:150px'><label>Utilisé pour</label><select id='ffAUt'>" + opts(USAGES_DIRECTS, (A0.usage || {}).type || "", "— choisir —") + "</select></div>" +
       "<div style='flex:2' id='ffAUrB'><label id='ffAUrL'>Précision</label><input id='ffAUr' list='ffAUrD' value='" + esc((A0.usage || {}).ref || "") + "'><datalist id='ffAUrD'></datalist></div></div></div>" +
-      "<label>Nature (quel article ?)</label><select id='ffAN'>" + opts(["Article existant", "Nouvel article", "Frais"], A0.nature, "— choisir —") + "</select>" +
+      "<div id='ffANB'><label>Nature (quel article ?)</label><select id='ffAN'>" + opts(["Article existant", "Nouvel article", "Frais"], A0.nature, "— choisir —") + "</select></div>" +
       "<div id='ffAMagB'><label>🏬 Magasin de destination</label><select id='ffAMag'></select></div>" +
       "<div id='ffAEx'><div class='ligne'><div><label>Catégorie d'article</label><select id='ffACat'>" + opts(AC.categories, A0.categorie, "— choisir —") + "</select></div>" +
       "<div style='flex:2'><label>Article</label><select id='ffAArt'></select></div></div></div>" +
@@ -1794,6 +1823,7 @@
       // Magasin de destination : par défaut celui de la société bénéficiaire (sinon le magasin de la production).
       var MG = AC.magasins || [], socB = v("ffSoc");
       vis("ffAUsB", on("ffAchB") && v("ffAN") !== "Frais");
+      var directU = on("ffAUsB") && /^⚡/.test(v("ffAUs")); vis("ffANB", on("ffAchB") && !directU);
       if (on("ffAchB")) $("ffAN").options[0].textContent = "— choisir : article existant ou nouvel article —";
       var direct = on("ffAUsB") && /^⚡/.test(v("ffAUs")), ut = v("ffAUt");
       vis("ffAUdB", direct); vis("ffAUrB", direct && ut && ut !== "Usage général");
@@ -1812,7 +1842,7 @@
         var m2 = MG.filter(function (m) { return m.societe === socB; })[0]; if (m2) $("ffAMag").value = m2.nom; $("ffAMag").setAttribute("data-s", socB);
       }
       if (on("ffAchB")) {
-        var n = v("ffAN"); vis("ffAEx", n === "Article existant"); vis("ffANv", n === "Nouvel article"); vis("ffAQt", n === "Article existant" || n === "Nouvel article"); vis("ffAFr", n === "Frais");
+        var n = on("ffANB") ? v("ffAN") : ""; vis("ffAEx", n === "Article existant"); vis("ffANv", n === "Nouvel article"); vis("ffAQt", n === "Article existant" || n === "Nouvel article"); vis("ffAFr", n === "Frais");
         var ca = v("ffACat"), artCur = $("ffAArt").value || A0.article || "";
         $("ffAArt").innerHTML = opts((AC.articles || {})[ca] || [], artCur, "— choisir —");
         var cn = v("ffACatN"); vis("ffAPap", cn === "PAPIER"); vis("ffAEnc", /ENCRE/.test(cn)); vis("ffAPla", cn === "PLATINE");
@@ -1871,7 +1901,8 @@
         if (!/^\d{4}$/.test(ica)) { $("ffMsg").textContent = "⛔ Année de la réserve fiscale (ex. " + (new Date().getFullYear() - 1) + ")."; return; }
         s.objet = String(s.objet || "").trim() + " [IMP:COM|" + ica + "]";
       }
-      if (on("ffAchB")) s.achat = { nature: v("ffAN"), categorie: v("ffACat"), article: v("ffAArt"), designation: v("ffADes"), catNouvel: v("ffACatN"),
+      if (on("ffAchB") && on("ffAUdB")) s.achat = { usage: { type: v("ffAUt"), ref: on("ffAUrB") ? v("ffAUr").trim() : "" } };   // ⚡ utilisation directe : rattachement seulement
+      else if (on("ffAchB")) s.achat = { nature: v("ffAN"), categorie: v("ffACat"), article: v("ffAArt"), designation: v("ffADes"), catNouvel: v("ffACatN"),
         carac: { y: v("ffAY"), x: v("ffAX"), kg: v("ffAKg"), unites: v("ffAU"), metres: v("ffAM") }, quantite: nb(v("ffAQ")), expediteur: v("ffAExp"), typeFrais: v("ffATF"),
         articles: Array.prototype.filter.call(document.querySelectorAll(".ffAO"), function (c) { return c.checked; }).map(function (c) { return c.value; }),
         magasin: on("ffAMagB") ? v("ffAMag") : (on("ffAUdB") ? v("ffAMag") || "" : ""),
@@ -1881,8 +1912,8 @@
         !s.compte && t !== "Facture d'achat" ? "compte" : on("ffCatB") && !s.categorie && t !== "Facture d'achat" ? "catégorie" : on("ffRecuB") && !(s.recu > 0) ? "montant reçu" : on("ffEqB") && !(s.recu > 0) ? "équivalent dans la devise du salaire" : on("ffMoisB") && !s.moisEffet ? "mois du salaire" :
         on("ffCtpB") && !s.contrepartie && !((op === "Virement" || op === "Remise chèque") && s.beneficiaire) ? "compte de destination" : !(s.montant > 0) ? "montant" : s.devise !== "GNF" && !(s.taux > 0) ? "taux de change" :
         (t === "Mouvement de trésorerie" || t === "Opération constatée") && !op ? "opération" : (t === "Facture d'achat" || t === "Règlement fournisseur") && !s.fournisseur ? "fournisseur" :
-        A && !A.nature ? "nature de l'achat" : A && A.usage && !A.usage.type ? "à quoi sert l'achat (utilisation directe)" : A && A.usage && A.usage.type !== "Usage général" && !A.usage.ref ? "précision de l'utilisation (projet, BDC ou machine)" : A && A.nature === "Article existant" && !A.article ? "article acheté" : A && A.nature === "Nouvel article" && !(A.designation && A.catNouvel) ? "nouvel article (désignation et catégorie)" :
-        A && A.nature !== "Frais" && !(A.quantite > 0) ? "quantité commandée" : A && A.nature === "Frais" && !A.articles.length ? "article concerné par le frais" : "";
+        A && !A.usage && !A.nature ? "nature de l'achat" : A && A.usage && !A.usage.type ? "à quoi sert l'achat (utilisation directe)" : A && A.usage && A.usage.type !== "Usage général" && !A.usage.ref ? "précision de l'utilisation (projet, BDC ou machine)" : A && A.nature === "Article existant" && !A.article ? "article acheté" : A && A.nature === "Nouvel article" && !(A.designation && A.catNouvel) ? "nouvel article (désignation et catégorie)" :
+        A && !A.usage && A.nature !== "Frais" && !(A.quantite > 0) ? "quantité commandée" : A && A.nature === "Frais" && !A.articles.length ? "article concerné par le frais" : "";
       if (err) { m.textContent = "⛔ Indiquez : " + err + ".";
         var champ = { "nature de l'achat": "ffAN", "article acheté": "ffAArt", "quantité": "ffAQ", "catégorie": "ffCat", "compte": "ffCpt", "montant": "ffMt", "fournisseur": "ffFour" }[err] || (/utilisation|sert/.test(err) ? "ffAUt" : /précision/.test(err) ? "ffAUr" : "");
         if (champ && $(champ) && on(champ)) { $(champ).scrollIntoView({ block: "center" }); $(champ).focus(); $(champ).style.outline = "2px solid #c62828"; setTimeout(function () { if ($(champ)) $(champ).style.outline = ""; }, 4000); }
