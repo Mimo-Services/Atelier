@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-14 LS";
+  var VERSION_APP = "2026-11-16 LT";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -4997,24 +4997,48 @@
           (E.enCours ? " ⏳ Audit automatique en cours (rapport par notification)." : E.dernierAuto ? " Dernier audit automatique : " + dateCourte(E.dernierAuto) + "." : "") +
           " Dès que tous les relevés sont déposés, l'audit se lance seul en arrière-plan.</div>" +
           "<button class='bouton second' id='ahGo' style='width:auto;margin:6px 0 0'" + (E.comptes.some(function (c) { return c.depot && c.depot.statut === "Déposé"; }) ? "" : " disabled") + ">▶️ Lancer l'audit automatique maintenant</button></div>";
-        h += E.comptes.map(function (c, i) { var d = c.depot, st = !d ? "⏳ à déposer" : d.statut === "Sans relevé" ? "⏭️ sans relevé" : d.statut === "Déposé" ? "📄 déposé, en attente d'audit" : d.statut === "Erreur" ? "⛔ erreur" : "✅ " + d.statut.toLowerCase();
+        h += E.comptes.map(function (c, i) { var d = c.depot, st = !d ? "⏳ à déposer" : d.statut === "Sans relevé" ? "⏭️ sans relevé" : d.statut === "Aucun mouvement" ? "🚫 aucun mouvement (audité)" : d.statut === "Déposé" ? "📄 déposé, en attente d'audit" : d.statut === "Erreur" ? "⛔ erreur" : "✅ " + d.statut.toLowerCase();
           if (!d && c.aJour) st = "✅ à jour (audité jusqu'au " + fr(String(c.auditDu ? (function () { var x = new Date(c.auditDu + "T12:00:00"); x.setDate(x.getDate() - 1); return x.toISOString().slice(0, 10); })() : "")) + ")";
           return "<div class='carte'><div class='ligne' style='justify-content:space-between'><b>🏦 " + esc(c.nom) + "</b><span class='info' style='margin:0'>" + st + "</span></div>" +
             (!c.aJour ? "<div class='info' style='margin:2px 0'>📅 À auditer : " + (c.auditDu ? "du " + fr(c.auditDu) : "depuis le début de Base") + " au " + fr(c.auditAu) + "</div>" : "") +
             (d ? "<div class='info' style='margin:2px 0'>" + (d.du ? "du " + esc(d.du) + " au " + esc(d.au) + " · " : "") + (d.agent ? esc(d.agent) + " · " + dateCourte(d.le) : "") + (d.lien ? " · <a href='" + esc(d.lien) + "' target='_blank' rel='noopener'>📎 copie</a>" : "") + (d.resultat ? "<br>" + esc(d.resultat) : "") + "</div>" : "") +
             "<div class='ligne' style='gap:6px;flex-wrap:wrap'><label class='bouton" + (d || c.aJour ? " second" : "") + "' style='width:auto;flex:0 0 auto;margin:0;cursor:pointer'>📎 " + (d && d.statut !== "Sans relevé" ? "Remplacer" : "Déposer") + " le relevé<input type='file' data-ahf='" + i + "' accept='.xlsx,.xls,.csv,.pdf,application/pdf' style='display:none'></label>" +
+            (!c.aJour ? "<label class='bouton second' style='width:auto;flex:0 0 auto;margin:0;cursor:pointer'>🚫 Aucun mouvement<input type='file' data-ahsm='" + i + "' accept='.xlsx,.pdf,.csv' style='display:none'></label>" : "") +
             (!d && !c.aJour ? "<button class='bouton second' data-ahp='" + i + "' style='width:auto;flex:0 0 auto;margin:0'>⏭️ Pas de relevé</button>" : "") +
-            (d && d.statut !== "Sans relevé" ? "<button class='bouton second' data-aho='" + i + "' style='width:auto;flex:0 0 auto;margin:0'>🔎 Ouvrir l'audit</button>" : "") + "</div><div class='info' id='ahM" + i + "'></div></div>"; }).join("");
+            (d && d.statut !== "Sans relevé" && d.statut !== "Aucun mouvement" ? "<button class='bouton second' data-aho='" + i + "' style='width:auto;flex:0 0 auto;margin:0'>🔎 Ouvrir l'audit</button>" : "") + "</div><div class='info' id='ahM" + i + "'></div></div>"; }).join("");
         $("vueListe").innerHTML = h; montrer("vueListe");
-        var envoyerH = function (q, ok) { api(Object.assign({ api: "audit" }, q), 240000).then(function (r) {
-          if (r.confirmerNumero) { if (confirm(r.titre + "\n\n" + r.message)) envoyerH(Object.assign({}, q, { confirmeNumero: true }), ok); else dessinerH(E); return; }
-          if (!r.ok) { alert("⛔ " + (r.titre || "") + "\n" + (r.message || "")); return; } if (r.message) alert("✅ " + r.message); dessinerH(r); if (ok) ok(r); }, function (e) { alert("⛔ " + e.message); }); };
+        var envoyerH = function (q, ok, ko) { api(Object.assign({ api: "audit" }, q), 240000).then(function (r) {
+          if (r.confirmerNumero) { if (confirm(r.titre + "\n\n" + r.message)) envoyerH(Object.assign({}, q, { confirmeNumero: true }), ok, ko); else dessinerH(E); return; }
+          if (!r.ok) { alert("⛔ " + (r.titre || "") + "\n" + (r.message || "")); if (ko) ko(); return; } if (r.message) alert("✅ " + r.message); dessinerH(r); if (ok) ok(r); }, function (e) { alert("⛔ " + e.message); if (ko) ko(); }); };
         $("ahGo").onclick = function () { if (confirm("Lancer maintenant l'audit automatique des relevés déposés ?")) envoyerH({ op: "lancer" }); };
         Array.prototype.forEach.call(document.querySelectorAll("[data-ahp]"), function (b) { b.onclick = function () { var c = E.comptes[+b.getAttribute("data-ahp")]; if (confirm(c.nom + " : pas de relevé cette semaine ?")) envoyerH({ op: "passer", compte: c.nom }); }; });
         Array.prototype.forEach.call(document.querySelectorAll("[data-aho]"), function (b) { b.onclick = function () { var c = E.comptes[+b.getAttribute("data-aho")];
           b.disabled = true; b.textContent = "⏳…";
           api({ api: "audit", op: "lignesDepot", compte: c.nom }, 120000).then(function (r) { if (!r.ok) { alert("⛔ " + r.message); b.disabled = false; return; }
             AUD.compte = c.nom; AUD.lignes = r.lignes; AUD.fichier = r.fichier; AUD.fichierData = null; AUD.depuisDepot = true; AUD.lien = (c.depot && c.depot.lien) || ""; AUD.res = null; afficherAudit("banque"); if ($("abGo")) $("abGo").click(); }, function (e) { alert("⛔ " + e.message); b.disabled = false; }); }; });
+        // 🚫 Aucun mouvement : preuve obligatoire (relevé ou « dernières opérations »), date d'édition et solde affiché.
+        Array.prototype.forEach.call(document.querySelectorAll("[data-ahsm]"), function (inp) { inp.onchange = function () {
+          var i = +inp.getAttribute("data-ahsm"), c = E.comptes[i], f = inp.files[0], M = $("ahM" + i); if (!f) return;
+          M.textContent = "⏳ Lecture de " + f.name + "…";
+          Promise.all([relLireFichier(f).catch(function () { var V = []; V.numero = ""; return V; }), audLireBase64(f)]).then(function (x) {
+            var L = x[0], fr = function (s) { return String(s || "").split("-").reverse().join("/"); };
+            var avS = L.filter(function (l) { return l.d && l.solde !== null && l.solde !== "" && l.solde !== undefined; }).sort(function (a, b) { return a.d < b.d ? -1 : a.d > b.d ? 1 : 0; });
+            var sP = avS.length ? avS[avS.length - 1].solde : "", auj = new Date(), iso = auj.getFullYear() + "-" + ("0" + (auj.getMonth() + 1)).slice(-2) + "-" + ("0" + auj.getDate()).slice(-2);
+            M.innerHTML = "<div class='carte' style='margin:6px 0'><b>🚫 " + esc(c.nom) + " : aucun mouvement</b><div class='info'>Période : du " + fr(c.auditDu) + " au " + fr(c.auditAu) + " · preuve : " + esc(f.name) +
+              (L.numero ? " · n° " + esc(L.numero) : " · ⚠️ n° de compte non lu") + "</div>" +
+              "<div class='ligne'><div><label>Date d'édition du document</label><input id='ahSmD" + i + "' type='date' value='" + iso + "'></div>" +
+              "<div><label>Solde affiché sur le document</label><input id='ahSmS" + i + "' inputmode='decimal' value='" + esc(sP === "" ? "" : String(sP)) + "' placeholder='ex. 33358943'></div></div>" +
+              "<div class='info'>Vérifiez la date et le solde sur le document. L'app contrôle : n° de compte, aucune opération dans la période (document et Base), solde = solde Base.</div>" +
+              "<button class='bouton' id='ahSmGo" + i + "' style='width:auto'>✅ Déclarer sans mouvement</button></div>";
+            $("ahSmGo" + i).onclick = function () {
+              var dd = $("ahSmD" + i).value, so = $("ahSmS" + i).value.trim();
+              if (!dd || !so) { alert("Indiquez la date d'édition et le solde du document."); return; }
+              this.disabled = true; this.textContent = "⏳ Contrôle…";
+              envoyerH({ op: "sansMouvement", compte: c.nom, lignes: L.filter(function (l) { return l.d; }).map(function (l) { return { d: l.d, lib: String(l.lib || "").substring(0, 60), debit: +l.debit || 0, credit: +l.credit || 0 }; }),
+                         numero: L.numero || "", dateDoc: dd, solde: so, fichier: f.name, fichierData: x[1].data, mime: x[1].mime }, null, function () { var bt = $("ahSmGo" + i); if (bt) { bt.disabled = false; bt.textContent = "✅ Déclarer sans mouvement"; } });
+            };
+          }).catch(function (e) { M.textContent = "⛔ " + e.message; });
+        }; });
         Array.prototype.forEach.call(document.querySelectorAll("[data-ahf]"), function (inp) { inp.onchange = function () {
           var i = +inp.getAttribute("data-ahf"), c = E.comptes[i], f = inp.files[0]; if (!f) return;
           $("ahM" + i).textContent = "⏳ Lecture de " + f.name + "…";
