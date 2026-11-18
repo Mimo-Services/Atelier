@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-18 MB";
+  var VERSION_APP = "2026-11-18 MC";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -359,6 +359,8 @@
     else if (id === "magasins") afficherMagasins("");
     else if (id === "repartition") afficherRepartition();
     else if (id === "journal") afficherJournal();
+    else if (id === "atelier") afficherAtelier();
+    else if (id === "projets") afficherProjets();
     else if (id === "avancement") afficherAvancement();
     else if (id === "planif") { if (modePC()) afficherPlanifPC(); else afficherPlanif(); }
     else if (id === "attente") afficherListe("attente");
@@ -367,13 +369,26 @@
     else if (id === "reglages") montrer("vueReglages");
     majRail();
   }
+  function droitProjets() { return !!(S.agent && (droitRep() || (S.formulaires && S.formulaires.droits && S.formulaires.droits.comptable))); }
+  // 🏭 Atelier M2S : planification, scan, lot sans QR, journal, avancement.
+  function afficherAtelier() {
+    $("titre").textContent = "Atelier M2S"; S.navActif = "atelier";
+    var t = [], nPl = S.file.filter(function (x) { return x.type === "planif"; }).length;
+    function tu(id, ico, lib, det, badge, cls) { t.push("<div class='tuile" + (cls ? " " + cls : "") + "' data-at='" + id + "' role='button' tabindex='0'>" + (badge ? "<span class='badge orange'>" + esc(badge) + "</span>" : "") + "<span class='ico'>" + ico + "</span><span>" + esc(lib) + "</span>" + (det ? "<span class='det'>" + esc(det) + "</span>" : "") + "</div>"); }
+    tu("scan", "📷", "Scanner une fiche", "Atelier", "", "principale");
+    if (droitPlanif()) tu("planif", "🗂️", "Planification", "BDC, saisie", nPl);
+    tu("manuel", "🔢", "Lot sans QR", S.recents.length ? "Derniers lots" : "");
+    if (S.agent && S.url) { tu("journal", "🧾", "Journal Prod", "Vérifier les scans"); tu("avancement", "📊", "État d'avancement", "BDC et lots"); }
+    $("vueListe").innerHTML = "<div class='grille'>" + t.join("") + "</div>"; montrer("vueListe");
+    Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-at]"), function (el) { el.onclick = function () { ouvrirTuile(el.getAttribute("data-at")); }; });
+  }
   function majRail(vue) {
     var r = $("rail"); if (!r) return;
     vue = vue || S.vueCourante || "vueAccueil";
     var ok = !!(S.navT && S.navT.length) && ["vueAccueil", "vueScan", "vueLot", "vuePlanif"].indexOf(vue) < 0;
     document.body.classList.toggle("rail", ok);
     if (!ok) { r.innerHTML = ""; return; }
-    r.innerHTML = S.navT.map(function (x) { return "<button class='railb" + (x.id === S.navActif ? " actif" : "") + "' data-r='" + esc(x.id) + "' title='" + esc(x.lib) + "'>" +
+    r.innerHTML = S.navT.map(function (x) { return "<button class='railb" + (x.id === (["planif", "manuel", "journal", "avancement"].indexOf(S.navActif) >= 0 ? "atelier" : S.navActif) ? " actif" : "") + "' data-r='" + esc(x.id) + "' title='" + esc(x.lib) + "'>" +
       (x.badge ? "<span class='rb'>" + esc(x.badge) + "</span>" : "") + "<span class='ri'>" + x.ico + "</span><span class='rl'>" + esc(x.lib) + "</span></button>"; }).join("");
     Array.prototype.forEach.call(r.querySelectorAll("[data-r]"), function (b) { b.onclick = function () { NAV.pile = []; ouvrirTuile(b.getAttribute("data-r")); }; });
     var a = r.querySelector(".actif"); if (a && a.scrollIntoView) try { a.scrollIntoView({ block: "nearest", inline: "nearest" }); } catch (e) {}
@@ -393,18 +408,14 @@
     }
     function section(titre) { t.push("<div class='sect'>" + titre + "</div>"); }
     section("Atelier");
-    if (droitPlanif()) {
-      var nPl = S.file.filter(function (x) { return x.type === "planif"; }).length;
-      tuile("planif", "🗂️", "Planification", "BDC, saisie", nPl ? { badge: nPl, bcls: "orange" } : {});
-    }
     tuile("scan", "📷", "Scanner une fiche", "Atelier", { cls: "principale" });
-    tuile("manuel", "🔢", "Lot sans QR", S.recents.length ? "Derniers lots" : "");
-    if (S.agent && S.url) { tuile("journal", "🧾", "Journal Prod", "Vérifier les scans"); tuile("avancement", "📊", "État d'avancement", "BDC et lots"); }
+    var nPl = droitPlanif() ? S.file.filter(function (x) { return x.type === "planif"; }).length : 0;
+    tuile("atelier", "🏭", "Atelier M2S", "Planification, avancement, journal", nPl ? { badge: nPl, bcls: "orange" } : {});
     Object.keys(fs).forEach(function (k) {
       if (k === "stock") return;   // dans la rubrique « Magasins » (Sortie Stock M2S)
       tuile("form:" + k, k === "stock" ? "📦" : "🧾", k === "stock" ? "Sortie de stock" : fs[k].nom || fs[k].titre || k, fs[k].erreur ? "indisponible" : k === "stock" ? "Nouvelle saisie" : "");
     });
-    if (droitFin() || droitRH() || droitCom() || droitTreso() || droitMis() || droitRep() || droitStockVal() || fs.stock) section("Gestion");
+    if (droitFin() || droitRH() || droitCom() || droitTreso() || droitMis() || droitRep() || droitProjets() || droitStockVal() || fs.stock) section("Gestion");
     if (droitStockVal() || fs.stock) { var nS = stockNbAttente(); tuile("magasins", "🏬", "Magasins", "Stock, Sortie Stock M2S, transferts", nS ? { badge: nS, bcls: S.stockv && S.stockv.direction ? "rouge" : "orange" } : {}); }
     if (droitFin()) {
       var nF = finNbATraiter();
@@ -420,6 +431,7 @@
     }
     if (droitTreso()) tuile("treso", "🏦", "Trésorerie", S.formulaires.droits.validation === "Walid" || S.formulaires.droits.validation === "DG" ? "Tous les comptes" : "Vos comptes", { cls: "large" });
     if (droitRep()) tuile("repartition", "📊", "Répartition", "Recouvrements, commissions", { cls: "large" });
+    if (droitProjets()) tuile("projets", "🏗️", "Projets", "Coûts, amortissement, suivi", { cls: "large" });
     if (droitMis()) {
       var nM = misNbBadge();
       tuile("missions", "🎯", "Missions", S.mis && S.mis.direction ? "Équipe, clôture" : "Mes missions", nM ? { badge: nM, bcls: "rouge", cls: "large" } : { cls: "large" });
@@ -1185,7 +1197,7 @@
     var nouv = S.file.filter(function (x) { return x.type === "fin" && x.op === "creer"; });
     var h = "<div class='carte'><h3>💰 Finances</h3><div class='info'>" + esc(F.agent) + (F.role ? " · valideur " + esc(F.role) : F.comptable ? " · comptable (lecture)" : "") + " · données du " + dateCourte(F.recu || F.genere) + "</div>" +
       "<div class='ligne'><button class='bouton' id='fnNouv'>➕ Nouvelle demande</button><button class='bouton second' id='fnFour'>🏭 Fournisseurs</button><button class='bouton second' id='fnUsg'>📁 Achats par projet</button></div>" +
-      (F.role || F.comptable ? "<div class='ligne'><button class='bouton second' id='fnSol'>📊 Soldes</button><button class='bouton second' id='fnIc'>🔁 Inter-sociétés</button><button class='bouton second' id='fnExp'>📤 Export du mois</button><button class='bouton second' id='fnPrj'>🏗️ Projets</button></div>" : "") +
+      (F.role || F.comptable ? "<div class='ligne'><button class='bouton second' id='fnSol'>📊 Soldes</button><button class='bouton second' id='fnIc'>🔁 Inter-sociétés</button><button class='bouton second' id='fnExp'>📤 Export du mois</button></div>" : "") +
       (F.suiviAchat || F.comptable ? "<button class='bouton second' id='fnAch'>📦 Suivi des achats (" + ((F.achat && F.achat.ouverts) || []).length + ")</button>" : "") +
       "<div class='onglets' style='margin-top:10px'>" + [["traiter", "À traiter (" + finNbOuvertes() + (finNbATraiter() ? " · 👉 " + finNbATraiter() : "") + ")"], ["miennes", "Mes demandes"]].concat(F.role || F.comptable ? [["toutes", "Toutes"]] : [])
         .map(function (o) { return "<button data-f='" + o[0] + "' class='" + (FIN.filtre === o[0] ? "actif" : "") + "' style='border-radius:10px;border-bottom:1px solid var(--bord)'>" + o[1] + "</button>"; }).join("") + "</div>" +
@@ -1215,7 +1227,6 @@
     $("fnCherche").oninput = liste; liste();
     $("fnNouv").onclick = function () { formulaireFin(null); };
     if ($("fnUsg")) $("fnUsg").onclick = function () { afficherAchatsUsage(); };
-    if ($("fnPrj")) $("fnPrj").onclick = function () { afficherProjets(); };
     $("fnFour").onclick = afficherFournisseurs;
     if ($("fnAch")) $("fnAch").onclick = function () { afficherSuiviAchats(); };
     if ($("fnSol")) $("fnSol").onclick = function () { afficherSoldes("fournisseurs"); };
@@ -1273,13 +1284,14 @@
     Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-no]"), function (el) { el.onclick = function () { ouvrirDemandeFin(el.getAttribute("data-no")); }; });
   }
   /* ---------- 🏗️ Projets : coût par rubrique, valorisation, amortissement ---------- */
-  var PRJ = { liste: null };
+  var PRJ = { liste: null, fiches: {} };
+  try { lire("prjListe").then(function (r) { if (r && !PRJ.liste) PRJ.liste = r; }, function () {}); } catch (eP) {}
   function prjFr(iso) { return iso ? String(iso).split("-").reverse().join("/") : "—"; }
   function prjMois(m) { var x = String(m).split("-"); return ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."][+x[1] - 1] + " " + x[0]; }
   function afficherProjets() {
     $("titre").textContent = "Projets"; montrer("vueListe");
     $("vueListe").innerHTML = "<div class='carte pleine'><h3>🏗️ Projets</h3><p class='info'>⏳ Chargement…</p></div>";
-    api({ api: "projets", op: "liste" }, 120000).then(function (r) {
+    var rendreL = function (r) {
       PRJ.liste = r;
       var clos = r.projets.filter(function (p) { return p.statut === "Clôturé" && p.total > 0; });
       var h = "<div class='carte pleine'><h3>🏗️ Projets</h3><div class='info'>Coût de chaque projet par rubrique (investissement jusqu'au démarrage de l'activité), amortissement et suivi. Une caisse = un projet.</div></div>";
@@ -1306,14 +1318,19 @@
         api({ api: "projets", op: "creer", nom: nom, caisse: $("pjC").value, debut: $("pjD").value, societe: $("pjS").value }, 60000).then(function (x) { alert("✅ " + x.message); afficherProjets(); },
           function (e) { $("pjM").textContent = "⛔ " + e.message; $("pjGo").disabled = false; });
       };
-    }, function (e) { $("vueListe").innerHTML = "<div class='carte'><p class='info'>⛔ " + esc(e.message) + " (réseau nécessaire)</p></div>"; });
+    };
+    // Affichage immédiat de la dernière liste reçue, puis mise à jour (le serveur ne recalcule que si Base a changé).
+    var cacheL = PRJ.liste;
+    if (cacheL) rendreL(cacheL);
+    api({ api: "projets", op: "liste" }, 120000).then(function (r) { var chg = !cacheL || JSON.stringify(r.projets) !== JSON.stringify(cacheL.projets); PRJ.liste = r; try { ecrire("prjListe", r); } catch (eE) {} if (chg && $("titre").textContent === "Projets") rendreL(r); },
+      function (e) { if (!cacheL) $("vueListe").innerHTML = "<div class='carte'><p class='info'>⛔ " + esc(e.message) + " (réseau nécessaire)</p></div>"; });
   }
-  function ficheProjet(nom) {
+  function ficheProjet(nom, forcer) {
     $("titre").textContent = nom; montrer("vueListe");
     $("vueListe").innerHTML = "<div class='carte pleine'><h3>🏗️ " + esc(nom) + "</h3><p class='info'>⏳ Calcul du coût du projet…</p></div>";
-    api({ api: "projets", op: "fiche", projet: nom }, 180000).then(function (f) {
+    var rendreF = function (f) {
       var RB = f.rubriquesListe, ligne = function (a, b, gras) { return "<div class='ligne' style='justify-content:space-between;margin:2px 0" + (gras ? ";font-weight:700;border-top:1px solid var(--bord);padding-top:4px" : "") + "'><span>" + a + "</span><span>" + b + "</span></div>"; };
-      var h = "<div class='carte pleine'><div class='ligne' style='justify-content:space-between'><h3 style='margin:0'>🏗️ " + esc(f.nom) + "</h3><button class='bouton second' id='pjRet' style='width:auto;margin:0'>‹ Projets</button></div>" +
+      var h = "<div class='carte pleine'><div class='ligne' style='justify-content:space-between'><h3 style='margin:0'>🏗️ " + esc(f.nom) + "</h3><span class='ligne' style='flex:0 0 auto;gap:6px'><button class='bouton second' id='pjAct' style='width:auto;margin:0' title='Recalculer depuis Base'>↻</button><button class='bouton second' id='pjRet' style='width:auto;margin:0'>‹ Projets</button></span></div>" +
         "<div class='info'>" + (f.statut === "Clôturé" ? "✅ clôturé" : "🚧 en cours") + (f.caisse ? " · caisse " + esc(f.caisse) : "") + " · début " + prjFr(f.debut) + " · démarrage de l'activité : " + (f.demarrage ? prjFr(f.demarrage) : "<b>à renseigner</b>") +
         " · " + f.nb + " dépense(s) du " + prjFr(f.premier) + " au " + prjFr(f.dernier) + (f.reprise ? " · dont reprise du journal Excel " + gnf(f.reprise) : "") + "</div></div>";
       h += "<div class='carte'><h3>💰 Coût du projet" + (f.demarrage ? " (investissement jusqu'au " + prjFr(f.demarrage) + ")" : "") + "</h3>" +
@@ -1356,6 +1373,7 @@
       }).join("") + "</div>";
       $("vueListe").innerHTML = h;
       $("pjRet").onclick = function () { afficherProjets(); };
+      $("pjAct").onclick = function () { this.disabled = true; this.textContent = "⏳"; ficheProjet(f.nom, true); };
       if ($("pfC")) {
         var I = f.total, num = function (id) { return +String($(id).value).replace(/[^0-9]/g, "") || 0; };
         var bal = function () { var C = num("pfC"), N = num("pfN"), R = num("pfR"), am = R - C;
@@ -1373,7 +1391,12 @@
         $("pfGo").onclick = function () { envoyerP("maj", this); };
         $("pfPub").onclick = function () { if (confirm("Publier le plan : charges " + gnf(num("pfC")) + " / mois, " + num("pfN") + " mois, revenu " + gnf(num("pfR")) + " / mois ?\nLe suivi mensuel sera écrit dans BASE.")) envoyerP("publier", this); };
       }
-    }, function (e) { $("vueListe").innerHTML = "<div class='carte'><p class='info'>⛔ " + esc(e.message) + " (réseau nécessaire)</p></div>"; });
+    };
+    PRJ.fiches = PRJ.fiches || {};
+    var cacheF = forcer ? null : PRJ.fiches[nom];
+    if (cacheF) rendreF(cacheF);
+    api({ api: "projets", op: "fiche", projet: nom, forcer: forcer ? 1 : "" }, 180000).then(function (f) { var chg = !cacheF || JSON.stringify(f) !== JSON.stringify(cacheF); PRJ.fiches[nom] = f; if (chg && $("titre").textContent === nom) rendreF(f); },
+      function (e) { if (!cacheF) $("vueListe").innerHTML = "<div class='carte'><p class='info'>⛔ " + esc(e.message) + " (réseau nécessaire)</p></div>"; });
   }
   function ouvrirDemandeFin(no) {
     var F = S.fin, d = F && F.demandes.filter(function (x) { return x.no === no; })[0];
@@ -5421,7 +5444,7 @@
   }
   /* ---------- ❓ Aide : manuel d'utilisation (aide.js + images aide/*.jpg), recherche, filtré par droits ---------- */
   var AIDE = { ctx: "", rub: "", q: "", fiche: "" };
-  var AIDE_TUILE = { scan: "atelier", manuel: "atelier", journal: "atelier", avancement: "atelier", planif: "planif", magasins: "magasins", stockval: "magasins",
+  var AIDE_TUILE = { atelier: "atelier", scan: "atelier", manuel: "atelier", journal: "atelier", avancement: "atelier", planif: "planif", magasins: "magasins", stockval: "magasins",
     finances: "finances", treso: "treso", rh: "rh", commercial: "commercial", repartition: "repartition", missions: "missions" };
   var AIDE_RUBS = [["base", "📱", "Démarrer & appareil"], ["atelier", "📷", "Atelier"], ["planif", "🗂️", "Planification"], ["magasins", "🏬", "Magasins"], ["finances", "💰", "Finances"],
     ["treso", "🏦", "Trésorerie"], ["rh", "👥", "RH"], ["commercial", "🤝", "Commercial"], ["repartition", "📊", "Répartition"], ["missions", "🎯", "Missions"], ["notifs", "🔔", "Notifications"]];
