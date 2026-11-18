@@ -187,12 +187,29 @@
     #etatReseau { margin-right: auto; }
     header button { padding: 4px 8px; }
   }
+
+  /* 🧭 Barre des rubriques : à gauche sur PC / tablette, en bas sur téléphone */
+  #rail { display: none; position: fixed; z-index: 9; background: var(--tuile); }
+  .railb { flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; background: none; border: none; color: var(--texte);
+           font-size: 11px; line-height: 1.1; padding: 6px 4px; min-width: 72px; position: relative; cursor: pointer; border-radius: 10px; }
+  .railb .ri { font-size: 22px; } .railb .rl { max-width: 76px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .railb.actif { color: var(--cuivre); background: var(--tuile2); font-weight: 700; }
+  .railb .rb { position: absolute; top: 2px; right: 6px; background: var(--rouge); color: #fff; border-radius: 8px; font-size: 10px; padding: 0 4px; font-weight: 700; }
+  @media (min-width: 761px) {
+    body.rail #rail { display: flex; flex-direction: column; top: var(--hh); bottom: 0; left: 0; width: 88px; overflow-y: auto; border-right: 1px solid var(--bord); padding: 8px 4px; gap: 4px; }
+    body.rail main { padding-left: 104px; }
+  }
+  @media (max-width: 760px) {
+    body.rail #rail { display: flex; left: 0; right: 0; bottom: 0; height: 64px; overflow-x: auto; overflow-y: hidden; border-top: 1px solid var(--bord); padding: 2px 4px; gap: 2px; }
+    body.rail main { padding-bottom: 84px; }
+  }
 </style>
 </head>
 <body>
 <script>try { if (localStorage.getItem("duocoreTheme") === "clair") { document.body.classList.add("clair"); document.documentElement.classList.add("clair"); document.getElementById("metaScheme").content = "only light"; } } catch (e) {}</script>
 <header>
   <button id="btnRetour" style="display:none" aria-label="Retour">‹</button>
+  <button id="btnAccueil" style="display:none" aria-label="Accueil" title="Accueil">🏠</button>
   <img class="logo" src="icone-192.png" alt="">
   <div class="titres"><h1 id="titre">DuoCore</h1><div class="sous" id="sousTitre">Atelier</div></div>
   <span id="etatReseau" class="pastille horsligne">Hors ligne</span>
@@ -263,5 +280,6 @@
 
 <script src="config.js"></script>
 <script src="app.js"></script>
+<nav id="rail" aria-label="Rubriques"></nav>
 </body>
 </html>

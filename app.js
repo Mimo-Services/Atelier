@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-17 LW";
+  var VERSION_APP = "2026-11-18 MA";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -325,6 +325,8 @@
     if (PL.actif) $("vueListe").innerHTML = "";
     if (vue !== "vuePlanif") { $("plCadre").srcdoc = ""; $("plC").innerHTML = ""; PL.id = null; }
     $("btnRetour").style.display = vue === "vueAccueil" ? "none" : "";
+    if ($("btnAccueil")) $("btnAccueil").style.display = vue === "vueAccueil" ? "none" : "";
+    S.vueCourante = vue; if (vue === "vueAccueil") S.navActif = ""; try { majRail(vue); } catch (eR) {}
     if (vue !== "vueScan") arreterScan();
     if (vue !== "vueLot") { $("cadre").srcdoc = ""; S.lotOuvert = null; }
     if (vue === "vueAccueil") { $("titre").textContent = "DuoCore"; majAccueil(); }
@@ -340,13 +342,51 @@
     else { el.className = "pastille horsligne"; el.textContent = "Hors ligne"; }
   }
 
+  /* ---------- 🧭 Navigation : barre des rubriques (gauche sur PC, en bas sur téléphone) + bouton 🏠 Accueil ---------- */
+  function ouvrirTuile(id) {
+    S.navActif = id;
+    AIDE.ctx = AIDE_TUILE[id] || (id.indexOf("form:") === 0 ? "magasins" : "base");
+    if (id === "scan") demarrerScan();
+    else if (id === "manuel") montrer("vueManuel");
+    else if (id.indexOf("form:") === 0) ouvrirFormulaire(id.substring(5));
+    else if (id === "connexion") pageConnexion();
+    else if (id === "finances") afficherFinances();
+    else if (id === "rh") afficherRH();
+    else if (id === "commercial") afficherCom();
+    else if (id === "missions") afficherMis();
+    else if (id === "treso") afficherTreso();
+    else if (id === "stockval") afficherStockVal();
+    else if (id === "magasins") afficherMagasins("");
+    else if (id === "repartition") afficherRepartition();
+    else if (id === "journal") afficherJournal();
+    else if (id === "avancement") afficherAvancement();
+    else if (id === "planif") { if (modePC()) afficherPlanifPC(); else afficherPlanif(); }
+    else if (id === "attente") afficherListe("attente");
+    else if (id === "corriger") afficherListe("corriger");
+    else if (id === "sync") $("btnSync").onclick();
+    else if (id === "reglages") montrer("vueReglages");
+    majRail();
+  }
+  function majRail(vue) {
+    var r = $("rail"); if (!r) return;
+    vue = vue || S.vueCourante || "vueAccueil";
+    var ok = !!(S.navT && S.navT.length) && ["vueAccueil", "vueScan", "vueLot", "vuePlanif"].indexOf(vue) < 0;
+    document.body.classList.toggle("rail", ok);
+    if (!ok) { r.innerHTML = ""; return; }
+    r.innerHTML = S.navT.map(function (x) { return "<button class='railb" + (x.id === S.navActif ? " actif" : "") + "' data-r='" + esc(x.id) + "' title='" + esc(x.lib) + "'>" +
+      (x.badge ? "<span class='rb'>" + esc(x.badge) + "</span>" : "") + "<span class='ri'>" + x.ico + "</span><span class='rl'>" + esc(x.lib) + "</span></button>"; }).join("");
+    Array.prototype.forEach.call(r.querySelectorAll("[data-r]"), function (b) { b.onclick = function () { NAV.pile = []; ouvrirTuile(b.getAttribute("data-r")); }; });
+    var a = r.querySelector(".actif"); if (a && a.scrollIntoView) try { a.scrollIntoView({ block: "nearest", inline: "nearest" }); } catch (e) {}
+  }
   function majAccueil() {
     majEtat();
     try { majCloche(); } catch (eC) {}
     // Tuiles de l'accueil : atelier, saisies autorisées, files d'envoi, synchronisation.
     var fs = (S.agent && S.formulaires && S.formulaires.formulaires) || {}, t = [];
+    var navT = [];
     function tuile(id, ico, lib, det, opt) {
       opt = opt || {};
+      if (["sync", "reglages", "connexion"].indexOf(id) < 0) navT.push({ id: id, ico: ico, lib: lib, badge: opt.badge || "" });
       t.push("<div class='tuile" + (opt.cls ? " " + opt.cls : "") + "' data-t='" + id + "' role='button' tabindex='0'>" +
         (opt.badge ? "<span class='badge" + (opt.bcls ? " " + opt.bcls : "") + "'>" + esc(opt.badge) + "</span>" : "") +
         "<span class='ico'>" + ico + "</span><span>" + esc(lib) + "</span>" + (det ? "<span class='det'>" + esc(det) + "</span>" : "") + "</div>");
@@ -392,31 +432,8 @@
     tuile("sync", "⇅", "Synchronisation", S.derniereSync ? dateCourte(S.derniereSync) : "jamais");
     tuile("reglages", "⚙️", "Réglages", S.agent ? S.agent.nom : "");
     $("tuiles").innerHTML = t.join("");
-    Array.prototype.forEach.call($("tuiles").querySelectorAll("[data-t]"), function (el) {
-      el.onclick = function () {
-        var id = el.getAttribute("data-t");
-        AIDE.ctx = AIDE_TUILE[id] || (id.indexOf("form:") === 0 ? "magasins" : "base");
-        if (id === "scan") demarrerScan();
-        else if (id === "manuel") montrer("vueManuel");
-        else if (id.indexOf("form:") === 0) ouvrirFormulaire(id.substring(5));
-        else if (id === "connexion") pageConnexion();
-        else if (id === "finances") afficherFinances();
-        else if (id === "rh") afficherRH();
-        else if (id === "commercial") afficherCom();
-        else if (id === "missions") afficherMis();
-        else if (id === "treso") afficherTreso();
-        else if (id === "stockval") afficherStockVal();
-        else if (id === "magasins") afficherMagasins("");
-        else if (id === "repartition") afficherRepartition();
-        else if (id === "journal") afficherJournal();
-        else if (id === "avancement") afficherAvancement();
-        else if (id === "planif") { if (modePC()) afficherPlanifPC(); else afficherPlanif(); }
-        else if (id === "attente") afficherListe("attente");
-        else if (id === "corriger") afficherListe("corriger");
-        else if (id === "sync") $("btnSync").onclick();
-        else if (id === "reglages") montrer("vueReglages");
-      };
-    });
+    S.navT = navT;
+    Array.prototype.forEach.call($("tuiles").querySelectorAll("[data-t]"), function (el) { el.onclick = function () { ouvrirTuile(el.getAttribute("data-t")); }; });
     $("sousTitre").textContent = S.agent ? S.agent.nom + " · Atelier & saisies" : "Atelier";
     $("carteAgent").innerHTML = S.agent
       ? "<h3>Agent connecté</h3><div>" + esc(S.agent.nom) + "</div><button class='bouton second' id='btnDeconnexion'>Changer d'agent</button>"
@@ -1168,7 +1185,7 @@
     var nouv = S.file.filter(function (x) { return x.type === "fin" && x.op === "creer"; });
     var h = "<div class='carte'><h3>💰 Finances</h3><div class='info'>" + esc(F.agent) + (F.role ? " · valideur " + esc(F.role) : F.comptable ? " · comptable (lecture)" : "") + " · données du " + dateCourte(F.recu || F.genere) + "</div>" +
       "<div class='ligne'><button class='bouton' id='fnNouv'>➕ Nouvelle demande</button><button class='bouton second' id='fnFour'>🏭 Fournisseurs</button><button class='bouton second' id='fnUsg'>📁 Achats par projet</button></div>" +
-      (F.role || F.comptable ? "<div class='ligne'><button class='bouton second' id='fnSol'>📊 Soldes</button><button class='bouton second' id='fnIc'>🔁 Inter-sociétés</button><button class='bouton second' id='fnExp'>📤 Export du mois</button></div>" : "") +
+      (F.role || F.comptable ? "<div class='ligne'><button class='bouton second' id='fnSol'>📊 Soldes</button><button class='bouton second' id='fnIc'>🔁 Inter-sociétés</button><button class='bouton second' id='fnExp'>📤 Export du mois</button><button class='bouton second' id='fnPrj'>🏗️ Projets</button></div>" : "") +
       (F.suiviAchat || F.comptable ? "<button class='bouton second' id='fnAch'>📦 Suivi des achats (" + ((F.achat && F.achat.ouverts) || []).length + ")</button>" : "") +
       "<div class='onglets' style='margin-top:10px'>" + [["traiter", "À traiter (" + finNbOuvertes() + (finNbATraiter() ? " · 👉 " + finNbATraiter() : "") + ")"], ["miennes", "Mes demandes"]].concat(F.role || F.comptable ? [["toutes", "Toutes"]] : [])
         .map(function (o) { return "<button data-f='" + o[0] + "' class='" + (FIN.filtre === o[0] ? "actif" : "") + "' style='border-radius:10px;border-bottom:1px solid var(--bord)'>" + o[1] + "</button>"; }).join("") + "</div>" +
@@ -1198,6 +1215,7 @@
     $("fnCherche").oninput = liste; liste();
     $("fnNouv").onclick = function () { formulaireFin(null); };
     if ($("fnUsg")) $("fnUsg").onclick = function () { afficherAchatsUsage(); };
+    if ($("fnPrj")) $("fnPrj").onclick = function () { afficherProjets(); };
     $("fnFour").onclick = afficherFournisseurs;
     if ($("fnAch")) $("fnAch").onclick = function () { afficherSuiviAchats(); };
     if ($("fnSol")) $("fnSol").onclick = function () { afficherSoldes("fournisseurs"); };
@@ -1254,6 +1272,109 @@
     if ($("usR")) $("usR").onchange = function () { USG.ref = this.value; afficherAchatsUsage(); };
     Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-no]"), function (el) { el.onclick = function () { ouvrirDemandeFin(el.getAttribute("data-no")); }; });
   }
+  /* ---------- 🏗️ Projets : coût par rubrique, valorisation, amortissement ---------- */
+  var PRJ = { liste: null };
+  function prjFr(iso) { return iso ? String(iso).split("-").reverse().join("/") : "—"; }
+  function prjMois(m) { var x = String(m).split("-"); return ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."][+x[1] - 1] + " " + x[0]; }
+  function afficherProjets() {
+    $("titre").textContent = "Projets"; montrer("vueListe");
+    $("vueListe").innerHTML = "<div class='carte pleine'><h3>🏗️ Projets</h3><p class='info'>⏳ Chargement…</p></div>";
+    api({ api: "projets", op: "liste" }, 120000).then(function (r) {
+      PRJ.liste = r;
+      var clos = r.projets.filter(function (p) { return p.statut === "Clôturé" && p.total > 0; });
+      var h = "<div class='carte pleine'><h3>🏗️ Projets</h3><div class='info'>Coût de chaque projet par rubrique (investissement jusqu'au démarrage de l'activité), amortissement et suivi. Une caisse = un projet.</div></div>";
+      h += r.projets.map(function (p, i) {
+        var R = p.rubriques;
+        return "<div class='carte' style='cursor:pointer' data-prj='" + i + "'><div class='ligne' style='justify-content:space-between'><h3 style='margin:0'>" + esc(p.nom) + "</h3><b>" + gnf(p.total) + " GNF</b></div>" +
+          "<div class='info' style='margin:2px 0'>" + (p.statut === "Clôturé" ? "✅ clôturé" : "🚧 en cours") + (p.caisse ? " · " + esc(p.caisse) : "") + " · début " + prjFr(p.debut) + " · démarrage " + (p.demarrage ? prjFr(p.demarrage) : "à renseigner") + "</div>" +
+          "<div class='info' style='margin:0'>Fournitures " + gnf(R["Fournitures"]) + " · Prestations " + gnf(R["Prestations"]) + " · autres " + gnf(p.total - R["Fournitures"] - R["Prestations"]) + (p.totalCharges ? " · charges après démarrage " + gnf(p.totalCharges) : "") + "</div></div>";
+      }).join("") || "<p class='info'>Aucun projet.</p>";
+      if (clos.length) {
+        var tot = clos.reduce(function (s, p) { return s + p.total; }, 0);
+        h += "<div class='carte'><h3>📐 Base d'estimation (" + clos.length + " projet(s) clôturé(s))</h3><div class='info'>Répartition moyenne du coût par rubrique, pour estimer un prochain projet.</div>" +
+          r.rubriques.map(function (rb) { var v = clos.reduce(function (s, p) { return s + (p.rubriques[rb] || 0); }, 0); return v ? "<div class='ligne' style='justify-content:space-between'><span>" + esc(rb) + "</span><span>" + gnf(v) + " · " + Math.round(v * 1000 / tot) / 10 + " %</span></div>" : ""; }).join("") +
+          "<div class='ligne' style='justify-content:space-between'><b>Total</b><b>" + gnf(tot) + " GNF</b></div></div>";
+      }
+      if (r.direction) h += "<div class='carte'><h3>➕ Nouveau projet</h3><div class='ligne'><div style='flex:2'><label>Nom du projet</label><input id='pjN' placeholder='ex. Dépôt Kipé'></div><div><label>Caisse du projet</label><select id='pjC'><option value=''>— aucune —</option>" +
+        r.caisses.map(function (c) { return "<option>" + esc(c) + "</option>"; }).join("") + "</select></div></div><div class='ligne'><div><label>Début</label><input id='pjD' type='date' value='" + dateISO(Date.now()) + "'></div><div><label>Société propriétaire</label><select id='pjS'><option>AB</option><option>M2S</option></select></div></div>" +
+        "<button class='bouton' id='pjGo'>➕ Créer le projet</button><div class='info' id='pjM'></div></div>";
+      $("vueListe").innerHTML = h;
+      Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-prj]"), function (el) { el.onclick = function () { ficheProjet(r.projets[+el.getAttribute("data-prj")].nom); }; });
+      if ($("pjGo")) $("pjGo").onclick = function () {
+        var nom = $("pjN").value.trim(); if (!nom) { $("pjM").textContent = "⛔ Nom du projet."; return; }
+        this.disabled = true; $("pjM").textContent = "⏳ Création…";
+        api({ api: "projets", op: "creer", nom: nom, caisse: $("pjC").value, debut: $("pjD").value, societe: $("pjS").value }, 60000).then(function (x) { alert("✅ " + x.message); afficherProjets(); },
+          function (e) { $("pjM").textContent = "⛔ " + e.message; $("pjGo").disabled = false; });
+      };
+    }, function (e) { $("vueListe").innerHTML = "<div class='carte'><p class='info'>⛔ " + esc(e.message) + " (réseau nécessaire)</p></div>"; });
+  }
+  function ficheProjet(nom) {
+    $("titre").textContent = nom; montrer("vueListe");
+    $("vueListe").innerHTML = "<div class='carte pleine'><h3>🏗️ " + esc(nom) + "</h3><p class='info'>⏳ Calcul du coût du projet…</p></div>";
+    api({ api: "projets", op: "fiche", projet: nom }, 180000).then(function (f) {
+      var RB = f.rubriquesListe, ligne = function (a, b, gras) { return "<div class='ligne' style='justify-content:space-between;margin:2px 0" + (gras ? ";font-weight:700;border-top:1px solid var(--bord);padding-top:4px" : "") + "'><span>" + a + "</span><span>" + b + "</span></div>"; };
+      var h = "<div class='carte pleine'><div class='ligne' style='justify-content:space-between'><h3 style='margin:0'>🏗️ " + esc(f.nom) + "</h3><button class='bouton second' id='pjRet' style='width:auto;margin:0'>‹ Projets</button></div>" +
+        "<div class='info'>" + (f.statut === "Clôturé" ? "✅ clôturé" : "🚧 en cours") + (f.caisse ? " · caisse " + esc(f.caisse) : "") + " · début " + prjFr(f.debut) + " · démarrage de l'activité : " + (f.demarrage ? prjFr(f.demarrage) : "<b>à renseigner</b>") +
+        " · " + f.nb + " dépense(s) du " + prjFr(f.premier) + " au " + prjFr(f.dernier) + (f.reprise ? " · dont reprise du journal Excel " + gnf(f.reprise) : "") + "</div></div>";
+      h += "<div class='carte'><h3>💰 Coût du projet" + (f.demarrage ? " (investissement jusqu'au " + prjFr(f.demarrage) + ")" : "") + "</h3>" +
+        RB.map(function (rb) { return f.rubriques[rb] ? ligne(esc(rb), gnf(f.rubriques[rb]) + " GNF") : ""; }).join("") +
+        ligne("Sous-total Fournitures", gnf(f.rubriques["Fournitures"]) + " GNF", true) + ligne("Sous-total Prestations", gnf(f.rubriques["Prestations"]) + " GNF") +
+        ligne("Autres rubriques", gnf(f.total - f.rubriques["Fournitures"] - f.rubriques["Prestations"]) + " GNF") + ligne("TOTAL", gnf(f.total) + " GNF", true) + "</div>";
+      if (f.totalCharges) h += "<div class='carte'><h3>📉 Charges après le démarrage (suivi)</h3>" + RB.map(function (rb) { return f.charges[rb] ? ligne(esc(rb), gnf(f.charges[rb]) + " GNF") : ""; }).join("") + ligne("Total charges", gnf(f.totalCharges) + " GNF", true) + "</div>";
+      // Amortissement (bail + construction fusionnés) : plan publié et suivi réel
+      var T = f.tableau, pl = f.plan;
+      h += "<div class='carte'><h3>📆 Amortissement (bail + construction)</h3>" + ligne("Investissement à amortir", gnf(pl ? pl.I : f.total) + " GNF", true);
+      if (pl) h += ligne("Plan en vigueur", "V" + pl.version + " du " + jourFr(pl.publie) + " · " + esc(pl.par)) + ligne("Charges fixes / mois", gnf(pl.C)) + ligne("Revenu / mois", gnf(pl.R)) +
+        ligne("Amortissement / mois (revenu − charges)", gnf(pl.R - pl.C)) + ligne("Durée", pl.N + " mois") + ligne("Reste à amortir (réel)", gnf(f.resteReel) + " GNF", true);
+      else h += "<div class='info'>Aucun plan publié : réglez la balance ci-dessous puis « Publier le plan ».</div>";
+      if (T && T.length) {
+        var an = {}; T.forEach(function (x) { var y = x.mois.substring(0, 4); an[y] = an[y] || { am: 0, rev: null, ch: null, reste: x.restePrev, rr: null }; var A = an[y]; A.am += x.amPrev; A.reste = x.restePrev; if (x.resteReel !== null) { A.rr = x.resteReel; A.rev = (A.rev || 0) + (x.rev || 0); A.ch = (A.ch || 0) + (x.ch || 0); } });
+        var th = function (t) { return "<th style='text-align:right'>" + t + "</th>"; }, td = function (v) { return "<td style='text-align:right'>" + (v === null || v === undefined ? "—" : gnf(v)) + "</td>"; };
+        h += "<table style='width:100%;border-collapse:collapse;font-size:13px;margin-top:6px'><tr><th style='text-align:left'>Année</th>" + th("Amorti prévu") + th("Revenu réel") + th("Charges réelles") + th("Reste prévu") + th("Reste réel") + "</tr>" +
+          Object.keys(an).sort().map(function (y) { var x = an[y]; return "<tr style='border-top:1px solid var(--bord)'><td>" + y + "</td>" + td(x.am) + td(x.rev) + td(x.ch) + td(x.reste) + td(x.rr) + "</tr>"; }).join("") + "</table>" +
+          "<details style='margin-top:6px'><summary>Suivi mensuel (prévu / réel)</summary><table style='width:100%;border-collapse:collapse;font-size:12px'><tr><th style='text-align:left'>Mois</th>" + th("Revenu prévu") + th("Revenu réel") + th("Charges prév.") + th("Charges réelles") + th("Reste prévu") + th("Reste réel") + "</tr>" +
+          T.map(function (x) { return "<tr style='border-top:1px solid var(--bord)'><td>" + prjMois(x.mois) + (x.version ? " <span class='info' style='margin:0'>V" + x.version + "</span>" : "") + "</td>" + td(x.revPrev) + td(x.rev) + td(x.chPrev) + td(x.ch) + td(x.restePrev) + td(x.resteReel) + "</tr>"; }).join("") + "</table></details>";
+        if (pl) h += "<div class='info'>Suivi écrit dans BASE, feuille « Suivi — " + esc(f.nom) + " » (mise à jour chaque nuit et à chaque ouverture). Revenus = encaissements des factures Commercial du projet « " + esc(f.nom) + " » ; charges = sorties de la caisse après le démarrage.</div>";
+      } else if (!f.demarrage) h += "<div class='info'>Renseignez la date de démarrage de l'activité pour obtenir le plan.</div>";
+      if (f.plans && f.plans.length > 1) h += "<details style='margin-top:6px'><summary>Historique des plans (" + f.plans.length + ")</summary>" + f.plans.slice().reverse().map(function (q) { return "<div class='info' style='margin:2px 0'>V" + q.version + " · " + jourFr(q.publie) + " · " + esc(q.par) + " · à partir de " + prjMois(q.aPartir) + " · charges " + gnf(q.C) + " · " + q.N + " mois · revenu " + gnf(q.R) + "</div>"; }).join("") + "</details>";
+      h += "</div>";
+      if (f.direction) {
+        var C0 = pl ? pl.C : f.C, N0 = pl ? pl.N : f.N || 24, R0 = pl ? pl.R : (f.R || Math.round(f.total / N0 + C0));
+        h += "<div class='carte'><h3>⚖️ Paramétrage (balance)</h3><div class='info'>Investissement : <b>" + gnf(f.total) + " GNF</b>. Saisissez les charges fixes, puis la durée : l'app calcule le revenu mensuel à atteindre. Ou saisissez le revenu que vous pouvez atteindre : l'app calcule la durée.</div>" +
+          "<div class='ligne'><div><label>Démarrage de l'activité</label><input id='pfD' type='date' value='" + esc(f.demarrage || "") + "'></div><div><label>Statut</label><select id='pfS'><option" + (f.statut !== "Clôturé" ? " selected" : "") + ">En cours</option><option" + (f.statut === "Clôturé" ? " selected" : "") + ">Clôturé</option></select></div></div>" +
+          "<label>Charges mensuelles fixes (GNF)</label><input id='pfC' inputmode='numeric' value='" + Math.round(C0) + "'>" +
+          "<div class='ligne'><div><label>Durée d'amortissement (mois)</label><input id='pfN' inputmode='numeric' value='" + N0 + "'></div><div><label>Revenu mensuel (GNF)</label><input id='pfR' inputmode='numeric' value='" + Math.round(R0) + "'></div></div>" +
+          "<div class='ligne' style='gap:6px'><button class='bouton second' id='pf24' style='width:auto'>24 mois</button><button class='bouton second' id='pf48' style='width:auto'>48 mois</button></div>" +
+          "<div class='info' id='pfBal'></div><div class='ligne'><button class='bouton second' id='pfGo'>💾 Enregistrer</button><button class='bouton' id='pfPub'>📤 Publier le plan</button></div><div class='info' id='pfM'></div></div>";
+      }
+      // Détail des dépenses par rubrique
+      h += "<div class='carte'><h3>🧾 Détail des dépenses</h3>" + RB.map(function (rb) {
+        var L = f.lignes.filter(function (x) { return x.rub === rb; }); if (!L.length) return "";
+        var sC = L.filter(function (x) { return x.charge; }).reduce(function (s, x) { return s + x.montant; }, 0);
+        return "<details><summary><b>" + esc(rb) + "</b> · " + L.length + " ligne(s) · " + gnf(L.reduce(function (s, x) { return s + x.montant; }, 0)) + " GNF" + (sC ? " (dont charges après démarrage " + gnf(sC) + ")" : "") + "</summary>" +
+          L.map(function (x) { return "<div class='ligne' style='justify-content:space-between;border-top:1px solid var(--bord);padding:3px 0;font-size:13px" + (x.charge ? ";opacity:.7" : "") + "'><span>" + prjFr(x.d) + " · " + esc(x.lib) + (x.no ? " · " + esc(x.no) : "") + " <span class='info' style='margin:0'>(" + esc(x.origine) + (x.charge ? ", charge" : "") + ")</span></span><span>" + gnf(x.montant) + "</span></div>"; }).join("") + "</details>";
+      }).join("") + "</div>";
+      $("vueListe").innerHTML = h;
+      $("pjRet").onclick = function () { afficherProjets(); };
+      if ($("pfC")) {
+        var I = f.total, num = function (id) { return +String($(id).value).replace(/[^0-9]/g, "") || 0; };
+        var bal = function () { var C = num("pfC"), N = num("pfN"), R = num("pfR"), am = R - C;
+          $("pfBal").innerHTML = am > 0 ? "Amortissement mensuel : <b>" + gnf(am) + "</b> GNF (revenu − charges) · investissement remboursé en <b>" + Math.ceil(I / am) + " mois</b>." : "⚠️ Le revenu doit dépasser les charges fixes."; };
+        var depuisN = function () { var N = num("pfN"); if (N > 0) $("pfR").value = Math.round(I / N + num("pfC")); bal(); };
+        var depuisR = function () { var am = num("pfR") - num("pfC"); if (am > 0) $("pfN").value = Math.ceil(I / am); bal(); };
+        $("pfN").oninput = depuisN; $("pfC").oninput = depuisN; $("pfR").oninput = depuisR;
+        $("pf24").onclick = function () { $("pfN").value = 24; depuisN(); }; $("pf48").onclick = function () { $("pfN").value = 48; depuisN(); };
+        bal();
+        var envoyerP = function (op, bt) {
+          bt.disabled = true; $("pfM").textContent = "⏳ " + (op === "publier" ? "Publication du plan…" : "Enregistrement…");
+          api({ api: "projets", op: op, projet: f.nom, demarrage: $("pfD").value, statut: $("pfS").value, C: num("pfC"), N: num("pfN"), R: num("pfR") }, 120000).then(function (r) { if (op === "publier") alert("✅ " + r.titre + "\n" + r.message); ficheProjet(f.nom); },
+            function (e) { $("pfM").textContent = "⛔ " + e.message; bt.disabled = false; });
+        };
+        $("pfGo").onclick = function () { envoyerP("maj", this); };
+        $("pfPub").onclick = function () { if (confirm("Publier le plan : charges " + gnf(num("pfC")) + " / mois, " + num("pfN") + " mois, revenu " + gnf(num("pfR")) + " / mois ?\nLe suivi mensuel sera écrit dans BASE.")) envoyerP("publier", this); };
+      }
+    }, function (e) { $("vueListe").innerHTML = "<div class='carte'><p class='info'>⛔ " + esc(e.message) + " (réseau nécessaire)</p></div>"; });
+  }
   function ouvrirDemandeFin(no) {
     var F = S.fin, d = F && F.demandes.filter(function (x) { return x.no === no; })[0];
     if (!d) { afficherFinances(); return; }
@@ -1269,7 +1390,7 @@
       ligne("Objet", esc(d.objet)) + ligne("Mode", esc(d.mode)) + ligne("Compte", esc(d.compte) + (d.contrepartie ? " → " + esc(d.contrepartie) : "")) +
       ligne("Personnel", esc(d.personnel) + (d.motifRH ? " · " + esc(d.motifRH) : "")) +
       ligne("Achat", d.achat && d.achat.usage && !d.achat.nature ? esc("⚡ Utilisation directe · " + d.achat.usage.type + (d.achat.usage.ref ? " : " + d.achat.usage.ref : "")) : d.achat ? esc(d.achat.nature + " · " + (d.achat.article || d.achat.designation || (d.achat.articles || []).join(", ")) + (d.achat.quantite ? " · qté " + d.achat.quantite : "") + (d.achat.magasin ? " · 🏬 " + d.achat.magasin : "")) + (d.achatId ? " [" + esc(d.achatId) + "]" : "") : "") +
-      ligne("Pour le compte de", d.pourCompte ? "<b>" + esc(d.pourCompte) + "</b> (dette envers " + esc(d.societe) + ")" : "") + ligne("Bénéficiaire", esc(d.beneficiaire)) + ligne("Catégorie", esc(d.categorie)) + ligne(d.type === "Paiement RH" ? "Équivalent" : "Reçu", d.recu ? gnf(d.recu) + " " + esc(d.deviseRecue) : "") +
+      ligne("Projet", d.projet ? "🏗️ " + esc(d.projet) : "") + ligne("Pour le compte de", d.pourCompte ? "<b>" + esc(d.pourCompte) + "</b> (dette envers " + esc(d.societe) + ")" : "") + ligne("Bénéficiaire", esc(d.beneficiaire)) + ligne("Catégorie", esc(d.categorie)) + ligne(d.type === "Paiement RH" ? "Équivalent" : "Reçu", d.recu ? gnf(d.recu) + " " + esc(d.deviseRecue) : "") +
       (d.type === "Paiement RH" && d.motifRH === "SALAIRE (RH)" ? ligne("Mois", d.dateEffet ? moisLib(d.dateEffet) : "")
         : ligne("Date d'effet", d.dateEffet ? "<b>" + jourFr(d.dateEffet) + "</b>" : d.statut === "Exécutée" ? "= date d'exécution" : "")) +
       ligne("Exécutée le", d.execute ? dateCourte(d.execute) : "") +
@@ -1634,6 +1755,7 @@
       "<div id='ffProjB'><label>Projet / affectation (facultatif)</label><input id='ffProj' list='ffProjL' value='" + esc(fourSrc && fourSrc.projet ? fourSrc.projet : "") + "' placeholder='ex. Dépôt Nongo, Entretien et réparation Imprimerie'><datalist id='ffProjL'>" +
         (F.projets || []).map(function (x) { return "<option value='" + esc(x) + "'>"; }).join("") + "</datalist></div>" +
       "<div id='ffPcB'><label>Pour le compte de</label><select id='ffPc'><option value=''>— elle-même —</option>" + (F.pourCompte || ["CASAFINO"]).map(function (x) { return "<option" + (x === src.pourCompte ? " selected" : "") + ">" + esc(x) + "</option>"; }).join("") + "</select></div></div>" +
+      "<div id='ffPrjB'><label>Imputé au projet (facultatif)</label><select id='ffPrjI'><option value=''>— aucun —</option>" + (F.projets || []).map(function (q) { return "<option" + (q.nom === src.projet ? " selected" : "") + ">" + esc(q.nom) + "</option>"; }).join("") + "</select><div class='info' id='ffPrjH'></div></div>" +
       "<div id='ffRhB'><div class='ligne'><div><label>Personnel</label><select id='ffPers'>" + opts(F.personnel || [], src.personnel, "— choisir —") + "</select></div>" +
       "<div><label>Motif</label><select id='ffMotRH'>" + opts(F.motifsRH || [], src.motifRH, "— choisir —") + "</select></div></div>" +
       "<div id='ffMoisB'><label>Mois du salaire</label><input id='ffMois' type='month' value='" + (src.dateEffet ? new Date(src.dateEffet).toISOString().slice(0, 7) : "") + "'></div><div id='apPers'></div></div>" +
@@ -1784,6 +1906,9 @@
       // Société payeuse : libre (c'est le règlement qui choisit la source). Compte d'une société bénéficiaire payé par une autre → « pour le compte de » imposé (🔁 Inter-sociétés).
       $("ffSoc").disabled = false;
       vis("ffPcB", !achat && !regl && t === "Dépense de caisse");
+      vis("ffPrjB", t !== "Mouvement de trésorerie" && t !== "Facture d'achat" && (F.projets || []).length > 0);
+      (function () { var q = (F.projets || []).filter(function (z) { return z.nom === v("ffPrjI"); })[0], pay = achat ? payeurAchat(t) : v("ffSoc");
+        $("ffPrjH").textContent = q && on("ffPrjB") ? "🏗️ Coût du projet " + q.nom + (pay && q.societe && pay !== q.societe ? " · payé par " + pay + " pour " + q.societe + " (propriétaire) → dette en 🔁 Inter-sociétés" : "") : ""; })();
       if (achat) { var pay0 = payeurAchat(t); $("ffPc").value = pay0 !== v("ffSoc") ? v("ffSoc") : ""; }
       else if (fc && fc.societe && on("ffFourB")) { $("ffPc").value = fc.societe === v("ffSoc") ? "" : fc.societe; $("ffPc").disabled = true; }
       else { if (v("ffPc") === v("ffSoc")) $("ffPc").value = ""; $("ffPc").disabled = false; }
@@ -1865,7 +1990,7 @@
       $("ffRegle").innerHTML = "🔐 Validation : <b>" + regle + "</b> · 📷 " + photo + (t !== "Facture d'achat" && t !== "Opération constatée" && F.role !== "DG" ? ((t === "Mouvement de trésorerie" && (op === "Retrait" || op === "Transfert entre caisses")) || (t === "Règlement fournisseur" && mode === "Chèque" && cat === "Commission") || cat === "Commission" ? " · clôture sans autre pièce (le chèque / justificatif joint suffit)" : " · preuve du paiement à joindre après validation" + (t === "Dépense de caisse" ? " (facultative)" : "")) : "");
       $("ffEnv").textContent = t === "Opération constatée" ? "📒 Enregistrer" : "📤 Envoyer la demande";
     }
-    ["ffType", "ffPiece", "ffPay", "ffPayS", "ffDest", "ffRegM", "ffRegS", "ffRegP", "ffAvS", "ffOp", "ffOc", "ffDev", "ffSoc", "ffPc", "ffFourC", "ffMode", "ffFact", "ffCpt", "ffCtp", "ffCat", "ffAN", "ffAUs", "ffAUt", "ffACat", "ffACatN", "ffPers", "ffMotRH"].forEach(function (id) { $(id).onchange = maj; });
+    ["ffType", "ffPiece", "ffPay", "ffPayS", "ffDest", "ffRegM", "ffRegS", "ffRegP", "ffAvS", "ffOp", "ffOc", "ffDev", "ffSoc", "ffPc", "ffFourC", "ffMode", "ffFact", "ffCpt", "ffCtp", "ffCat", "ffAN", "ffAUs", "ffAUt", "ffACat", "ffACatN", "ffPers", "ffMotRH", "ffPrjI"].forEach(function (id) { $(id).onchange = maj; });
     $("ffPayS").onchange = function () { payManuel = true; maj(); };
     ["ffMt", "ffTaux", "ffFour", "ffProj"].forEach(function (id) { $(id).oninput = maj; });
     maj();
@@ -1873,7 +1998,7 @@
       var tU = v("ffType"), achat = tU === "Achat fournisseur", avecF = v("ffPiece") === "Avec facture", m = $("ffMsg");
       var t = achat ? (v("ffPay") === "À payer plus tard" ? "Facture d'achat" : "Règlement fournisseur") : tU;
       var op = achat ? (t === "Règlement fournisseur" ? "Achat comptant" : avecF ? "" : "Sans facture") : t === "Mouvement de trésorerie" ? v("ffOp") : t === "Opération constatée" ? v("ffOc") : "";
-      var s = { no: src.no, type: t, op: op, societe: achat ? payeurAchat(t) : v("ffSoc"), pourCompte: achat ? v("ffPc") : on("ffPcB") ? v("ffPc") : "",
+      var s = { no: src.no, type: t, op: op, societe: achat ? payeurAchat(t) : v("ffSoc"), pourCompte: achat ? v("ffPc") : on("ffPcB") ? v("ffPc") : "", projet: on("ffPrjB") ? v("ffPrjI") : "",
         fourRaison: achat || estAvance() ? (comptesDe(v("ffFour")).length ? fourRaison(comptesDe(v("ffFour"))[0]) : v("ffFour").trim()) : "", fourSociete: achat ? v("ffSoc") : estAvance() ? v("ffAvS") : "", fourProjet: achat || estAvance() ? v("ffProj").replace(/\s+/g, " ").trim() : "", fournisseur: on("ffFourB") ? compteChoisi() : "", facture: t === "Règlement fournisseur" && !achat ? v("ffFact") : "",
         refFacture: achat && avecF ? v("ffRef") : "", echeance: t === "Facture d'achat" ? v("ffEch") : "", objet: v("ffObj"), montant: nb(v("ffMt")), devise: v("ffDev"), taux: nb(v("ffTaux")),
         mode: on("ffModeB") ? v("ffMode") : t === "Dépense de caisse" ? "Espèces" : "", compte: t === "Facture d'achat" ? "" : v("ffCpt"), contrepartie: on("ffCtpB") ? v("ffCtp") : "",
@@ -4118,13 +4243,17 @@
     function couleur(pc) { return pc >= 100 ? "#2e7d32" : pc > 0 ? "#e67e22" : "#b0b0b0"; }
     function barre(pc, w) { return "<div style='flex:" + (w ? "0 0 " + w : "1") + ";height:9px;background:var(--bord);border-radius:6px;overflow:hidden'><div style='height:100%;width:" + pc + "%;background:" + couleur(pc) + "'></div></div>"; }
     function pcLot(x) { return x.fini >= x.nb ? 100 : Math.round((x.ratio || 0) * 100); }
+    function jj(t) { var d = new Date(t); return ("0" + d.getDate()).slice(-2) + "/" + ("0" + (d.getMonth() + 1)).slice(-2); }
+    function estCourt(e) { return e ? "<span class='info' style='margin:0;white-space:nowrap' title='Fin estimée le " + jj(e.fin) + "'>⏱️ ≈ " + e.j + " j" + (e.partiel ? "+" : "") + "</span>" : ""; }
+    function estLong(e, quoi) { return e ? "⏱️ Fin estimée " + quoi + " : <b>" + jj(e.fin) + "</b> (≈ " + e.j + " jour" + (e.j > 1 ? "s" : "") + " ouvré" + (e.j > 1 ? "s" : "") + (e.goulot ? ", étape la plus chargée : " + esc(e.goulot) : "") + ")" + (e.partiel ? " — au moins : certaines étapes n'ont pas encore de cadence connue" : "") : ""; }
     function niv(x) { return typeof x.niveau === "number" ? x.niveau : Math.max(0, String(x.cle).length - 1); }
     function pastilles(x) { return x.etapes.map(function (e) { return "<span title='" + esc(e.nom + (e.texte ? " · " + e.texte : "")) + "' style='display:inline-block;width:14px;height:14px;line-height:14px;text-align:center;font-size:10px;border-radius:50%;margin-right:2px;color:#fff;background:" + C[e.st] + "'>" + (e.st === "ok" ? "✓" : e.st === "cours" ? "●" : "") + "</span>"; }).join(""); }
     // Groupes : un lot de niveau 0 (A, B, C…) ouvre un groupe ; ses sous-lots (A1, A11…) le suivent.
     function groupes(lots) {
       var G = [];
       lots.forEach(function (x) { if (!G.length || niv(x) === 0) G.push({ cle: x.cle, lots: [] }); G[G.length - 1].lots.push(x); });
-      G.forEach(function (g) { g.pc = Math.round(g.lots.reduce(function (t, x) { return t + pcLot(x); }, 0) / g.lots.length); g.finis = g.lots.filter(function (x) { return pcLot(x) >= 100; }).length; });
+      G.forEach(function (g) { g.pc = Math.round(g.lots.reduce(function (t, x) { return t + pcLot(x); }, 0) / g.lots.length); g.finis = g.lots.filter(function (x) { return pcLot(x) >= 100; }).length;
+        g.est = null; g.lots.forEach(function (x) { if (x.est && (!g.est || x.est.j > g.est.j)) g.est = x.est; }); });
       return G;
     }
     // Récapitulatif par étape (tous lots et sous-lots) : réalisé / restant en lots, passages et unités.
@@ -4137,7 +4266,8 @@
         b.recap.map(function (e) {
           var pc = e.valid ? (e.lots ? Math.round(e.lotsF / e.lots * 100) : 0) : e.uP ? Math.round(e.uF / e.uP * 100) : (e.pP ? Math.round(e.pF / e.pP * 100) : 0);
           if (e.lotsF >= e.lots) pc = 100;
-          return "<tr style='border-top:1px solid var(--bord)'><td style='padding:3px 6px;white-space:nowrap'><span style='color:" + couleur(pc) + "'>" + (pc >= 100 ? "✓" : pc > 0 ? "●" : "○") + "</span> " + esc(e.nom) + "</td>" +
+          return "<tr style='border-top:1px solid var(--bord)'><td style='padding:3px 6px;white-space:nowrap'><span style='color:" + couleur(pc) + "'>" + (pc >= 100 ? "✓" : pc > 0 ? "●" : "○") + "</span> " + esc(e.nom) +
+            (e.cad && pc < 100 ? " <small style='color:var(--doux)' title='Cadence : " + esc(e.cad.src) + "'>· " + gnf(e.cad.v) + "/j</small>" : "") + "</td>" +
             "<td style='padding:3px 6px;white-space:nowrap'>" + rr(e.lotsF, e.lots) + "</td>" +
             "<td style='padding:3px 6px;white-space:nowrap'>" + (e.valid ? "—" : rr(e.pF, e.pP)) + "</td>" +
             "<td style='padding:3px 6px;white-space:nowrap'>" + (e.valid || !e.uP ? "—" : rr(e.uF, e.uP, e.unite)) + "</td>" +
@@ -4159,7 +4289,8 @@
         var t = "<div data-k='" + esc(kb) + "' style='cursor:pointer;padding:10px 12px;border-bottom:1px solid var(--bord)'>" +
           "<div class='ligne' style='gap:8px;align-items:center'><span style='flex:0 0 14px'>" + (ob ? "▼" : "▶") + "</span><b style='flex:1;min-width:0'>📄 " + esc(b.bdc) + "</b><b style='flex:0;white-space:nowrap;color:" + couleur(pc) + "'>" + (b.termine ? "✔" : pc + " %") + "</b></div>" +
           "<div class='ligne' style='gap:8px;align-items:center;margin:6px 0 0 22px'>" + barre(pc) + "</div>" +
-          "<div class='info' style='margin-left:22px'>" + nf + " / " + b.lots.length + " lot(s) terminé(s)" + (b.commande ? " · livré " + gnf(b.livre) + " / " + gnf(b.commande) : "") + (b.dernier ? " · dernier scan " + dateCourte(b.dernier) : "") + "</div>" + recapEtapes(b) + "</div>";
+          "<div class='info' style='margin-left:22px'>" + nf + " / " + b.lots.length + " lot(s) terminé(s)" + (b.commande ? " · livré " + gnf(b.livre) + " / " + gnf(b.commande) : "") + (b.dernier ? " · dernier scan " + dateCourte(b.dernier) : "") + "</div>" +
+          (b.est && !b.termine ? "<div class='info' style='margin-left:22px'>" + estLong(b.est, "du BDC") + "</div>" : "") + recapEtapes(b) + "</div>";
         if (!ob) return t;
         var G = groupes(b.lots), caches = 0;
         t += G.map(function (g) {
@@ -4169,14 +4300,14 @@
           var r = "<div data-k='" + esc(kg) + "' style='cursor:pointer;padding:8px 12px 8px 34px;border-bottom:1px solid var(--bord);background:var(--fond)'>" +
             "<div class='ligne' style='gap:8px;align-items:center'><span style='flex:0 0 14px'>" + (og ? "▼" : "▶") + "</span><b style='flex:0 0 auto'>" + esc(g.cle) + "</b>" +
             "<span class='info' style='flex:0 0 auto;margin:0'>(" + g.lots.length + " lot" + (g.lots.length > 1 ? "s" : "") + (g.finis ? ", " + g.finis + " ✔" : "") + ")</span>" + barre(g.pc) +
-            "<b style='flex:0 0 44px;text-align:right;color:" + couleur(g.pc) + "'>" + g.pc + " %</b></div></div>";
+            estCourt(g.pc < 100 ? g.est : null) + "<b style='flex:0 0 44px;text-align:right;color:" + couleur(g.pc) + "'>" + g.pc + " %</b></div></div>";
           if (og) r += vis.map(function (x) {
             var kl = kg + "|" + x.cle, p2 = pcLot(x), od = !!AVC.det[kl];
             return "<div data-d='" + esc(kl) + "' style='cursor:pointer;padding:6px 12px 6px " + (56 + Math.max(0, niv(x) - 1) * 12) + "px;border-bottom:1px solid var(--bord)'>" +
               "<div class='ligne' style='gap:8px;align-items:center'><b style='flex:0 0 46px'>" + esc(x.cle) + "</b><span style='flex:1;white-space:nowrap'>" + pastilles(x) + "</span>" +
-              "<b style='flex:0 0 44px;text-align:right;color:" + couleur(p2) + "'>" + p2 + " %</b></div>" +
+              (p2 < 100 ? estCourt(x.est) : "") + "<b style='flex:0 0 44px;text-align:right;color:" + couleur(p2) + "'>" + p2 + " %</b></div>" +
               (od ? "<div class='info' style='margin:4px 0 0'>" + esc(x.designation) + (x.quantite ? " · " + gnf(x.quantite) : "") + " · " + x.fini + "/" + x.nb + " étapes" +
-                (x.dernier ? "<br>Dernier : " + esc(x.dernier.poste) + " " + esc(x.dernier.evenement) + " (" + esc(x.dernier.operateur) + ", " + dateCourte(x.dernier.date) + ")" : "") + "<br>" +
+                (x.est && p2 < 100 ? "<br>" + estLong(x.est, "du sous-lot") : "") + (x.dernier ? "<br>Dernier : " + esc(x.dernier.poste) + " " + esc(x.dernier.evenement) + " (" + esc(x.dernier.operateur) + ", " + dateCourte(x.dernier.date) + ")" : "") + "<br>" +
                 x.etapes.map(function (e) { return "<span style='color:" + C[e.st] + "'>" + (e.st === "ok" ? "✓" : e.st === "cours" ? "●" : "○") + " " + esc(e.nom) + (e.st === "cours" && e.texte ? " · " + esc(e.texte) : "") + "</span>"; }).join(" &nbsp; ") + "</div>" : "") + "</div>";
           }).join("");
           return r;
@@ -4185,14 +4316,15 @@
         return t;
       }).join("") || "<p class='info' style='padding:0 12px'>" + (R ? "Aucun BDC en cours." : "Réseau nécessaire.") + "</p>") + "</div>";
       $("vueListe").innerHTML = h; montrer("vueListe");
+      if (AVC.y !== undefined) { window.scrollTo(0, AVC.y); AVC.y = undefined; }
       $("avQ").onchange = function () { AVC.q = $("avQ").value; dessiner(""); };
       $("avT").onchange = function () { AVC.termines = $("avT").checked; dessiner(""); };
       $("avL").onchange = function () { AVC.lotsFinis = $("avL").checked; dessiner(""); };
-      Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-k]"), function (el) { el.onclick = function () { var k = el.getAttribute("data-k"); AVC.ouv[k] = !AVC.ouv[k]; dessiner(""); }; });
-      Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-d]"), function (el) { el.onclick = function () { var k = el.getAttribute("data-d"); AVC.det[k] = !AVC.det[k]; dessiner(""); }; });
+      Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-k]"), function (el) { el.onclick = function () { var k = el.getAttribute("data-k"); AVC.ouv[k] = !AVC.ouv[k]; AVC.y = window.scrollY; dessiner(""); }; });
+      Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-d]"), function (el) { el.onclick = function () { var k = el.getAttribute("data-d"); AVC.det[k] = !AVC.det[k]; AVC.y = window.scrollY; dessiner(""); }; });
     }
     dessiner(AVC.data ? "mise à jour…" : "⏳ chargement…");
-    api({ api: "suiviAtelier", vue: "avancement" }, 90000).then(function (r) { AVC.data = r; dessiner(""); }, function (e) { dessiner("⛔ " + e.message + " (réseau nécessaire)"); });
+    api({ api: "suiviAtelier", vue: "avancement" }, 90000).then(function (r) { AVC.data = r; AVC.y = window.scrollY; dessiner(""); }, function (e) { dessiner("⛔ " + e.message + " (réseau nécessaire)"); });
   }
 
   /* ---------- 📊 Répartition (DG, WALID) : événements, factures (cascade), commissions par bénéficiaire, balances, paramètres ---------- */
@@ -5949,6 +6081,7 @@
 
   $("btnNotifs").onclick = function () { AIDE.ctx = "notifs"; afficherNotifs(); };
   $("btnAide").onclick = function () { afficherAide($("vueAccueil").style.display === "block" ? "" : AIDE.ctx); };
+  if ($("btnAccueil")) $("btnAccueil").onclick = function () { montrer("vueAccueil"); };
   $("btnRetour").onclick = function () {
     if (FM_OUVERT && $("vueLot").style.display !== "none" && !S.lotOuvert) { var id = FM_OUVERT; FM_OUVERT = null; ouvrirSaisieBDC(id); return; }
     FM_OUVERT = null;
