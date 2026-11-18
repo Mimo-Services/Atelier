@@ -182,8 +182,11 @@
   @media (max-width: 600px) {
     :root { --hh: 100px; }
     header { flex-wrap: wrap; align-content: center; row-gap: 4px; column-gap: 6px; }
-    header .titres { flex: 1 1 calc(100% - 110px); }
-    header h1 { font-size: 21px; }
+    header .titres { flex: 1 1 calc(100% - 170px); min-width: 0; }
+    header h1 { font-size: 17px; }
+    header .sous { font-size: 11.5px; }
+    #btnRetour, #btnAccueil { padding: 4px 4px; font-size: 20px; }
+    header .logo { width: 30px; height: 30px; }
     #etatReseau { margin-right: auto; }
     header button { padding: 4px 8px; }
   }
