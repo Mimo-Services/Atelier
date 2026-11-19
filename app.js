@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-18 MC";
+  var VERSION_APP = "2026-11-19 MD";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -1514,6 +1514,11 @@
     if (d.type !== "Opération constatée" && ((avantV && role) || (apresV && role === "DG"))) {
       A.insertAdjacentHTML("beforeend", "<div class='carte'><button class='bouton second' id='fnDirMod'>✏️ Modifier (" + esc(role) + ")</button><div class='info'>" + (avantV ? "Avant validation : Walid ou le DG corrigent directement." : "Après validation : seul le DG modifie.") + "</div></div>");
       $("fnDirMod").onclick = function () { formulaireDirection(d); };
+      if (apresV && role === "DG") {   // 🗑️ validée par erreur, pas encore exécutée : annulation directe par le DG
+        A.insertAdjacentHTML("beforeend", "<div class='carte'><button class='bouton second' id='fnDgAnn' style='color:#ff8a80'>🗑️ Annuler la demande (validée par erreur)</button><div class='info'>Pas encore exécutée : rien n'est écrit dans Base. La demande passe « Annulée » ; Walid et le demandeur sont prévenus.</div></div>");
+        $("fnDgAnn").onclick = function () { var m = prompt("Annuler " + d.no + " (" + gnf(d.gnf || d.montant) + " " + (d.devise || "GNF") + ") — motif :", "Validée par erreur"); if (m === null) return; if (!m.trim()) { alert("Motif obligatoire."); return; }
+          envoyerFin("annuler", { no: d.no, version: d.version, commentaire: m.trim() }, "Annulation " + d.no, d.no); };
+      }
     } else if (role === "Walid" && d.statut === "À exécuter" && !(d.proposition && !d.proposition.etat)) {
       A.insertAdjacentHTML("beforeend", "<div class='carte'><h3>Changer l'opération (accord du DG)</h3><div class='ligne'><button class='bouton second' id='fnPm'>✏️ Demander une modification</button>" +
         "<button class='bouton second' id='fnPa'>🗑️ Demander l'annulation</button></div><div class='info'>Modification : montant, comptes, objet… <b>sans changer la pièce jointe</b>. " +
