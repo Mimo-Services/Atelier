@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-21 ME";
+  var VERSION_APP = "2026-11-21 MF";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -3917,12 +3917,13 @@
           }).join("");
         });
       }
-      var bt = T ? ("<div class='carte pleine'><div class='ligne' style='flex-wrap:wrap;gap:6px'>" + (T.tous ? "<button class='bouton' id='trAH' style='width:auto;flex:0 0 auto;margin:0'>📥 Relevés de la semaine</button><button class='bouton' id='trAB' style='width:auto;flex:0 0 auto;margin:0'>🔎 Audit bancaire</button>" : "") +
+      var bt = T ? ("<div class='carte pleine'><div class='ligne' style='flex-wrap:wrap;gap:6px'>" + (T.tous ? "<button class='bouton' id='trAH' style='width:auto;flex:0 0 auto;margin:0'>📥 Relevés de la semaine</button><button class='bouton' id='trAB' style='width:auto;flex:0 0 auto;margin:0'>🔎 Audit bancaire</button><button class='bouton' id='trAN' style='width:auto;flex:0 0 auto;margin:0;background:#8e2a2a'>⚠️ Anomalies à corriger</button>" : "") +
         (T.comptes.some(function (c) { return c.type === "Caisse"; }) ? "<button class='bouton' id='trAC' style='width:auto;flex:0 0 auto;margin:0'>💵 Audit de caisse</button>" : "") +
         "<button class='bouton second' id='trAL' style='width:auto;flex:0 0 auto;margin:0'>📋 Historique des audits</button>" + (T.tous ? "<button class='bouton second' id='trAR' style='width:auto;flex:0 0 auto;margin:0'>⚙️ Prélèvements récurrents</button>" : "") + "</div></div>") : "";
       $("vueListe").innerHTML = bt + h; montrer("vueListe");
       if ($("trAB")) $("trAB").onclick = function () { afficherAudit("banque"); };
       if ($("trAH")) $("trAH").onclick = function () { afficherAudit("hebdo"); };
+      if ($("trAN")) $("trAN").onclick = function () { afficherAudit("anomalies"); };
       if ($("trAC")) $("trAC").onclick = function () { afficherAudit("caisse"); };
       if ($("trAL")) $("trAL").onclick = function () { afficherAudit("liste"); };
       if ($("trAR")) $("trAR").onclick = function () { AUD.edit = null; afficherAudit("regles"); };
@@ -4803,7 +4804,7 @@
     if (d.vue === "missions" && droitMis()) { afficherMis(d.id); return true; }
     if (d.vue === "stockval" && droitStockVal()) { afficherStockVal(d.id); return true; }
     if (d.vue === "magasins") { afficherMagasins(""); return true; }
-    if (d.vue === "audit") { afficherAudit("hebdo"); return true; }
+    if (d.vue === "audit") { afficherAudit(d.sous === "anomalies" ? "anomalies" : "hebdo"); return true; }
     montrer("vueAccueil"); return true;
   }
   // Demande d'ouverture laissée par le service worker (notification touchée) : traitée une seule fois, si récente (2 min).
@@ -5106,6 +5107,32 @@
     R.pointees.push({ i: x.i, d: x.d, lib: x.lib, montant: x.montant, base: "➕ écriture créée" });
     (R.associees = R.associees || []).push(x.d + " · " + x.lib.substring(0, 60) + " · " + gnf(x.montant) + " → ➕ écriture créée dans Base");
   }
+  function audACorr(d) {
+    if (!d) return false; if (/^À corriger/.test(d.statut)) return true;
+    if (!/^Audité/.test(d.statut) || d.anomalies) return false;
+    var m = String(d.resultat || "").match(/écart\s*([-\d\s\u00a0\u202f]+)[^·]*·\s*(\d+)\s*sur le relevé seul\s*·\s*(\d+)\s*dans Base seule/);
+    return !!(m && (Math.abs(+m[1].replace(/[^\d-]/g, "") || 0) > 1 || +m[2] || +m[3]));
+  }
+  function audNbAnom(d) { var A = d && d.anomalies; return A ? A.releve.length + A.base.length : 0; }
+  function audListeAnom(A) {
+    if (!A) return "";
+    var ln = function (x, quoi) { return "<div class='ligne' style='justify-content:space-between;border-top:1px solid var(--bord);padding:3px 0;font-size:12.5px'><span>" + esc(String(x.d).split("-").reverse().join("/")) + " · " + esc(x.lib) + " <span class='info' style='margin:0'>(" + quoi + ")</span></span><b style='white-space:nowrap;color:" + (x.m < 0 ? "#ff8a80" : "#b9f6ca") + "'>" + gnf(x.m) + "</b></div>"; };
+    return "<details style='margin:4px 0'><summary class='info' style='margin:0;cursor:pointer'>Écart " + (A.ecart === null ? "—" : gnf(A.ecart)) + " · " + A.releve.length + " sur le relevé, absentes de Base · " + A.base.length + " dans Base, absentes du relevé</summary>" +
+      A.releve.map(function (x) { return ln(x, "relevé seul"); }).join("") + A.base.map(function (x) { return ln(x, "Base seule"); }).join("") + "</details>";
+  }
+  // Audit d'un relevé déposé cette semaine : mêmes actions que l'audit bancaire (créer l'écriture, récurrent, regrouper, associer).
+  function ouvrirAuditDepot(c, b) {
+    if (b) { b.disabled = true; b.textContent = "⏳…"; }
+    api({ api: "audit", op: "lignesDepot", compte: c.nom }, 120000).then(function (r) { if (!r.ok) { alert("⛔ " + r.message); if (b) b.disabled = false; return; }
+      AUD.compte = c.nom; AUD.lignes = r.lignes; AUD.fichier = r.fichier; AUD.fichierData = null; AUD.depuisDepot = true; AUD.lien = (c.depot && c.depot.lien) || ""; AUD.res = null; afficherAudit("banque"); if ($("abGo")) $("abGo").click(); },
+      function (e) { alert("⛔ " + e.message); if (b) b.disabled = false; });
+  }
+  // Après des corrections dans l'audit d'un relevé déposé : nouvelle analyse avant d'afficher les relevés / anomalies.
+  function audReanalyserSiBesoin() {
+    if (!(AUD.depuisDepot && AUD.compte && AUD.res)) return Promise.resolve();
+    var c = AUD.compte; AUD.depuisDepot = false;
+    return api({ api: "audit", op: "reanalyser", compte: c }, 240000).then(function () {}, function () {});
+  }
   function afficherAudit(vue) {
     if (vue !== undefined) { AUD.vue = vue; AUD.msg = ""; }
     var T = S.treso || { comptes: [] }, B = T.comptes.filter(function (c) { return c.type === "Banque" && !c.perso; }), Cs = T.comptes.filter(function (c) { return c.type === "Caisse"; });
@@ -5147,6 +5174,24 @@
       }, function (e) { $("vueListe").innerHTML = "<div class='carte'><p class='info'>⛔ " + esc(e.message) + "</p></div>"; });
       return;
     }
+    if (AUD.vue === "anomalies") {   // ⚠️ Anomalies à corriger : tous les comptes dont le dernier audit de la semaine laisse un écart ou des lignes non rapprochées
+      $("titre").textContent = "Anomalies à corriger";
+      $("vueListe").innerHTML = "<div class='carte pleine'><h3>⚠️ Anomalies à corriger</h3><p class='info'>⏳ Chargement…</p></div>"; montrer("vueListe");
+      audReanalyserSiBesoin().then(function () { return api({ api: "audit", op: "hebdo" }, 60000); }).then(function (E) {
+        var L = E.comptes.filter(function (c) { return audACorr(c.depot); });
+        var h = "<div class='carte pleine'><h3>⚠️ Anomalies à corriger</h3><div class='info'>" + (L.length ? L.length + " compte(s) · semaine du " + String(E.semaine).split("-").reverse().join("/") + ". Corrigez dans l'audit du compte : la liste se met à jour au retour." : "✅ Aucune anomalie : tous les relevés audités cette semaine sont à écart 0.") + "</div></div>";
+        h += L.map(function (c, i) { var A = c.depot.anomalies;
+          return "<div class='carte' style='border-color:#c62828'><div class='ligne' style='justify-content:space-between'><b>🏦 " + esc(c.nom) + "</b><b style='color:#ff8a80'>" + (A ? audNbAnom(c.depot) + " anomalie(s) · écart " + (A.ecart !== null ? gnf(A.ecart) : "—") : esc(c.depot.resultat)) + "</b></div>" +
+            "<div class='info' style='margin:2px 0'>Relevé du " + esc(c.depot.du) + " au " + esc(c.depot.au) + (c.depot.lien ? " · <a href='" + esc(c.depot.lien) + "' target='_blank' rel='noopener'>📎 copie</a>" : "") + "</div>" +
+            audListeAnom(A).replace("<details ", "<details open ") +
+            "<div class='ligne' style='gap:6px'><button class='bouton' data-anc='" + i + "' style='width:auto;margin:0'>🔧 Corriger</button><button class='bouton second' data-anr='" + i + "' style='width:auto;margin:0'>↻ Réanalyser</button></div></div>"; }).join("");
+        $("vueListe").innerHTML = h; montrer("vueListe");
+        Array.prototype.forEach.call(document.querySelectorAll("[data-anc]"), function (b) { b.onclick = function () { ouvrirAuditDepot(L[+b.getAttribute("data-anc")], b); }; });
+        Array.prototype.forEach.call(document.querySelectorAll("[data-anr]"), function (b) { b.onclick = function () { b.disabled = true; b.textContent = "⏳…";
+          api({ api: "audit", op: "reanalyser", compte: L[+b.getAttribute("data-anr")].nom }, 240000).then(function () { afficherAudit("anomalies"); }, function (e) { alert("⛔ " + e.message); b.disabled = false; }); }; });
+      }, function (e) { $("vueListe").innerHTML = "<div class='carte'><p class='info'>⛔ " + esc(e.message) + " (réseau nécessaire)</p></div>"; });
+      return;
+    }
     if (AUD.vue === "hebdo") {   // 📥 Relevés de la semaine : un dépôt par compte bancaire ; audit automatique quand tout est là
       $("vueListe").innerHTML = "<div class='carte pleine'><h3>📥 Relevés de la semaine</h3><p class='info'>⏳ Chargement…</p></div>"; montrer("vueListe");
       var dessinerH = function (E) {
@@ -5157,25 +5202,24 @@
           (E.enCours ? " ⏳ Audit automatique en cours (rapport par notification)." : E.dernierAuto ? " Dernier audit automatique : " + dateCourte(E.dernierAuto) + "." : "") +
           " Dès que tous les relevés sont déposés, l'audit se lance seul en arrière-plan.</div>" +
           "<button class='bouton second' id='ahGo' style='width:auto;margin:6px 0 0'" + (E.comptes.some(function (c) { return c.depot && c.depot.statut === "Déposé"; }) ? "" : " disabled") + ">▶️ Lancer l'audit automatique maintenant</button></div>";
-        h += E.comptes.map(function (c, i) { var d = c.depot, st = !d ? "⏳ à déposer" : d.statut === "Sans relevé" ? "⏭️ sans relevé" : d.statut === "Aucun mouvement" ? "🚫 aucun mouvement (audité)" : d.statut === "Déposé" ? "📄 déposé, en attente d'audit" : d.statut === "Erreur" ? "⛔ erreur" : "✅ " + d.statut.toLowerCase();
+        h += E.comptes.map(function (c, i) { var d = c.depot, st = !d ? "⏳ à déposer" : d.statut === "Sans relevé" ? "⏭️ sans relevé" : d.statut === "Aucun mouvement" ? "🚫 aucun mouvement (audité)" : d.statut === "Déposé" ? "📄 déposé, en attente d'audit" : d.statut === "Erreur" ? "⛔ erreur" : audACorr(d) ? "<b style='color:#ff8a80'>⚠️ " + (d.anomalies ? audNbAnom(d) + " anomalie(s) à corriger" : "à corriger (↻ réanalyser pour le détail)") + "</b>" : "✅ " + d.statut.toLowerCase();
           if (!d && c.aJour) st = "✅ à jour (audité jusqu'au " + fr(String(c.auditDu ? (function () { var x = new Date(c.auditDu + "T12:00:00"); x.setDate(x.getDate() - 1); return x.toISOString().slice(0, 10); })() : "")) + ")";
-          return "<div class='carte'><div class='ligne' style='justify-content:space-between'><b>🏦 " + esc(c.nom) + "</b><span class='info' style='margin:0'>" + st + "</span></div>" +
+          var aCor = audACorr(d);
+          return "<div class='carte'" + (aCor ? " style='border-color:#c62828'" : "") + "><div class='ligne' style='justify-content:space-between'><b>🏦 " + esc(c.nom) + "</b><span class='info' style='margin:0'>" + st + "</span></div>" +
+            (aCor ? audListeAnom(d.anomalies) : "") +
             (!c.aJour ? "<div class='info' style='margin:2px 0'>📅 À auditer : " + (c.auditDu ? "du " + fr(c.auditDu) : "depuis le début de Base") + " au " + fr(c.auditAu) + "</div>" : "") +
             (d ? "<div class='info' style='margin:2px 0'>" + (d.du ? "du " + esc(d.du) + " au " + esc(d.au) + " · " : "") + (d.agent ? esc(d.agent) + " · " + dateCourte(d.le) : "") + (d.lien ? " · <a href='" + esc(d.lien) + "' target='_blank' rel='noopener'>📎 copie</a>" : "") + (d.resultat ? "<br>" + esc(d.resultat) : "") + "</div>" : "") +
             "<div class='ligne' style='gap:6px;flex-wrap:wrap'><label class='bouton" + (d || c.aJour ? " second" : "") + "' style='width:auto;flex:0 0 auto;margin:0;cursor:pointer'>📎 " + (d && d.statut !== "Sans relevé" ? "Remplacer" : "Déposer") + " le relevé<input type='file' data-ahf='" + i + "' accept='.xlsx,.xls,.csv,.pdf,application/pdf' style='display:none'></label>" +
             (!c.aJour ? "<label class='bouton second' style='width:auto;flex:0 0 auto;margin:0;cursor:pointer'>🚫 Aucun mouvement<input type='file' data-ahsm='" + i + "' accept='.xlsx,.pdf,.csv' style='display:none'></label>" : "") +
             (!d && !c.aJour ? "<button class='bouton second' data-ahp='" + i + "' style='width:auto;flex:0 0 auto;margin:0'>⏭️ Pas de relevé</button>" : "") +
-            (d && d.statut !== "Sans relevé" && d.statut !== "Aucun mouvement" ? "<button class='bouton second' data-aho='" + i + "' style='width:auto;flex:0 0 auto;margin:0'>🔎 Ouvrir l'audit</button>" : "") + "</div><div class='info' id='ahM" + i + "'></div></div>"; }).join("");
+            (d && d.statut !== "Sans relevé" && d.statut !== "Aucun mouvement" ? "<button class='bouton" + (aCor ? "" : " second") + "' data-aho='" + i + "' style='width:auto;flex:0 0 auto;margin:0'>" + (aCor ? "🔧 Corriger les anomalies" : "🔎 Ouvrir l'audit") + "</button>" : "") + "</div><div class='info' id='ahM" + i + "'></div></div>"; }).join("");
         $("vueListe").innerHTML = h; montrer("vueListe");
         var envoyerH = function (q, ok, ko) { api(Object.assign({ api: "audit" }, q), 240000).then(function (r) {
           if (r.confirmerNumero) { if (confirm(r.titre + "\n\n" + r.message)) envoyerH(Object.assign({}, q, { confirmeNumero: true }), ok, ko); else dessinerH(E); return; }
           if (!r.ok) { alert("⛔ " + (r.titre || "") + "\n" + (r.message || "")); if (ko) ko(); return; } if (r.message) alert("✅ " + r.message); dessinerH(r); if (ok) ok(r); }, function (e) { alert("⛔ " + e.message); if (ko) ko(); }); };
         $("ahGo").onclick = function () { if (confirm("Lancer maintenant l'audit automatique des relevés déposés ?")) envoyerH({ op: "lancer" }); };
         Array.prototype.forEach.call(document.querySelectorAll("[data-ahp]"), function (b) { b.onclick = function () { var c = E.comptes[+b.getAttribute("data-ahp")]; if (confirm(c.nom + " : pas de relevé cette semaine ?")) envoyerH({ op: "passer", compte: c.nom }); }; });
-        Array.prototype.forEach.call(document.querySelectorAll("[data-aho]"), function (b) { b.onclick = function () { var c = E.comptes[+b.getAttribute("data-aho")];
-          b.disabled = true; b.textContent = "⏳…";
-          api({ api: "audit", op: "lignesDepot", compte: c.nom }, 120000).then(function (r) { if (!r.ok) { alert("⛔ " + r.message); b.disabled = false; return; }
-            AUD.compte = c.nom; AUD.lignes = r.lignes; AUD.fichier = r.fichier; AUD.fichierData = null; AUD.depuisDepot = true; AUD.lien = (c.depot && c.depot.lien) || ""; AUD.res = null; afficherAudit("banque"); if ($("abGo")) $("abGo").click(); }, function (e) { alert("⛔ " + e.message); b.disabled = false; }); }; });
+        Array.prototype.forEach.call(document.querySelectorAll("[data-aho]"), function (b) { b.onclick = function () { ouvrirAuditDepot(E.comptes[+b.getAttribute("data-aho")], b); }; });
         // 🚫 Aucun mouvement : preuve obligatoire (relevé ou « dernières opérations »), date d'édition et solde affiché.
         Array.prototype.forEach.call(document.querySelectorAll("[data-ahsm]"), function (inp) { inp.onchange = function () {
           var i = +inp.getAttribute("data-ahsm"), c = E.comptes[i], f = inp.files[0], M = $("ahM" + i); if (!f) return;
@@ -5209,7 +5253,7 @@
           }).catch(function (e) { $("ahM" + i).textContent = "⛔ " + e.message; });
         }; });
       };
-      api({ api: "audit", op: "hebdo" }, 60000).then(function (r) { if (!r.ok) { $("vueListe").innerHTML = "<div class='carte'><p class='info'>⛔ " + esc(r.message || "") + "</p></div>"; return; } dessinerH(r); },
+      audReanalyserSiBesoin().then(function () { return api({ api: "audit", op: "hebdo" }, 60000); }).then(function (r) { if (!r.ok) { $("vueListe").innerHTML = "<div class='carte'><p class='info'>⛔ " + esc(r.message || "") + "</p></div>"; return; } dessinerH(r); },
         function (e) { $("vueListe").innerHTML = "<div class='carte'><p class='info'>⛔ " + esc(e.message) + " (réseau nécessaire)</p></div>"; });
       return;
     }
