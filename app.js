@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-21 MF";
+  var VERSION_APP = "2026-11-25 MG";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -2320,7 +2320,7 @@
       if (!confirm("« " + x.titre + " » : faite ?\nElle est signalée terminée ; le DG valide la clôture.")) return;
       envoyerMis("statut", { id: x.id, version: x.version, statut: "À clôturer", commentaire: "Fait (depuis les notifications)" }, "À clôturer " + x.id, apres); }; });
     Array.prototype.forEach.call(racine.querySelectorAll("[data-mic]"), function (b) { b.onclick = function (ev) { ev.stopPropagation(); var x = m(b, "data-mic");
-      if (!confirm("Clôturer « " + x.titre + " » (terminée) ?" + (x.rec ? "\nLa suivante (" + x.rec.toLowerCase() + ") sera créée." : ""))) return;
+      if (!confirm("Clôturer « " + x.titre + " » (terminée) ?" + (x.rec ? "\nLa suivante (" + x.rec.toLowerCase() + ") sera créée pour le " + misSuivanteApp(x) + (misBaseApp(x) === "réalisation" ? " (à partir d'aujourd'hui)." : " (à partir de la date prévue).") : ""))) return;
       envoyerMis("statut", { id: x.id, version: x.version, statut: "Terminée", commentaire: "Validée (depuis les notifications)" }, "Clôture " + x.id, apres); }; });
   }
   function cbBoutons(i) { return "<div class='ligne' style='margin-top:8px;gap:6px'><button class='bouton' data-cbc='" + i + "' style='width:auto;flex:0 0 auto;padding:6px 12px;margin:0;background:var(--vert)'>✅ Confirmé</button>" +
@@ -3570,7 +3570,7 @@
       if (!confirm((reste ? reste + " étape(s) non cochée(s). " : "") + "Signaler « " + m.titre + " » terminée ? DG / WALID la clôtureront.")) return;
       envoyerMis("statut", { id: m.id, version: m.version, statut: "À clôturer", commentaire: com() }, "À clôturer " + m.id, retour);
     };
-    if ($("miFin")) $("miFin").onclick = function () { if (confirm("Clôturer « " + m.titre + " » (terminée) ?" + (m.rec ? "\nLa suivante (" + m.rec.toLowerCase() + ") sera créée." : ""))) envoyerMis("statut", { id: m.id, version: m.version, statut: "Terminée", commentaire: com() }, "Clôture " + m.id, retour); };
+    if ($("miFin")) $("miFin").onclick = function () { if (confirm("Clôturer « " + m.titre + " » (terminée) ?" + (m.rec ? "\nLa suivante (" + m.rec.toLowerCase() + ") sera créée pour le " + misSuivanteApp(m) + (misBaseApp(m) === "réalisation" ? " (à partir d'aujourd'hui)." : " (à partir de la date prévue).") : ""))) envoyerMis("statut", { id: m.id, version: m.version, statut: "Terminée", commentaire: com() }, "Clôture " + m.id, retour); };
     if ($("miRet")) $("miRet").onclick = function () { if (!com()) { $("miMsg").textContent = "⛔ Indiquez dans le commentaire ce qui reste à faire."; return; } envoyerMis("statut", { id: m.id, version: m.version, statut: "En cours", commentaire: com() }, "Retour " + m.id, retour); };
     if ($("miAnn")) $("miAnn").onclick = function () { if (!com()) { $("miMsg").textContent = "⛔ Indiquez la raison dans le commentaire."; return; } if (confirm("Annuler « " + m.titre + " » ?")) envoyerMis("statut", { id: m.id, version: m.version, statut: "Annulée", commentaire: com() }, "Annulation " + m.id, retour); };
     if ($("miCm")) $("miCm").onclick = function () { if (!com()) { $("miMsg").textContent = "⛔ Écrivez le commentaire."; return; } envoyerMis("commenter", { id: m.id, commentaire: com() }, "Commentaire " + m.id, retour); };
@@ -3587,11 +3587,13 @@
       "<div class='ligne'><div><label>Échéance</label><input id='mfE' type='date' value='" + dateISO(s.echeance || demain.getTime()) + "'></div><div><label>Priorité</label><select id='mfP'>" +
       M.priorites.map(function (p) { return "<option" + (p === (s.prio || "Normale") ? " selected" : "") + ">" + p + "</option>"; }).join("") + "</select></div></div>" +
       "<label>Récurrence</label><select id='mfR'>" + M.recurrences.map(function (r) { return "<option value='" + r + "'" + (r === (s.rec || "") ? " selected" : "") + ">" + (r || "Aucune (une seule fois)") + "</option>"; }).join("") + "</select>" +
-      "<div class='info'>Récurrente : à la clôture, la suivante est créée automatiquement avec la check-list remise à zéro.</div>" +
+      "<div id='mfBB'><label>Prochaine échéance à partir de</label><select id='mfB'><option value='réalisation'" + (misBaseApp(s) === "réalisation" ? " selected" : "") + ">la date de réalisation (clôture) — entretiens, compteurs…</option><option value='échéance'" + (misBaseApp(s) === "échéance" ? " selected" : "") + ">la date prévue — obligations à date fixe (impôts…)</option></select></div>" +
+      "<div class='info'>Récurrente : à la clôture, la suivante est créée automatiquement avec la check-list remise à zéro (ex. clôturée le 25/11, tous les 4 mois → 25/03 si « date de réalisation »).</div>" +
       "<label>Check-list (étapes à cocher)</label><div id='mfL'></div><div class='ligne'><input id='mfLn' placeholder='Nouvelle étape'><button class='bouton second' id='mfLa' style='flex:0;width:auto'>➕</button></div>" +
       (src ? "<label>Commentaire (raison du changement)</label><input id='mfC'>" : "") +
       "<button class='bouton' id='mfEnv'>" + (src ? "Enregistrer" : "📤 Créer et notifier") + "</button><div class='info' id='mfM'></div></div>";
     montrer("vueListe");
+    var visB = function () { $("mfBB").style.display = $("mfR").value ? "" : "none"; }; $("mfR").addEventListener("change", visB); visB();
     function dessiner() {
       $("mfL").innerHTML = lst.map(function (i, k) { return "<div class='ligne' style='align-items:center'><span style='flex:1'>" + (i.fait ? "☑ " : "☐ ") + esc(i.t) + "</span><button class='bouton second' data-x='" + k + "' style='flex:0;width:auto;padding:4px 8px'>✕</button></div>"; }).join("") || "<div class='info'>Aucune étape.</div>";
       Array.prototype.forEach.call($("mfL").querySelectorAll("[data-x]"), function (b) { b.onclick = function () { lst.splice(+b.getAttribute("data-x"), 1); dessiner(); }; });
@@ -3602,7 +3604,7 @@
     $("mfEnv").onclick = function () {
       if ($("mfLn").value.trim()) ajouter();
       var d = { titre: $("mfT").value.trim(), desc: $("mfD").value.trim(), assignes: Array.prototype.filter.call(document.querySelectorAll(".mfAg"), function (c) { return c.checked; }).map(function (c) { return c.value; }),
-        echeance: $("mfE").value, prio: $("mfP").value, rec: $("mfR").value, liste: lst };
+        echeance: $("mfE").value, prio: $("mfP").value, rec: $("mfR").value, recBase: $("mfB").value, liste: lst };
       var err = !d.titre ? "titre" : !d.assignes.length ? "au moins une personne" : !d.echeance ? "échéance" : "";
       if (err) { $("mfM").textContent = "⛔ Indiquez : " + err + "."; return; }
       if (src) { d.id = s.id; d.version = s.version; d.commentaire = $("mfC").value.trim(); envoyerMis("modifier", d, "Modification " + s.id, function () { ficheMis(s.id); }); }
@@ -3610,6 +3612,13 @@
     };
   }
 
+  function misSuivanteApp(m) {
+    var d = new Date(misBaseApp(m) === "réalisation" ? Date.now() : (m.echeance || Date.now())), r = m.rec, n = 0;
+    do { if (r === "Quotidienne") d.setDate(d.getDate() + 1); else if (r === "Hebdomadaire") d.setDate(d.getDate() + 7); else if (r === "Mensuelle") d.setMonth(d.getMonth() + 1);
+      else if (r === "Trimestrielle") d.setMonth(d.getMonth() + 3); else if (r === "Tous les 4 mois") d.setMonth(d.getMonth() + 4); else if (r === "Annuelle") d.setFullYear(d.getFullYear() + 1); else break; n++; } while (d.getTime() < Date.now() - 86400000 && n < 400);
+    return jourFr(d.getTime());
+  }
+  function misBaseApp(m) { m = m || {}; if (m.recBase === "réalisation" || m.recBase === "échéance") return m.recBase; return /\bIMF\b|imp[ôo]t|états financiers|acompte|\bIS\b|déclaration|\bTVA\b|patente/i.test(String(m.titre || "")) ? "échéance" : "réalisation"; }
   /* ---------- 🏭 Comptes fournisseurs / prestataires (tous les agents Finances) ---------- */
   var FOUR = { liste: null, fiches: {}, q: "" };
   /* 🏭 Fournisseurs à deux niveaux : le FOURNISSEUR (fiche unique) et ses COMPTES (société + projet, soldes séparés). */
