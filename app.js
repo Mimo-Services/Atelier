@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-28 MO";
+  var VERSION_APP = "2026-11-28 MP";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -5260,7 +5260,7 @@
     }).then(function (doc) {
       var mots = [], P = [];
       for (var i = 1; i <= doc.numPages; i++) P.push(doc.getPage(i).then(function (pg) { var vp = pg.getViewport({ scale: 1 }), no = pg.pageNumber;
-        return pg.getTextContent().then(function (tc) { tc.items.forEach(function (it) { var s = String(it.str || "").trim(); if (!s) return;
+        return pg.getTextContent().then(function (tc) { tc.items.forEach(function (it) { it = { str: relDesespacer(it.str), transform: it.transform, width: it.width }; var s = String(it.str || "").trim(); if (!s) return;
           // mots séparés (une même chaîne peut contenir date + libellé)
           var x = it.transform[4], y = vp.height - it.transform[5], w = it.width || s.length * 4.5, cw = w / Math.max(1, it.str.length), pos = 0;
           String(it.str).split(/(\s{2,})/).forEach(function (part) { if (/^\s+$/.test(part) || !part) { pos += part.length; return; } var t = part.trim(), lead = part.length - part.replace(/^\s+/, "").length; if (t) mots.push({ s: t, x: x + (pos + lead) * cw, w: t.length * cw, y: y, p: no }); pos += part.length; });
@@ -5272,6 +5272,12 @@
         L.numero = relNumeroCompte(txt); L.periode = relPeriode(txt); return L; });
     });
   }
+  // Texte « lettres espacées » (pdf.js ajoute un espace entre chaque caractère quand le PDF espace les lettres : « M o n t a n t », « 2 7 / 1 1 / 2 0 2 6 ») → recollé.
+  function relDesespacer(str) {
+    str = String(str == null ? "" : str); var T = str.trim().split(" ");
+    if (T.length < 3 || T.filter(function (t) { return t.length === 1; }).length / T.length < 0.7) return str;
+    return str.replace(/(\S) (?=\S)/g, "$1");
+  }
   // N° de compte imprimé dans l'en-tête du relevé (après « Numéro de compte », « Compte n° », RIB, IBAN…), sinon 1re suite de 10 à 24 chiffres.
   function relNumeroCompte(txt) {
     txt = String(txt || "");
@@ -5281,9 +5287,10 @@
   }
   // Période imprimée en tête du relevé (« Relevé du 20/11/2026 A 28/11/2026 », « De 13 août 2026 au 28 nov. 2026 ») : { du, au } ou null.
   function relPeriode(txt) {
-    var D = "(\\d{1,2}[\\s\\/.\\-]+(?:[A-Za-zéûÉÛ]{3,9}\\.?|\\d{1,2})[\\s\\/.\\-]+\\d{2,4})";
+    var D = "(\\d{1,2}[\\s\\/.\\-]*(?:[A-Za-zéûÉÛ]{3,9}\\.?|\\d{1,2})[\\s\\/.\\-]*\\d{2,4})";
     var m = String(txt || "").match(new RegExp("\\b(?:du|de|from|p[ée]riode\\s*:?)\\s*" + D + "\\s*(?:au|à|a|to|-)\\s*" + D, "i"));
-    if (!m) return null; var du = relDate(m[1].replace(/\s+/g, " ")), au = relDate(m[2].replace(/\s+/g, " "));
+    var sep = function (x) { return x.replace(/(\d)([A-Za-zéûÉÛ])/g, "$1 $2").replace(/([A-Za-zéûÉÛ.])(\d)/g, "$1 $2").replace(/\s+/g, " "); };
+    if (!m) return null; var du = relDate(sep(m[1])), au = relDate(sep(m[2]));
     return du && au && du <= au ? { du: du, au: au } : null;
   }
   function relLireFichier(file) {
