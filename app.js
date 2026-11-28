@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-28 MN";
+  var VERSION_APP = "2026-11-28 MO";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -5186,6 +5186,29 @@
     if (L.length && L.ouverture !== undefined && L.every(function (x) { return x.solde === null; })) { var s = L.ouverture; L.forEach(function (x) { s = Math.round((s + x.credit - x.debit) * 1000) / 1000; x.solde = s; }); }
     return L;
   }
+  // Secours sans géométrie (relevés à colonne « Montant » signée) : lignes de texte « date date réf montant libellé solde » ; libellés au-dessus / au-dessous rattachés à la ligne datée la plus proche.
+  function relTexteMontant(mots) {
+    var G = "-?\\d{1,3}(?:[ \\u00a0\\u202f]\\d{3})*(?:[.,]\\d{1,3})?", S = "\\s*[¦\\s]\\s*", RE = new RegExp("^(\\d{1,2}\\/\\d{1,2}\\/\\d{2,4})" + S + "(?:\\d{1,2}\\/\\d{1,2}\\/\\d{2,4}" + S + ")?([^¦\\s]+)" + S + "(" + G + ")(?:\\s*¦\\s*(.*?))?\\s*¦\\s*(" + G + ")$");   // ¦ = séparation entre deux textes du PDF
+    var P = {}, LN = [], L = [], vu = false;
+    mots.forEach(function (m) { (P[m.p] = P[m.p] || []).push(m); });
+    Object.keys(P).sort(function (a, b) { return a - b; }).forEach(function (pg) {
+      var lignes = [];
+      P[pg].sort(function (a, b) { return a.y - b.y || a.x - b.x; }).forEach(function (m) { var l = lignes.filter(function (z) { return Math.abs(z.y - m.y) < 2.5; })[0]; if (!l) { l = { y: m.y, t: [] }; lignes.push(l); } l.t.push(m); });
+      lignes.forEach(function (l) { l.t.sort(function (a, b) { return a.x - b.x; });
+        var T2 = []; l.t.forEach(function (t) { var q = T2[T2.length - 1];   // groupes de chiffres séparés (« -20 », « 000 », « 000 ») recollés
+          if (q && /^-?\(?\d{1,3}(?:[\s.,]\d{3})*$/.test(q.s) && /^\d{3}(?:[.,]\d{1,3})?\)?$/.test(t.s) && t.x - (q.x + q.w) < 5) { q.s += " " + t.s; q.w = t.x + t.w - q.x; } else T2.push({ s: t.s, x: t.x, w: t.w }); });
+        var txt = T2.map(function (t) { return t.s; }).join(" ¦ ").replace(/\s+/g, " ").trim(), n = relSansAccent(txt);
+        if (/\bmontant\b/.test(n) && /\bsolde\b/.test(n)) { vu = true; return; }
+        if (!vu) return;
+        var m = txt.match(RE); LN.push(m ? { p: pg, y: l.y, d: relDate(m[1]), ref: m[2], mt: relNombre(m[3]), lib: String(m[4] || "").replace(/\s*¦\s*/g, " "), so: relNombre(m[5]), parts: [] } : { p: pg, y: l.y, lib: /^page \d|edit[eé] le|^total/i.test(txt) ? "" : txt.replace(/\s*¦\s*/g, " ") }); });
+    });
+    var OP = LN.filter(function (x) { return x.d && x.mt; });
+    LN.forEach(function (x) { if (x.d || !x.lib) return; var b = null, e = 15; OP.forEach(function (o) { if (o.p === x.p && Math.abs(o.y - x.y) < e) { e = Math.abs(o.y - x.y); b = o; } }); if (b) b.parts.push({ y: x.y, s: x.lib }); });
+    OP.forEach(function (o) { o.parts.push({ y: o.y, s: o.lib }); var lib = o.parts.sort(function (a, b) { return a.y - b.y; }).map(function (z) { return z.s; }).filter(String).join(" ");
+      L.push({ d: o.d, lib: (lib + (o.ref ? " · " + o.ref : "")).trim(), debit: o.mt < 0 ? -o.mt : 0, credit: o.mt > 0 ? o.mt : 0, solde: o.so }); });
+    if (L.length > 1 && L[0].d > L[L.length - 1].d) L.reverse();
+    return L;
+  }
   // .xlsx = archive ZIP : lecture sans bibliothèque (DecompressionStream) de la 1re feuille.
   function relLireXlsx(buf) {
     var u = new Uint8Array(buf), dv = new DataView(buf), eocd = -1;
@@ -5243,7 +5266,8 @@
           String(it.str).split(/(\s{2,})/).forEach(function (part) { if (/^\s+$/.test(part) || !part) { pos += part.length; return; } var t = part.trim(), lead = part.length - part.replace(/^\s+/, "").length; if (t) mots.push({ s: t, x: x + (pos + lead) * cw, w: t.length * cw, y: y, p: no }); pos += part.length; });
         }); }); }));
       return Promise.all(P).then(function () {
-        var L = relDepuisMots(mots), p1 = mots.filter(function (w) { return w.p === 1; }).sort(function (a, b) { return Math.abs(a.y - b.y) > 4 ? a.y - b.y : a.x - b.x; });
+        var L = relDepuisMots(mots); if (!L.length) { var L2 = relTexteMontant(mots); if (L2.length) L = L2; }
+        var p1 = mots.filter(function (w) { return w.p === 1; }).sort(function (a, b) { return Math.abs(a.y - b.y) > 4 ? a.y - b.y : a.x - b.x; });
         var txt = "", y0 = null; p1.forEach(function (w) { txt += (y0 !== null && Math.abs(w.y - y0) > 4 ? "\n" : " ") + w.s; y0 = w.y; });
         L.numero = relNumeroCompte(txt); L.periode = relPeriode(txt); return L; });
     });
