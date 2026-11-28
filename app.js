@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-28 MM";
+  var VERSION_APP = "2026-11-28 MN";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -5139,7 +5139,7 @@
             else T2.push({ s: t.s, x: t.x, w: t.w }); });
           var dM = "", mtM = null, soM = null, libM = [], refM = [];
           T2.forEach(function (t) { var x1 = t.x + t.w, cx = t.x + t.w / 2, mt = RE_MONTANT.test(t.s);
-            if (mt && mtM === null && x1 >= C.montant.x0 - 40 && x1 <= C.lib + 4) { mtM = relNombre(t.s); return; }
+            if (mt && mtM === null && t.x >= C.montant.x0 - 60 && t.x < C.lib - 2) { mtM = relNombre(t.s); return; }   // montant : commence avant la colonne Libellé
             if (mt && soM === null && Math.abs(cx - C.solde) < 70) { soM = relNombre(t.s); return; }
             if (t.x < C.montant.x0 - 20) { var dd = relDate(t.s); if (dd) { if (!dM) dM = dd; return; } refM.push(t.s); return; }
             libM.push(t.s); });
@@ -5240,7 +5240,7 @@
         return pg.getTextContent().then(function (tc) { tc.items.forEach(function (it) { var s = String(it.str || "").trim(); if (!s) return;
           // mots séparés (une même chaîne peut contenir date + libellé)
           var x = it.transform[4], y = vp.height - it.transform[5], w = it.width || s.length * 4.5, cw = w / Math.max(1, it.str.length), pos = 0;
-          String(it.str).split(/(\s{2,})/).forEach(function (part) { if (/^\s+$/.test(part) || !part) { pos += part.length; return; } var t = part.trim(); if (t) mots.push({ s: t, x: x + pos * cw, w: part.length * cw, y: y, p: no }); pos += part.length; });
+          String(it.str).split(/(\s{2,})/).forEach(function (part) { if (/^\s+$/.test(part) || !part) { pos += part.length; return; } var t = part.trim(), lead = part.length - part.replace(/^\s+/, "").length; if (t) mots.push({ s: t, x: x + (pos + lead) * cw, w: t.length * cw, y: y, p: no }); pos += part.length; });
         }); }); }));
       return Promise.all(P).then(function () {
         var L = relDepuisMots(mots), p1 = mots.filter(function (w) { return w.p === 1; }).sort(function (a, b) { return Math.abs(a.y - b.y) > 4 ? a.y - b.y : a.x - b.x; });
