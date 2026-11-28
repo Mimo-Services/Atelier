@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-28 MQ";
+  var VERSION_APP = "2026-11-28 MS";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -304,11 +304,13 @@
   function navEnvelopper(nom, fn) {
     return function () {
       var a = Array.prototype.slice.call(arguments).filter(function (x) { return !(x && x.target !== undefined && x.type); });   // pas l'événement du clic
-      if (["afficherFinances", "afficherRH", "afficherCom", "afficherMis"].indexOf(nom) >= 0) a = [];   // la liste, pas l'élément ouvert
+      if (["afficherFinances", "afficherRH", "afficherCom", "afficherMis", "afficherControles", "afficherProjets", "afficherAtelier"].indexOf(nom) >= 0) a = [];   // la liste, pas l'élément ouvert
+      if (nom === "afficherAudit" && !a.length) a = [AUD.vue || "banque"];   // un écran d'audit par vue (relevés, audit bancaire, caisse…)
+      if (nom === "ficheProjet") a = a.slice(0, 1);
       if (!NAV.retour) {
         var P = NAV.pile, i;
         while (P.length && /^formulaire|^ouvrirFormulaire/.test(P[P.length - 1].n) && P[P.length - 1].n !== nom) P.pop();
-        for (i = 0; i < P.length; i++) if (P[i].n === nom) break;
+        for (i = 0; i < P.length; i++) if (P[i].n === nom && (nom !== "afficherAudit" || P[i].a[0] === a[0])) break;
         if (i < P.length) P.length = i;   // écran déjà dans la pile : on y remonte
         P.push({ n: nom, a: a });
       }
@@ -5293,7 +5295,18 @@
     if (!m) return null; var du = relDate(sep(m[1])), au = relDate(sep(m[2]));
     return du && au && du <= au ? { du: du, au: au } : null;
   }
+  // Ligne de report (« **REPORT DE SOLDE** », « B/F BALANCE », « Ancien solde »…) : solde de départ du relevé, jamais une opération.
+  var RE_REPORT = /report\s*(de\s*|du\s*)?solde|solde\s*report|\bb\s*\/\s*f\b|brought\s*forward|solde\s*(de\s*)?(d[ée]part|initial|pr[ée]c[ée]dent|d.ouverture|ant[ée]rieur|au\s*\d)|ancien\s*solde|opening\s*balance|^\W*report\b|nouveau\s*solde\s*report/i;
+  function relSansReport(L) {
+    if (!L || !L.length) return L;
+    var R = L.filter(function (x) { if (!RE_REPORT.test(relSansAccent(x.lib || ""))) return true; if (L.ouverture === undefined) L.ouverture = x.solde !== null && x.solde !== undefined && x.solde !== "" ? x.solde : (x.credit || 0) - (x.debit || 0); return false; });
+    ["numero", "periode", "ouverture"].forEach(function (k) { if (L[k] !== undefined) R[k] = L[k]; });
+    return R;
+  }
   function relLireFichier(file) {
+    return relLireFichier0(file).then(relSansReport);
+  }
+  function relLireFichier0(file) {
     var nom = String(file.name || "").toLowerCase();
     return file.arrayBuffer().then(function (buf) {
       var u = new Uint8Array(buf, 0, 4);
@@ -6292,7 +6305,7 @@
   $("annulerScan").onclick = function () { montrer("vueAccueil"); };
   /* ‹ Retour : revient à l'écran précédent (pile de navigation), l'accueil seulement en bout de pile.
      Les formulaires sont transitoires : après un envoi, ‹ ne rouvre pas le formulaire vide. */
-  var NAV_ECRANS = ["afficherListe", "afficherFinances", "ouvrirDemandeFin", "formulaireFin", "afficherSoldes", "afficherSuiviAchats", "afficherRH", "ouvrirEvRH", "ficheRH", "formulaireEvRH", "formulaireSalaireRH", "formulaireDepartRH", "formulaireNouvelRH", "afficherPaieRH", "afficherCom", "ficheContratCom", "ficheFactureCom", "ficheClientCom", "formulaireContratCom", "formulaireBdcCom", "formulaireDocCom", "formulaireEncCom", "formulaireRelanceCom", "afficherMis", "ficheMis", "formulaireMis", "afficherFournisseurs", "ficheFourMere", "formulaireFourMere", "formulaireCompteFour", "afficherInterco", "ficheFournisseur", "afficherTreso", "ficheTreso", "afficherJournal", "afficherAvancement", "afficherStockVal", "afficherMagasins", "afficherRepartition", "afficherFiches", "ouvrirFormulaire", "afficherNotifs"];
+  var NAV_ECRANS = ["afficherListe", "afficherFinances", "ouvrirDemandeFin", "formulaireFin", "afficherSoldes", "afficherSuiviAchats", "afficherRH", "ouvrirEvRH", "ficheRH", "formulaireEvRH", "formulaireSalaireRH", "formulaireDepartRH", "formulaireNouvelRH", "afficherPaieRH", "afficherCom", "ficheContratCom", "ficheFactureCom", "ficheClientCom", "formulaireContratCom", "formulaireBdcCom", "formulaireDocCom", "formulaireEncCom", "formulaireRelanceCom", "afficherMis", "ficheMis", "formulaireMis", "afficherFournisseurs", "ficheFourMere", "formulaireFourMere", "formulaireCompteFour", "afficherInterco", "ficheFournisseur", "afficherTreso", "ficheTreso", "afficherJournal", "afficherAvancement", "afficherStockVal", "afficherMagasins", "afficherRepartition", "afficherFiches", "ouvrirFormulaire", "afficherNotifs", "afficherAudit", "afficherControles", "afficherProjets", "ficheProjet", "afficherAtelier"];
   var NAV_FN = {};
   NAV_FN.afficherListe = afficherListe;
   NAV_FN.afficherFinances = afficherFinances;
@@ -6336,6 +6349,7 @@
   NAV_FN.afficherFiches = afficherFiches;
   NAV_FN.ouvrirFormulaire = ouvrirFormulaire;
   NAV_FN.afficherNotifs = afficherNotifs;
+  NAV_FN.afficherAudit = afficherAudit; NAV_FN.afficherControles = afficherControles; NAV_FN.afficherProjets = afficherProjets; NAV_FN.ficheProjet = ficheProjet; NAV_FN.afficherAtelier = afficherAtelier;
   NAV_ECRANS.forEach(function (n) { NAV_FN[n] = navEnvelopper(n, NAV_FN[n]); });
   afficherListe = NAV_FN.afficherListe;
   afficherFinances = NAV_FN.afficherFinances;
@@ -6379,6 +6393,7 @@
   afficherFiches = NAV_FN.afficherFiches;
   ouvrirFormulaire = NAV_FN.ouvrirFormulaire;
   afficherNotifs = NAV_FN.afficherNotifs;
+  afficherAudit = NAV_FN.afficherAudit; afficherControles = NAV_FN.afficherControles; afficherProjets = NAV_FN.afficherProjets; ficheProjet = NAV_FN.ficheProjet; afficherAtelier = NAV_FN.afficherAtelier;
 
   $("btnNotifs").onclick = function () { AIDE.ctx = "notifs"; afficherNotifs(); };
   $("btnAide").onclick = function () { afficherAide($("vueAccueil").style.display === "block" ? "" : AIDE.ctx); };
