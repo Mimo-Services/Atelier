@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-28 MI";
+  var VERSION_APP = "2026-11-28 MJ";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -372,7 +372,14 @@
   }
   function droitCtrl() { var v = S.agent && S.formulaires && S.formulaires.droits && S.formulaires.droits.validation; return v === "Walid" || v === "DG"; }
   /* ---------- 🛡️ Contrôles (DG, Walid) : contrôle général, banques & caisses, production, achats, état technique ---------- */
-  var CTL = { onglet: "general", r: null };
+  var CTL = { onglet: "corriger", r: null };
+  // Ouvre un écran d'audit (relevés, audit bancaire, caisse, historique, règles) depuis Contrôles : soldes chargés au besoin.
+  function ctlOuvrirAudit(vue, b) {
+    var go = function () { S.navActif = "controles"; if (vue === "regles") AUD.edit = null; afficherAudit(vue); majRail(); };
+    if (S.treso && S.treso.comptes) { go(); return; }
+    if (b) { b.disabled = true; b.textContent = "⏳…"; }
+    api({ api: "treso" }).then(function (r) { r.recu = Date.now(); S.treso = r; ecrire("treso", r); go(); }, function (e) { alert("⛔ " + e.message); if (b) b.disabled = false; });
+  }
   function afficherControles(forcer) {
     $("titre").textContent = "Contrôles"; S.navActif = "controles";
     var cache = CTL.r;
@@ -388,15 +395,20 @@
   function rendreCtl(r, enCache) {
     var fr = function (s) { return String(s || "").split("-").reverse().join("/"); };
     var nT = r.technique ? (r.technique.absentes || []).length + (r.technique.doubles || []).length : 0;
-    var O = [["general", "📋 Contrôle général", r.general.length], ["banques", "🏦 Banques & caisses", r.banques.length + r.caisses.length], ["production", "🏭 Production", r.production.length],
-             ["achats", "🛒 Achats & stock", r.achats.length], ["technique", "⚙️ État technique", nT], ["histo", "🗂️ Historique", 0]];
+    if (["general", "banques", "production", "achats"].indexOf(CTL.onglet) >= 0) CTL.onglet = "corriger";
+    var nCor = r.general.length + r.banques.length + r.caisses.length + r.production.length + r.achats.length;
+    var O = [["corriger", "⚠️ À corriger", nCor], ["audbanque", "🏦 Audit bancaire", (r.relevesManquants || []).length], ["audcaisse", "💵 Audit de caisse", 0],
+             ["technique", "⚙️ État technique", nT], ["histo", "🗂️ Historique", 0]];
     var h = "<div class='carte pleine'><h3>🛡️ Contrôles · " + r.total + " point(s) à traiter</h3><div class='info'>" + (r.dernier ? "Dernier contrôle général : " + esc(r.dernier) : "Aucun contrôle général") + " · contrôle automatique chaque nuit vers 1 h" +
       (enCache ? " · ⏳ mise à jour…" : " · données du " + dateCourte(r.genere)) + "</div>" +
       "<div class='ligne' style='flex-wrap:wrap;gap:6px;margin-top:6px'>" + O.map(function (o) { return "<button class='bouton" + (CTL.onglet === o[0] ? "" : " second") + "' data-cto='" + o[0] + "' style='width:auto;flex:0 0 auto;margin:0'>" + o[1] + (o[2] ? " <b style='color:" + (CTL.onglet === o[0] ? "#fff" : "#ff8a80") + "'>" + o[2] + "</b>" : "") + "</button>"; }).join("") + "</div></div>";
     var carte = function (titre, corps, rouge) { return "<div class='carte'" + (rouge ? " style='border-color:#c62828'" : "") + "><b>" + titre + "</b>" + corps + "</div>"; };
     var btTraiter = function (src, cle, elt, an) { return "<button class='bouton second' data-ctt='" + esc(JSON.stringify({ source: src, cle: cle, elt: elt, anomalie: an })) + "' style='width:auto;margin:4px 0 0'>✅ Traité (commentaire)</button>"; };
-    if (CTL.onglet === "general") {
-      h += "<div class='carte pleine'><div class='ligne' style='flex-wrap:wrap;gap:6px;align-items:flex-end'><button class='bouton' id='ctV' style='width:auto;flex:0 0 auto;margin:0'>🔎 Vérifier les anomalies</button>" +
+    var COR = CTL.onglet === "corriger";
+    if (COR) h += "<div class='carte pleine'><div class='info'>Aller à : " + [["ctsG", "📋 Contrôle général", r.general.length], ["ctsB", "🏦 Relevés bancaires", r.banques.length], ["ctsC", "💵 Caisses", r.caisses.length], ["ctsP", "🏭 Production", r.production.length], ["ctsA", "🛒 Achats", r.achats.length]]
+      .map(function (x) { return "<a href='#' data-cts='" + x[0] + "' style='margin-right:10px'>" + x[1] + " <b style='color:" + (x[2] ? "#ff8a80" : "#81c784") + "'>" + x[2] + "</b></a>"; }).join("") + "</div></div>";
+    if (COR) {
+      h += "<div class='sect' id='ctsG'>📋 Contrôle général (" + r.general.length + ")</div><div class='carte pleine'><div class='ligne' style='flex-wrap:wrap;gap:6px;align-items:flex-end'><button class='bouton' id='ctV' style='width:auto;flex:0 0 auto;margin:0'>🔎 Vérifier les anomalies</button>" +
         "<div style='flex:0 0 auto'><label>Du</label><input id='ctDu' type='date'></div><div style='flex:0 0 auto'><label>Au</label><input id='ctAu' type='date'></div>" +
         "<button class='bouton second' id='ctG' style='width:auto;flex:0 0 auto;margin:0'>🛡️ Contrôle général</button></div><div class='info'>Vérifier : relit seulement les anomalies listées. Contrôle général : tous les contrôles sur la période (vide = tout l'historique, plus long).</div></div>";
       if (!r.general.length) h += carte("✅ Aucune anomalie", "<div class='info'>Le contrôle général ne signale rien.</div>");
@@ -416,30 +428,42 @@
         });
       });
     }
-    if (CTL.onglet === "banques") {
-      h += "<div class='sect'>🏦 Relevés bancaires à corriger (" + r.banques.length + ")</div>";
+    if (COR) {
+      h += "<div class='sect' id='ctsB'>🏦 Relevés bancaires à corriger (" + r.banques.length + ")</div>";
       if ((r.relevesManquants || []).length) h += carte("⏳ Relevés de la semaine manquants", "<div class='info'>" + esc(r.relevesManquants.join(", ")) + "</div><button class='bouton second' id='ctH' style='width:auto;margin:4px 0 0'>📥 Relevés de la semaine</button>");
       if (!r.banques.length) h += carte("✅ Aucun relevé en anomalie", "");
       r.banques.forEach(function (x, i) { var A = x.depot.anomalies;
         h += carte("🏦 " + esc(x.nom) + " <span class='info' style='margin:0'>· semaine du " + esc(fr(x.semaine)) + "</span>", "<div class='info' style='margin:2px 0'>Relevé du " + esc(x.depot.du) + " au " + esc(x.depot.au) + " · " +
           (A ? (A.releve.length + A.base.length) + " anomalie(s) · écart " + (A.ecart === null ? "—" : gnf(A.ecart)) : esc(x.depot.statut + " · " + x.depot.resultat)) + "</div>" + (A ? audListeAnom(A) : "") +
           "<button class='bouton' data-ctk='" + i + "' style='width:auto;margin:4px 0 0'>🔧 Corriger</button>", true); });
-      h += "<div class='sect'>💵 Comptages de caisse avec écart (" + r.caisses.length + ")</div>";
+      h += "<div class='sect' id='ctsC'>💵 Comptages de caisse avec écart (" + r.caisses.length + ")</div>";
       if (!r.caisses.length) h += carte("✅ Aucun écart de caisse non traité", "");
       r.caisses.forEach(function (x) { h += carte("💵 " + esc(x.compte) + " · " + dateCourte(x.date), "<div class='info' style='margin:2px 0'>Compté " + gnf(x.compte_) + " · Base " + gnf(x.base) + " · écart <b>" + gnf(x.ecart) + "</b> · " + esc(x.agent) + (x.com ? " · " + esc(x.com) : "") + "</div>" +
         btTraiter("Caisse", x.cle, x.compte + " " + dateCourte(x.date), "écart " + gnf(x.ecart)), true); });
     }
-    if (CTL.onglet === "production") {
-      h += "<div class='info' style='margin:6px 2px'>Déclarations d'atelier des 30 derniers jours hors règles (doublon, quantité > disponible, hors ordre).</div>";
+    if (COR) {
+      h += "<div class='sect' id='ctsP'>🏭 Production (" + r.production.length + ")</div><div class='info' style='margin:6px 2px'>Déclarations d'atelier des 30 derniers jours hors règles (doublon, quantité > disponible, hors ordre).</div>";
       if (!r.production.length) h += carte("✅ Aucune anomalie de production", "");
       r.production.forEach(function (x) { var elt = x.bdc + " · " + x.lot + " · " + x.poste + " · " + x.evenement + (x.quantite ? " " + gnf(x.quantite) : "") + " · " + x.operateur;
         h += carte("🏭 " + esc(elt), "<div class='info' style='margin:2px 0'>" + dateCourte(x.date) + "</div>" + x.anomalies.map(function (a) { return "<div style='color:#ff8a80;font-size:13px'>⚠️ " + esc(a) + "</div>"; }).join("") +
           btTraiter("Production", x.cle, elt, x.anomalies.join(" ; ")), true); });
     }
-    if (CTL.onglet === "achats") {
+    if (COR) {
+      h += "<div class='sect' id='ctsA'>🛒 Achats & stock (" + r.achats.length + ")</div>";
       if (!r.achats.length) h += carte("✅ Aucune anomalie d'achat", "");
       r.achats.forEach(function (x) { h += carte("🛒 " + esc(x.id) + " · " + esc(x.designation), "<div class='info' style='margin:2px 0'>" + esc(x.statut) + (x.saisi ? " · saisi le " + dateCourte(x.saisi) : "") + "</div><div style='color:#ff8a80;font-size:13px'>⚠️ " + esc(x.anomalies) + "</div>" +
         btTraiter("Achat", x.cle, x.id + " " + x.designation, x.anomalies), true); });
+    }
+    var lanceur = function (id, ico, lib, det, prim) { return "<div class='carte'><div class='ligne' style='justify-content:space-between;align-items:center;gap:8px'><div><b>" + ico + " " + lib + "</b><div class='info' style='margin:2px 0'>" + det + "</div></div><button class='bouton" + (prim ? "" : " second") + "' data-cta='" + id + "' style='width:auto;flex:0 0 auto;margin:0'>Ouvrir</button></div></div>"; };
+    if (CTL.onglet === "audbanque") {
+      h += lanceur("hebdo", "📥", "Relevés de la semaine", (r.relevesManquants || []).length ? "Manquants : " + esc(r.relevesManquants.join(", ")) : "Tous les relevés de la semaine sont traités.", (r.relevesManquants || []).length);
+      h += lanceur("banque", "🔎", "Audit bancaire", "Comparer un relevé (PDF ou Excel) à Base, compte par compte.");
+      h += lanceur("regles", "⚙️", "Prélèvements récurrents", "Libellés inscrits d'office dans Base (frais, TVA, commissions).");
+      h += lanceur("liste", "📋", "Historique des audits", "Audits bancaires, de caisse et associations relevé ↔ Base.");
+    }
+    if (CTL.onglet === "audcaisse") {
+      h += lanceur("caisse", "💵", "Comptage d'une caisse", "Montant compté comparé au solde de Base ; l'écart arrive dans « À corriger ». Les responsables comptent leur caisse depuis Trésorerie.", true);
+      h += lanceur("liste", "📋", "Historique des audits", "Comptages passés et leurs écarts.");
     }
     if (CTL.onglet === "technique") { var T = r.technique || {};
       h += carte("💾 Sauvegarde", "<div class='info'>" + esc(T.sauvegarde || "aucune") + "</div>");
@@ -454,9 +478,11 @@
     $("vueListe").innerHTML = h; montrer("vueListe");
     var Q = function (sel, f) { Array.prototype.forEach.call($("vueListe").querySelectorAll(sel), f); };
     Q("[data-cto]", function (b) { b.onclick = function () { CTL.onglet = b.getAttribute("data-cto"); rendreCtl(r); }; });
+    Q("[data-cta]", function (b) { b.onclick = function () { ctlOuvrirAudit(b.getAttribute("data-cta"), b); }; });
+    Q("[data-cts]", function (a) { a.onclick = function (ev) { ev.preventDefault(); var el = $(a.getAttribute("data-cts")); if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "start" }); }; });
     if ($("ctV")) $("ctV").onclick = function () { ctlAction({ op: "verifier" }, this, "🔎 Vérifier les anomalies"); };
     if ($("ctG")) $("ctG").onclick = function () { var du = $("ctDu").value, au = $("ctAu").value; if (!du && !au && !confirm("Contrôle général sur tout l'historique (peut prendre plusieurs minutes) ?")) return; ctlAction({ op: "general", du: du, au: au }, this, "🛡️ Contrôle général"); };
-    if ($("ctH")) $("ctH").onclick = function () { afficherAudit("hebdo"); };
+    if ($("ctH")) $("ctH").onclick = function () { ctlOuvrirAudit("hebdo", this); };
     if ($("ctW")) $("ctW").onclick = function () { if (confirm("Écrire dans Base les opérations clôturées qui n'y figurent pas ?")) ctlAction({ op: "reecrire" }, this, "🧾 Réécrire dans Base"); };
     Q("[data-cti]", function (b) { b.onclick = function () { var x = r.general[+b.getAttribute("data-cti")], m = prompt("Ignorer : " + x.cat + "\n" + x.elt + "\n\nMotif (obligatoire) :"); if (!m || m.trim().length < 3) return; ctlAction({ op: "ignorer", cle: x.cle, motif: m.trim() }, b, "🙈 Ignorer (motif)"); }; });
     Q("[data-ctc]", function (b) { b.onclick = function () { var i = +b.getAttribute("data-ctc"), x = r.general[i], c = $("ctC" + i).value; if (!c) { alert("Choisissez la bonne catégorie."); return; } if (confirm("Base ligne " + x.row + " : catégorie → « " + c + " » ?")) ctlAction({ op: "categorie", cle: x.cle, categorie: c }, b, "✔ Corriger dans Base"); }; });
@@ -4025,16 +4051,10 @@
           }).join("");
         });
       }
-      var bt = T ? ("<div class='carte pleine'><div class='ligne' style='flex-wrap:wrap;gap:6px'>" + (T.tous ? "<button class='bouton' id='trAH' style='width:auto;flex:0 0 auto;margin:0'>📥 Relevés de la semaine</button><button class='bouton' id='trAB' style='width:auto;flex:0 0 auto;margin:0'>🔎 Audit bancaire</button><button class='bouton' id='trAN' style='width:auto;flex:0 0 auto;margin:0;background:#8e2a2a'>⚠️ Anomalies à corriger</button>" : "") +
-        (T.comptes.some(function (c) { return c.type === "Caisse"; }) ? "<button class='bouton' id='trAC' style='width:auto;flex:0 0 auto;margin:0'>💵 Audit de caisse</button>" : "") +
-        "<button class='bouton second' id='trAL' style='width:auto;flex:0 0 auto;margin:0'>📋 Historique des audits</button>" + (T.tous ? "<button class='bouton second' id='trAR' style='width:auto;flex:0 0 auto;margin:0'>⚙️ Prélèvements récurrents</button>" : "") + "</div></div>") : "";
+      // Audits et anomalies : tuile 🛡️ Contrôles (DG, Walid). Ici : consultation ; le responsable d'une caisse peut la compter.
+      var bt = T && !T.tous && T.comptes.some(function (c) { return c.type === "Caisse"; }) ? "<div class='carte pleine'><button class='bouton' id='trAC' style='width:auto;margin:0'>💵 Compter ma caisse</button><div class='info'>Comptage des billets et pièces : l'écart avec Base est signalé à Walid et au DG.</div></div>" : "";
       $("vueListe").innerHTML = bt + h; montrer("vueListe");
-      if ($("trAB")) $("trAB").onclick = function () { afficherAudit("banque"); };
-      if ($("trAH")) $("trAH").onclick = function () { afficherAudit("hebdo"); };
-      if ($("trAN")) $("trAN").onclick = function () { afficherAudit("anomalies"); };
       if ($("trAC")) $("trAC").onclick = function () { afficherAudit("caisse"); };
-      if ($("trAL")) $("trAL").onclick = function () { afficherAudit("liste"); };
-      if ($("trAR")) $("trAR").onclick = function () { AUD.edit = null; afficherAudit("regles"); };
       Array.prototype.forEach.call($("vueListe").querySelectorAll("[data-tr]"), function (el) { el.onclick = function () { ficheTreso(el.getAttribute("data-tr")); }; });
     }
     dessiner(S.treso ? "mise à jour…" : "chargement…");
@@ -4912,8 +4932,8 @@
     if (d.vue === "missions" && droitMis()) { afficherMis(d.id); return true; }
     if (d.vue === "stockval" && droitStockVal()) { afficherStockVal(d.id); return true; }
     if (d.vue === "magasins") { afficherMagasins(""); return true; }
-    if (d.vue === "controles" && droitCtrl()) { ouvrirTuile("controles"); return true; }
-    if (d.vue === "audit") { afficherAudit(d.sous === "anomalies" ? "anomalies" : "hebdo"); return true; }
+    if (d.vue === "controles" && droitCtrl()) { CTL.onglet = "corriger"; ouvrirTuile("controles"); return true; }
+    if (d.vue === "audit") { if (d.sous === "anomalies" && droitCtrl()) { CTL.onglet = "corriger"; ouvrirTuile("controles"); } else afficherAudit(d.sous === "anomalies" ? "anomalies" : "hebdo"); return true; }
     montrer("vueAccueil"); return true;
   }
   // Demande d'ouverture laissée par le service worker (notification touchée) : traitée une seule fois, si récente (2 min).
