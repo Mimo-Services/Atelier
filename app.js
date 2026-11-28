@@ -5,7 +5,7 @@
 (function () {
   "use strict";
 
-  var VERSION_APP = "2026-11-28 MJ";
+  var VERSION_APP = "2026-11-28 MM";
   var DELAI_PLANIF = 240000;   // une saisie BDC peut prendre 1 à 2 minutes côté serveur
   var DELAI_ENVOI = 30000, DELAI_DONNEES = 120000, RAFRAICHIR_APRES = 15 * 60000;
 
@@ -405,8 +405,22 @@
     var carte = function (titre, corps, rouge) { return "<div class='carte'" + (rouge ? " style='border-color:#c62828'" : "") + "><b>" + titre + "</b>" + corps + "</div>"; };
     var btTraiter = function (src, cle, elt, an) { return "<button class='bouton second' data-ctt='" + esc(JSON.stringify({ source: src, cle: cle, elt: elt, anomalie: an })) + "' style='width:auto;margin:4px 0 0'>✅ Traité (commentaire)</button>"; };
     var COR = CTL.onglet === "corriger";
-    if (COR) h += "<div class='carte pleine'><div class='info'>Aller à : " + [["ctsG", "📋 Contrôle général", r.general.length], ["ctsB", "🏦 Relevés bancaires", r.banques.length], ["ctsC", "💵 Caisses", r.caisses.length], ["ctsP", "🏭 Production", r.production.length], ["ctsA", "🛒 Achats", r.achats.length]]
+    if (COR) h += "<div class='carte pleine'><div class='info'>Aller à : " + [["ctsE", "⚠️ Erreurs banque", (r.erreursBanque || []).length], ["ctsG", "📋 Contrôle général", r.general.length], ["ctsB", "🏦 Relevés bancaires", r.banques.length], ["ctsC", "💵 Caisses", r.caisses.length], ["ctsP", "🏭 Production", r.production.length], ["ctsA", "🛒 Achats", r.achats.length]]
       .map(function (x) { return "<a href='#' data-cts='" + x[0] + "' style='margin-right:10px'>" + x[1] + " <b style='color:" + (x[2] ? "#ff8a80" : "#81c784") + "'>" + x[2] + "</b></a>"; }).join("") + "</div></div>";
+    if (COR && (r.erreursBanque || []).length) {
+      h += "<div class='sect' id='ctsE'>⚠️ Erreurs banque (" + r.erreursBanque.length + ")</div>";
+      r.erreursBanque.forEach(function (x, i) {
+        h += carte("🏦 " + esc(x.compte) + " · " + dateCourte(x.date) + " · <span style='color:" + (x.statut === "Réclamée" ? "#ffb74d" : "#ff8a80") + "'>" + esc(x.statut) + "</span>",
+          "<div class='info' style='margin:2px 0'>Période commune avec le dernier audit : " + esc(x.periode) + (x.releve ? " · " + esc(x.releve) : "") + "</div>" +
+          (x.ecart && x.ecart !== "0" ? "<div style='font-size:13px'>Écart de solde au dernier jour audité : <b style='color:#ff8a80'>" + esc(x.ecart) + " GNF</b></div>" : "") +
+          (x.ajoutees ? "<div style='font-size:12.5px;margin-top:3px'><b>Lignes ajoutées par la banque :</b><br>" + esc(x.ajoutees).replace(/\n/g, "<br>") + "</div>" : "") +
+          (x.disparues ? "<div style='font-size:12.5px;margin-top:3px'><b>Lignes disparues :</b><br>" + esc(x.disparues).replace(/\n/g, "<br>") + "</div>" : "") +
+          (x.ecart && x.ecart !== "0" && !x.ajoutees && !x.disparues ? "<div class='info' style='margin:3px 0'>Aucune ligne différente sur la période commune : l'opération a été passée avant le début de ce relevé (antidatée). Demandez à la banque le détail de cet écart.</div>" : "") +
+          (x.suivi ? "<div class='info' style='margin:3px 0'>" + esc(x.suivi).replace(/\n/g, "<br>") + "</div>" : "") +
+          "<div class='ligne' style='gap:6px;flex-wrap:wrap'>" + (x.statut !== "Réclamée" ? "<button class='bouton' data-cteb='" + i + "|reclamee' style='width:auto;margin:4px 0 0'>📨 Réclamation envoyée</button>" : "") +
+          "<button class='bouton second' data-cteb='" + i + "|resolue' style='width:auto;margin:4px 0 0'>✅ Résolue</button></div>", true);
+      });
+    }
     if (COR) {
       h += "<div class='sect' id='ctsG'>📋 Contrôle général (" + r.general.length + ")</div><div class='carte pleine'><div class='ligne' style='flex-wrap:wrap;gap:6px;align-items:flex-end'><button class='bouton' id='ctV' style='width:auto;flex:0 0 auto;margin:0'>🔎 Vérifier les anomalies</button>" +
         "<div style='flex:0 0 auto'><label>Du</label><input id='ctDu' type='date'></div><div style='flex:0 0 auto'><label>Au</label><input id='ctAu' type='date'></div>" +
@@ -490,6 +504,7 @@
     Q("[data-ctb]", function (b) { b.onclick = function () { var i = +b.getAttribute("data-ctb"), x = r.general[i], src = $("ctS" + i).value, mt = $("ctM" + i).value.trim();
       if (!src || !mt) { alert("Choisissez le compte qui paie et le montant."); return; }
       if (confirm("Rembourser " + mt + " de « " + src + " » vers « " + x.caisse + " » ?\nL'opération est inscrite tout de suite dans Base, sans validation.")) ctlAction({ op: "rembourser", cle: x.cle, source: src, montant: mt }, b, "💵 Rembourser maintenant"); }; });
+    Q("[data-cteb]", function (b) { b.onclick = function () { var k = b.getAttribute("data-cteb").split("|"), x = r.erreursBanque[+k[0]], c = prompt((k[1] === "resolue" ? "Erreur banque résolue" : "Réclamation envoyée à la banque") + " : " + x.compte + "\n\nCommentaire (obligatoire) :"); if (!c || c.trim().length < 3) return; ctlAction({ op: "errbanque", cle: x.cle, etat: k[1], commentaire: c.trim() }, b, b.textContent); }; });
     Q("[data-ctk]", function (b) { b.onclick = function () { ouvrirAuditDepot(r.banques[+b.getAttribute("data-ctk")], b); }; });
     Q("[data-ctt]", function (b) { b.onclick = function () { var o = JSON.parse(b.getAttribute("data-ctt")), c = prompt("Traité : " + o.elt + "\n" + o.anomalie + "\n\nCommentaire (obligatoire) :"); if (!c || c.trim().length < 3) return; ctlAction(Object.assign({ op: "traiter", commentaire: c.trim() }, o), b, "✅ Traité (commentaire)"); }; });
   }
@@ -5095,7 +5110,9 @@
   // Mots positionnés d'un PDF [{s, x, w, y (haut→bas), p}] : lignes, colonnes d'après l'en-tête (Débit, Crédit, Solde), une opération par ligne datée.
   var RE_MONTANT = /^-?\(?\d{1,3}(?:[,.\s\u00a0\u202f]\d{3})+(?:[.,]\d{1,3})?\)?-?$|^-?\d+[.,]\d{2,3}$|^-?\d{1,3}$/;
   function relDepuisMots(mots) {
-    var L = [], cur = null, C = null, P = {};
+    var L = [], cur = null, C = null, P = {}, LM = [];
+    // Positions des mots d'un en-tête collés dans un même bloc (« Montant Libellé »).
+    var sousMots = function (t) { var cw = t.w / Math.max(1, t.s.length), R = [], re = /\S+/g, m; while ((m = re.exec(t.s))) R.push({ s: m[0], x0: t.x + m.index * cw, x1: t.x + (m.index + m[0].length) * cw }); return R; };
     mots.forEach(function (m) { (P[m.p] = P[m.p] || []).push(m); });
     Object.keys(P).sort(function (a, b) { return a - b; }).forEach(function (pg) {
       var lignes = [], prevY = null;
@@ -5105,6 +5122,29 @@
         var txt = l.t.map(function (t) { return t.s; }).join(" "), n = relSansAccent(txt);
         if (L.ouverture === undefined && !L.length && /solde\s*(de\s*)?d[eé]part|solde\s*initial|ancien\s*solde|solde\s*pr[eé]c[eé]dent|solde\s*d.ouverture|report\s*(a\s*)?nouveau|opening\s*balance/.test(n)) {   // solde d'ouverture (relevés sans colonne Solde)
           var mo = txt.replace(/\b\d{1,2}[\s\/.\-]+(?:[A-Za-zéûÉÛ]{3,9}\.?|\d{1,2})[\s\/.\-]+\d{2,4}\b/g, " ").match(/(-?\d[\d\s  .,]*\d)\s*$/); if (mo && relNombre(mo[1]) !== null) L.ouverture = relNombre(mo[1]);
+        }
+        // Relevé à colonne unique « Montant » signée (DIAMA…) : Date opération · Date valeur · Référence · Montant · Libellé · Solde.
+        if (!/(debit|retrait)/.test(n) && /\bmontant\b/.test(n) && /\bsolde\b/.test(n) && !/\d{1,2}[\/.]\d{1,2}[\/.]\d{2,4}/.test(txt)) {
+          var CM = { mode: "montant", hy: l.y };
+          l.t.forEach(function (t) { sousMots(t).forEach(function (w) { var k = relSansAccent(w.s);
+            if (/^montant/.test(k)) CM.montant = w; else if (/^libell/.test(k)) CM.lib = w.x0; else if (/^(solde|balance)/.test(k)) CM.solde = (w.x0 + w.x1) / 2; else if (/^r[eé]f/.test(k)) CM.ref = w.x0; }); });
+          if (CM.montant && CM.solde !== undefined) { if (CM.lib === undefined) CM.lib = CM.montant.x1 + 10; C = CM; cur = null; }
+          prevY = l.y; return;
+        }
+        if (C && C.mode === "montant") {
+          if (l.y <= C.hy + 6) return;   // suite de l'en-tête (« l'opération », « Valeur »)
+          var T2 = [];   // montants coupés en groupes de chiffres (« -20 », « 000 », « 000 ») recollés
+          l.t.forEach(function (t) { var q = T2[T2.length - 1];
+            if (q && /^-?\(?\d{1,3}(?:[\s.,]\d{3})*$/.test(q.s) && /^\d{3}(?:[.,]\d{1,3})?\)?$/.test(t.s) && t.x - (q.x + q.w) < 5) { q.s += " " + t.s; q.w = t.x + t.w - q.x; }
+            else T2.push({ s: t.s, x: t.x, w: t.w }); });
+          var dM = "", mtM = null, soM = null, libM = [], refM = [];
+          T2.forEach(function (t) { var x1 = t.x + t.w, cx = t.x + t.w / 2, mt = RE_MONTANT.test(t.s);
+            if (mt && mtM === null && x1 >= C.montant.x0 - 40 && x1 <= C.lib + 4) { mtM = relNombre(t.s); return; }
+            if (mt && soM === null && Math.abs(cx - C.solde) < 70) { soM = relNombre(t.s); return; }
+            if (t.x < C.montant.x0 - 20) { var dd = relDate(t.s); if (dd) { if (!dM) dM = dd; return; } refM.push(t.s); return; }
+            libM.push(t.s); });
+          LM.push({ p: pg, y: l.y, d: dM, mt: mtM, so: soM, lib: libM.join(" "), ref: refM.join(" ") });
+          prevY = l.y; return;
         }
         if (/(debit|retrait)/.test(n) && /(credit|depot)/.test(n)) {
           C = {}; l.t.forEach(function (t) { var k = relSansAccent(t.s), cx = t.x + t.w / 2;
@@ -5132,6 +5172,16 @@
         prevY = l.y;
       });
     });
+    if (LM.length) {   // colonne Montant : une opération par ligne datée ; les lignes de libellé (au-dessus / au-dessous) vont à la ligne datée la plus proche
+      var OP = LM.filter(function (x) { return x.d && x.mt; });
+      OP.forEach(function (o) { o.parts = [{ y: o.y, s: o.lib }]; });
+      LM.forEach(function (x) { if (x.d && x.mt) return; if (!x.lib || x.mt !== null || x.so !== null && !x.lib) return;
+        var best = null, e = 15; OP.forEach(function (o) { if (o.p === x.p && Math.abs(o.y - x.y) < e) { e = Math.abs(o.y - x.y); best = o; } });
+        if (best) best.parts.push({ y: x.y, s: x.lib }); });
+      OP.forEach(function (o) { var lib = o.parts.sort(function (a, b) { return a.y - b.y; }).map(function (z) { return z.s; }).filter(String).join(" ").replace(/\s+/g, " ").trim();
+        L.push({ d: o.d, lib: (lib + (o.ref ? " · " + o.ref : "")).trim(), debit: o.mt < 0 ? -o.mt : 0, credit: o.mt > 0 ? o.mt : 0, solde: o.so }); });
+      if (L.length > 1 && L[0].d > L[L.length - 1].d) L.reverse();   // relevé du plus récent au plus ancien
+    }
     // Pas de colonne Solde mais un solde d'ouverture : soldes recalculés ligne à ligne.
     if (L.length && L.ouverture !== undefined && L.every(function (x) { return x.solde === null; })) { var s = L.ouverture; L.forEach(function (x) { s = Math.round((s + x.credit - x.debit) * 1000) / 1000; x.solde = s; }); }
     return L;
@@ -5195,7 +5245,7 @@
       return Promise.all(P).then(function () {
         var L = relDepuisMots(mots), p1 = mots.filter(function (w) { return w.p === 1; }).sort(function (a, b) { return Math.abs(a.y - b.y) > 4 ? a.y - b.y : a.x - b.x; });
         var txt = "", y0 = null; p1.forEach(function (w) { txt += (y0 !== null && Math.abs(w.y - y0) > 4 ? "\n" : " ") + w.s; y0 = w.y; });
-        L.numero = relNumeroCompte(txt); return L; });
+        L.numero = relNumeroCompte(txt); L.periode = relPeriode(txt); return L; });
     });
   }
   // N° de compte imprimé dans l'en-tête du relevé (après « Numéro de compte », « Compte n° », RIB, IBAN…), sinon 1re suite de 10 à 24 chiffres.
@@ -5205,14 +5255,21 @@
       || txt.match(/\b(\d{10,24})\b/);
     return m ? m[1].replace(/[^0-9A-Z]/gi, "").toUpperCase() : "";
   }
+  // Période imprimée en tête du relevé (« Relevé du 20/11/2026 A 28/11/2026 », « De 13 août 2026 au 28 nov. 2026 ») : { du, au } ou null.
+  function relPeriode(txt) {
+    var D = "(\\d{1,2}[\\s\\/.\\-]+(?:[A-Za-zéûÉÛ]{3,9}\\.?|\\d{1,2})[\\s\\/.\\-]+\\d{2,4})";
+    var m = String(txt || "").match(new RegExp("\\b(?:du|de|from|p[ée]riode\\s*:?)\\s*" + D + "\\s*(?:au|à|a|to|-)\\s*" + D, "i"));
+    if (!m) return null; var du = relDate(m[1].replace(/\s+/g, " ")), au = relDate(m[2].replace(/\s+/g, " "));
+    return du && au && du <= au ? { du: du, au: au } : null;
+  }
   function relLireFichier(file) {
     var nom = String(file.name || "").toLowerCase();
     return file.arrayBuffer().then(function (buf) {
       var u = new Uint8Array(buf, 0, 4);
       if (u[0] === 0x25 && u[1] === 0x50) return relLirePdf(buf);                      // %PDF
-      if (u[0] === 0x50 && u[1] === 0x4b) return relLireXlsx(buf).then(function (rows) { var L = relDepuisTableau(rows); L.numero = relNumeroCompte(rows.slice(0, 40).map(function (r) { return (r || []).join(" "); }).join("\n")); return L; });   // PK (xlsx, même nommé .xls)
+      if (u[0] === 0x50 && u[1] === 0x4b) return relLireXlsx(buf).then(function (rows) { var L = relDepuisTableau(rows), tt = rows.slice(0, 40).map(function (r) { return (r || []).join(" "); }).join("\n"); L.numero = relNumeroCompte(tt); L.periode = relPeriode(tt); return L; });   // PK (xlsx, même nommé .xls)
       if (u[0] === 0xd0 && u[1] === 0xcf) throw new Error("ancien format Excel (.xls 97-2003) : ouvrez-le et enregistrez-le en .xlsx, ou envoyez le PDF");
-      var txt = new TextDecoder().decode(buf), L2 = relDepuisTableau(relLireCsv(txt)); L2.numero = relNumeroCompte(txt.split("\n").slice(0, 40).join("\n")); return L2;
+      var txt = new TextDecoder().decode(buf), L2 = relDepuisTableau(relLireCsv(txt)); L2.numero = relNumeroCompte(txt.split("\n").slice(0, 40).join("\n")); L2.periode = relPeriode(txt.split("\n").slice(0, 40).join("\n")); return L2;
     });
   }
 
@@ -5342,7 +5399,8 @@
           return "<div class='carte'" + (aCor || SP.length ? " style='border-color:#c62828'" : "") + "><div class='ligne' style='justify-content:space-between'><b>🏦 " + esc(c.nom) + "</b><span class='info' style='margin:0'>" + st + "</span></div>" +
             SP.map(function (x) { return "<div class='info' style='margin:2px 0;color:#ff8a80'>⚠️ Relevé du " + esc(x.depot.du) + " au " + esc(x.depot.au) + " : " + (x.depot.anomalies ? audNbAnom(x.depot) + " anomalie(s)" : "anomalies") + " encore à corriger <button class='bouton' data-ahsp='" + esc(x.nom) + "|" + esc(x.semaine) + "' style='width:auto;display:inline-block;margin:0 0 0 4px;padding:2px 8px'>🔧 Corriger</button></div>"; }).join("") +
             (aCor ? audListeAnom(d.anomalies) : "") +
-            (!c.aJour ? "<div class='info' style='margin:2px 0'>📅 À auditer : " + (c.auditDu ? "du " + fr(c.auditDu) : "depuis le début de Base") + " au " + fr(c.auditAu) + "</div>" : "") +
+            (!c.aJour ? "<div class='info' style='margin:2px 0'>📅 À auditer : " + (c.auditDu ? "du " + fr(c.auditDu) : "depuis le début de Base") + " au " + fr(c.auditAu) + "</div>" +
+              (!d || d.statut === "Sans relevé" ? "<div class='info' style='margin:2px 0;color:#ffb74d'>📥 Relevé à demander à la banque : <b>du " + fr(c.demandeDu || c.auditDu) + " au " + fr(c.auditAu) + "</b>" + (c.demandeDu && c.demandeDu < c.auditDu ? " (3 jours de marge)" : "") + "</div>" : "") : "") +
             (d ? "<div class='info' style='margin:2px 0'>" + (d.du ? "du " + esc(d.du) + " au " + esc(d.au) + " · " : "") + (d.agent ? esc(d.agent) + " · " + dateCourte(d.le) : "") + (d.lien ? " · <a href='" + esc(d.lien) + "' target='_blank' rel='noopener'>📎 copie</a>" : "") + (d.resultat ? "<br>" + esc(d.resultat) : "") + "</div>" : "") +
             "<div class='ligne' style='gap:6px;flex-wrap:wrap'><label class='bouton" + (d || c.aJour ? " second" : "") + "' style='width:auto;flex:0 0 auto;margin:0;cursor:pointer'>📎 " + (d && d.statut !== "Sans relevé" ? "Remplacer" : "Déposer") + " le relevé<input type='file' data-ahf='" + i + "' accept='.xlsx,.xls,.csv,.pdf,application/pdf' style='display:none'></label>" +
             (!c.aJour ? "<label class='bouton second' style='width:auto;flex:0 0 auto;margin:0;cursor:pointer'>🚫 Aucun mouvement<input type='file' data-ahsm='" + i + "' accept='.xlsx,.pdf,.csv' style='display:none'></label>" : "") +
@@ -5351,6 +5409,7 @@
         $("vueListe").innerHTML = h; montrer("vueListe");
         var envoyerH = function (q, ok, ko) { api(Object.assign({ api: "audit" }, q), 240000).then(function (r) {
           if (r.confirmerNumero) { if (confirm(r.titre + "\n\n" + r.message)) envoyerH(Object.assign({}, q, { confirmeNumero: true }), ok, ko); else dessinerH(E); return; }
+          if (r.confirmerContinuite) { if (confirm(r.titre + "\n\n" + r.message)) envoyerH(Object.assign({}, q, { forcerContinuite: true }), ok, ko); else dessinerH(E); return; }
           if (!r.ok) { alert("⛔ " + (r.titre || "") + "\n" + (r.message || "")); if (ko) ko(); return; } if (r.message) alert("✅ " + r.message); dessinerH(r); if (ok) ok(r); }, function (e) { alert("⛔ " + e.message); if (ko) ko(); }); };
         $("ahGo").onclick = function () { if (confirm("Lancer maintenant l'audit automatique des relevés déposés ?")) envoyerH({ op: "lancer" }); };
         Array.prototype.forEach.call(document.querySelectorAll("[data-ahp]"), function (b) { b.onclick = function () { var c = E.comptes[+b.getAttribute("data-ahp")]; if (confirm(c.nom + " : pas de relevé cette semaine ?")) envoyerH({ op: "passer", compte: c.nom }); }; });
@@ -5388,7 +5447,7 @@
           Promise.all([relLireFichier(f), audLireBase64(f)]).then(function (x) {
             var L = x[0]; if (!L.length) throw new Error("aucune opération reconnue dans ce fichier");
             $("ahM" + i).textContent = "⏳ Envoi de " + L.length + " ligne(s)…";
-            envoyerH({ op: "deposer", compte: c.nom, lignes: L, numero: L.numero || "", fichier: f.name, fichierData: x[1].data, mime: x[1].mime });
+            envoyerH({ op: "deposer", compte: c.nom, lignes: L, numero: L.numero || "", periodeDu: L.periode ? L.periode.du : "", fichier: f.name, fichierData: x[1].data, mime: x[1].mime });
           }).catch(function (e) { $("ahM" + i).textContent = "⛔ " + e.message; });
         }; });
       };
